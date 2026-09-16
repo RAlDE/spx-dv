@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "Hub de Extensões SPX-DV",
+  "updatedAt": "2026-09-16T00:00:00Z",
+  "launcher": {
+    "url": "https://spx.shopee.com.br/"
+  },
+  "modules": [
+    {
+      "id": "meu_modulo_1",
+      "name": "Meu Primeiro Módulo",
+      "description": "Ferramenta operacional personalizada",
+      "version": "1.0.0",
+      "enabled": true,
+      "type": "web_app",
+      "entry": "https://spx.shopee.com.br/",
+      "permissions": [],
+      "hostPermissions": ["https://spx.shopee.com.br/*"],
+      "capabilities": ["catalog.get", "storage.get", "storage.set"],
+      "allowedOpenUrls": ["https://spx.shopee.com.br/*"],
+      "authProfiles": [],
+      "userScripts": []
+    }
+  ]
+}

@@ -14,7 +14,7 @@
       "id": "assistente-de-devolucoes",
       "name": "Assistente de devoluções",
       "description": "Exibe histórico de tentativas, motorista, horários, motivos e tratativa de endereço durante o recebimento.",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "enabled": true,
       "type": "user_script",
       "matches": ["https://spx.shopee.com.br/*"],

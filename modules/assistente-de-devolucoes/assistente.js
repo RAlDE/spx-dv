@@ -27,21 +27,27 @@
     ['insufficient time', 'Motorista não teve tempo de entregar'],
     ['insufficient vehicle capacity', 'Não coube no veículo'],
     ['office closed', 'Comércio fechado'],
-    ['parcel damaged, cannot attempt', 'Pacote danificado — tentativa não realizada'],
-    ['parcel damaged', 'Pacote danificado'],
-    ['damaged parcel', 'Pacote danificado'],
-    ['parcel lost', 'Pacote perdido'],
-    ['lost parcel', 'Pacote perdido'],
+    ['parcel damaged, cannot attempt', 'Item danificado'],
+    ['parcel damaged', 'Item danificado'],
+    ['damaged parcel', 'Item danificado'],
+    ['parcel lost', 'Item perdido'],
+    ['lost parcel', 'Item perdido'],
     ['recipient change location', 'Mudança de endereço'],
     ['recipient reject', 'Recusado por terceiros'],
     ['recipient unavailable for parcel', 'Ausente'],
     ['reject - buyers change their mind', 'Rejeitado pelo comprador'],
     ['risky area of delivery', 'Área de risco'],
+    ['robbery/assault', 'Roubo/Assalto'],
     ['robbery attempt', 'Tentativa de roubo/assalto'],
-    ['theft', 'Roubo/assalto'],
+    ['attempted robbery/assault', 'Tentativa de roubo/assalto'],
+    ['theft', 'Roubo/Assalto'],
     ['unforeseen circumstances', 'Motorista desistiu da rota'],
-    ['vehicle breakdown', 'Problemas mecânicos'],
-    ['wrongly assigned', 'Fora de rota'],
+    ['vehicle breakdown', 'Problemas Mecânicos'],
+    ['wrongly assigned', 'Fora de Rota'],
+    ['out of route', 'Fora de Rota'],
+    ['out of the route', 'Fora de Rota'],
+    ['driver gave up on the route', 'Motorista desistiu da rota'],
+    ['app/internet failure', 'Problemas com internet/app'],
     ['address incorrect', 'Endereço incorreto'],
     ['incorrect address', 'Endereço incorreto'],
     ['incomplete address', 'Endereço incompleto'],
@@ -278,10 +284,9 @@
     const raw = String(reason || '').trim();
     if (!raw) return 'Motivo não informado';
     const match = raw.match(/^(\[[^\]]+\]\s*)?(.*)$/);
-    const code = match?.[1] || '';
     const description = String(match?.[2] || raw).trim();
     const translated = translations.get(normalize(description));
-    return translated ? `${code}${translated}`.trim() : raw;
+    return translated || description;
   }
 
   function photoUrl(attempt) {

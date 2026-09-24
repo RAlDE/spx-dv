@@ -213,8 +213,9 @@
     toggle.id = TOGGLE_ID;
     toggle.type = 'button';
     toggle.textContent = '▣ Devoluções';
-    toggle.hidden = true;
-    toggle.addEventListener('click', () => setCollapsed(false));
+    toggle.hidden = false;
+    toggle.setAttribute('aria-pressed', String(!collapsed));
+    toggle.addEventListener('click', () => setCollapsed(!collapsed));
     document.body.appendChild(toggle);
     return toggle;
   }
@@ -224,7 +225,9 @@
     const panel = document.getElementById(PANEL_ID);
     if (panel) panel.hidden = collapsed;
     const toggle = ensureToggle();
-    toggle.hidden = !collapsed;
+    toggle.hidden = false;
+    toggle.setAttribute('aria-pressed', String(!collapsed));
+    toggle.title = collapsed ? 'Abrir a caixa de devoluções' : 'Fechar a caixa de devoluções';
   }
 
   function restorePanelPosition(panel) {

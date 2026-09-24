@@ -1,25 +1,31 @@
 {
   "schemaVersion": 1,
-  "name": "Hub de Extensões SPX-DV",
-  "updatedAt": "2026-09-16T00:00:00Z",
+  "name": "SPX-DV",
+  "updatedAt": "2026-09-24T00:00:00Z",
+  "owner": {
+    "github": "RAlDE",
+    "repository": "https://github.com/RAlDE/spx-dv"
+  },
   "launcher": {
-    "url": "https://spx.shopee.com.br/"
+    "url": "https://ralde.github.io/spx-dv/launcher/"
   },
   "modules": [
     {
-      "id": "meu_modulo_1",
-      "name": "Meu Primeiro Módulo",
-      "description": "Ferramenta operacional personalizada",
-      "version": "1.0.0",
+      "id": "assistente-de-devolucoes",
+      "name": "Assistente de devoluções",
+      "description": "Exibe histórico de tentativas, motorista, horários, motivos e tratativa de endereço durante o recebimento.",
+      "version": "1.2.0",
       "enabled": true,
-      "type": "web_app",
-      "entry": "https://spx.shopee.com.br/",
-      "permissions": [],
-      "hostPermissions": ["https://spx.shopee.com.br/*"],
-      "capabilities": ["catalog.get", "storage.get", "storage.set"],
-      "allowedOpenUrls": ["https://spx.shopee.com.br/*"],
-      "authProfiles": [],
-      "userScripts": []
+      "type": "user_script",
+      "matches": ["https://spx.shopee.com.br/*"],
+      "scripts": [
+        {
+          "id": "assistente-principal",
+          "url": "https://raw.githubusercontent.com/RAlDE/spx-dv/main/modules/assistente-de-devolucoes/assistente.js",
+          "runAt": "document_idle",
+          "world": "MAIN"
+        }
+      ]
     }
   ]
 }

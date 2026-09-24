@@ -1,0 +1,10 @@
+{
+  "projectName": "SPX-DV",
+  "administrator": "RAlDE",
+  "repository": "https://github.com/RAlDE/spx-dv",
+  "supportUrl": "https://github.com/RAlDE/spx-dv/issues",
+  "accessPolicy": {
+    "requiredEmailDomain": "shopee.com",
+    "requiredAliases": ["RESOLVE_EO", "CANCEL_EO_REASON"]
+  }
+}

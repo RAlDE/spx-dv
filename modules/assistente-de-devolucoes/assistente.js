@@ -27,8 +27,11 @@
     ['insufficient time', 'Motorista não teve tempo de entregar'],
     ['insufficient vehicle capacity', 'Não coube no veículo'],
     ['office closed', 'Comércio fechado'],
-    ['parcel damaged, cannot attempt', 'Item danificado'],
-    ['parcel lost', 'Item perdido'],
+    ['parcel damaged, cannot attempt', 'Pacote danificado — tentativa não realizada'],
+    ['parcel damaged', 'Pacote danificado'],
+    ['damaged parcel', 'Pacote danificado'],
+    ['parcel lost', 'Pacote perdido'],
+    ['lost parcel', 'Pacote perdido'],
     ['recipient change location', 'Mudança de endereço'],
     ['recipient reject', 'Recusado por terceiros'],
     ['recipient unavailable for parcel', 'Ausente'],
@@ -38,7 +41,28 @@
     ['theft', 'Roubo/assalto'],
     ['unforeseen circumstances', 'Motorista desistiu da rota'],
     ['vehicle breakdown', 'Problemas mecânicos'],
-    ['wrongly assigned', 'Fora de rota']
+    ['wrongly assigned', 'Fora de rota'],
+    ['address incorrect', 'Endereço incorreto'],
+    ['incorrect address', 'Endereço incorreto'],
+    ['incomplete address', 'Endereço incompleto'],
+    ['customer unreachable', 'Não foi possível contatar o destinatário'],
+    ['recipient unreachable', 'Não foi possível contatar o destinatário'],
+    ['customer not at home', 'Destinatário ausente'],
+    ['recipient not at home', 'Destinatário ausente'],
+    ['customer refused', 'Recusado pelo destinatário'],
+    ['recipient refused', 'Recusado pelo destinatário'],
+    ['customer requested reschedule', 'Destinatário solicitou reagendamento'],
+    ['delivery rescheduled', 'Entrega reagendada'],
+    ['bad weather', 'Condições climáticas adversas'],
+    ['traffic jam', 'Congestionamento'],
+    ['road blocked', 'Via bloqueada'],
+    ['no access to location', 'Sem acesso ao local'],
+    ['accident', 'Acidente'],
+    ['driver accident', 'Acidente com o motorista'],
+    ['security issue', 'Problema de segurança'],
+    ['cash on delivery issue', 'Problema no pagamento na entrega'],
+    ['incorrect otp', 'Código de confirmação incorreto'],
+    ['missing otp', 'Código de confirmação não informado']
   ]);
   const validReasons = new Set([
     'endereco nao encontrado',
@@ -142,12 +166,12 @@
     style.id = STYLE_ID;
     style.textContent = `
       #${PANEL_ID}{position:fixed;z-index:999999;top:16px;left:16px;right:auto;width:min(520px,calc(100vw - 32px));max-height:82vh;overflow:hidden;border:1px solid #334155;border-radius:14px;background:#0f172a;color:#f8fafc;box-shadow:0 22px 62px #0008;font:15px Arial,sans-serif}
-      #${PANEL_ID}[hidden]{display:none!important}#${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} header{position:relative;padding:15px 92px 13px 15px;border-bottom:1px solid #334155;background:linear-gradient(135deg,#ff600033,#0f172a);cursor:grab;user-select:none;touch-action:none}
-      #${PANEL_ID}.dragging header{cursor:grabbing}#${PANEL_ID} h2{margin:0;font-size:19px}#${PANEL_ID} header small{display:block;margin-top:5px;color:#cbd5e1;font-size:13px}#${PANEL_ID} .header-actions{position:absolute;top:9px;right:9px;display:flex;gap:6px}#${PANEL_ID} .icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #475569;border-radius:8px;background:#1e293b;color:#fff;font-size:18px;cursor:pointer}
+      #${PANEL_ID}[hidden]{display:none!important}#${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} header{position:relative;padding:15px 92px 13px 15px;border-bottom:1px solid #fb923c;background:linear-gradient(135deg,#ff6a00,#e94b00 68%,#9a3412);cursor:grab;user-select:none;touch-action:none}
+      #${PANEL_ID}.dragging header{cursor:grabbing}#${PANEL_ID} h2{margin:0;font-size:19px}#${PANEL_ID} header small{display:block;margin-top:7px;color:#fff;font-size:19px;font-weight:700}#${PANEL_ID} header small strong{font-size:inherit}#${PANEL_ID} .header-actions{position:absolute;top:9px;right:9px;display:flex;gap:6px}#${PANEL_ID} .icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #fed7aa;border-radius:8px;background:#111827;color:#fff;font-size:18px;cursor:pointer}
       #${PANEL_ID} .body{max-height:65vh;overflow:auto;padding:10px}#${PANEL_ID} .message{padding:22px;text-align:center;color:#cbd5e1}#${PANEL_ID} .error{color:#fca5a5}
-      #${PANEL_ID} .attempt{display:grid;grid-template-columns:27px minmax(0,1fr) auto;gap:9px;margin-bottom:8px;padding:10px;border:1px solid #334155;border-radius:10px;background:#ffffff08}
+      #${PANEL_ID} .attempt{display:grid;grid-template-columns:27px minmax(0,1fr) auto;gap:9px;margin-bottom:8px;padding:10px;border:1px solid #3f3f46;border-radius:10px;background:#050505}
       #${PANEL_ID} .index{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#334155;font-size:13px;font-weight:900}#${PANEL_ID} .reason{display:inline-block;padding:4px 8px;border-radius:999px;background:#16a34a33;color:#bbf7d0;font-size:13px;font-weight:800}
-      #${PANEL_ID} .driver{margin-top:7px;color:#dbeafe;font-size:13px}#${PANEL_ID} time{color:#94a3b8;font-size:12px;white-space:nowrap}#${PANEL_ID} img{width:58px;height:58px;margin-top:8px;border-radius:7px;object-fit:cover}
+      #${PANEL_ID} .driver{margin-top:9px;color:#fff;font-size:19px;line-height:1.25}#${PANEL_ID} time{color:#fff;font-size:19px;font-weight:700;white-space:nowrap}#${PANEL_ID} img{width:58px;height:58px;margin-top:8px;border-radius:7px;object-fit:cover}
       #${PANEL_ID} .actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}#${PANEL_ID} .actions button{border:0;border-radius:8px;padding:10px;color:#fff;font-size:14px;font-weight:900;cursor:pointer}#${PANEL_ID} .confirm{background:#16a34a}#${PANEL_ID} .cancel{background:#dc2626}#${PANEL_ID} .result{grid-column:1/-1;color:#cbd5e1;font-size:12px}
       #${PANEL_ID} .decision{margin-top:10px;padding:12px;border:1px solid #22c55e66;border-radius:10px;background:#16a34a22;text-align:center}#${PANEL_ID} .decision.warn{border-color:#fb923c88;background:#9a341e33}#${PANEL_ID} .decision.stop{border-color:#ef444488;background:#7f1d1d44}#${PANEL_ID} .decision.address{border-color:#c084fc88;background:#6b21a844}#${PANEL_ID} .decision strong{font-size:16px}
       #${TOGGLE_ID}{position:fixed;z-index:999998;left:16px;bottom:18px;border:1px solid #fb923c;border-radius:999px;padding:11px 16px;background:#0f172a;color:#fff;box-shadow:0 12px 28px #0006;font:700 14px Arial,sans-serif;cursor:pointer}#${TOGGLE_ID}[hidden]{display:none!important}
@@ -163,7 +187,7 @@
     if (!panel) {
       panel = document.createElement('section');
       panel.id = PANEL_ID;
-      panel.innerHTML = '<header><h2>Histórico de tentativas</h2><small>Shipment ID: <strong></strong></small><div class="header-actions"><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>';
+      panel.innerHTML = '<header><h2>Rastreio do pedido</h2><small>Shipment ID: <strong></strong></small><div class="header-actions"><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>';
       panel.addEventListener('click', handleAction);
       document.body.appendChild(panel);
       restorePanelPosition(panel);
@@ -251,7 +275,13 @@
   }
 
   function translateReason(reason) {
-    return translations.get(normalize(reason)) || reason || 'Motivo não informado';
+    const raw = String(reason || '').trim();
+    if (!raw) return 'Motivo não informado';
+    const match = raw.match(/^(\[[^\]]+\]\s*)?(.*)$/);
+    const code = match?.[1] || '';
+    const description = String(match?.[2] || raw).trim();
+    const translated = translations.get(normalize(description));
+    return translated ? `${code}${translated}`.trim() : raw;
   }
 
   function photoUrl(attempt) {

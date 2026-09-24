@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "SPX-DV Loader",
+  "description": "Carregador do Assistente de devoluções SPX-DV.",
+  "version": "1.0.0",
+  "minimum_chrome_version": "138",
+  "permissions": ["storage", "tabs", "userScripts"],
+  "host_permissions": [
+    "https://raw.githubusercontent.com/RAlDE/spx-dv/*",
+    "https://spx.shopee.com.br/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "SPX-DV",
+    "default_popup": "popup.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

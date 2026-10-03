@@ -183,7 +183,7 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
-      #${PANEL_ID}{position:fixed;z-index:999999;top:16px;left:16px;right:auto;width:min(520px,calc(100vw - 32px));max-height:82vh;overflow:hidden;border:1px solid #334155;border-radius:14px;background:#0f172a;color:#f8fafc;box-shadow:0 22px 62px #0008;font:15px Arial,sans-serif}
+      #${PANEL_ID}{position:fixed;z-index:2147483647;top:16px;left:16px;right:auto;width:min(520px,calc(100vw - 32px));max-height:82vh;overflow:hidden;border:1px solid #334155;border-radius:14px;background:#0f172a;color:#f8fafc;box-shadow:0 22px 62px #0008;font:15px Arial,sans-serif}
       #${PANEL_ID}[hidden]{display:none!important}#${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} header{position:relative;padding:15px 92px 13px 15px;border-bottom:1px solid #fb923c;background:linear-gradient(135deg,#ff6a00,#e94b00 68%,#9a3412);cursor:grab;user-select:none;touch-action:none}
       #${PANEL_ID}.dragging header{cursor:grabbing}#${PANEL_ID} h2{margin:0;font-size:19px}#${PANEL_ID} header small{display:block;margin-top:7px;color:#fff;font-size:19px;font-weight:700}#${PANEL_ID} header small strong{font-size:inherit}#${PANEL_ID} .header-actions{position:absolute;top:9px;right:9px;display:flex;gap:6px}#${PANEL_ID} .icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #fed7aa;border-radius:8px;background:#111827;color:#fff;font-size:18px;cursor:pointer}
       #${PANEL_ID} .body{max-height:65vh;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;pointer-events:auto;padding:10px}#${PANEL_ID} .message{padding:22px;text-align:center;color:#cbd5e1}#${PANEL_ID} .error{color:#fca5a5}
@@ -192,9 +192,9 @@
       #${PANEL_ID} .driver{margin-top:9px;color:#fff;font-size:19px;line-height:1.25}#${PANEL_ID} .driver .driver-code{color:#dbeafe}#${PANEL_ID} time{color:#fff;font-size:19px;font-weight:700;white-space:nowrap}#${PANEL_ID} img{width:58px;height:58px;margin-top:8px;border-radius:7px;object-fit:cover}
       #${PANEL_ID} .actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}#${PANEL_ID} .actions button{border:0;border-radius:8px;padding:10px;color:#fff;font-size:14px;font-weight:900;cursor:pointer}#${PANEL_ID} .confirm{background:#16a34a}#${PANEL_ID} .cancel{background:#dc2626}#${PANEL_ID} .result{grid-column:1/-1;color:#cbd5e1;font-size:12px}
       #${PANEL_ID} .decision{margin-top:10px;padding:12px;border:1px solid #22c55e66;border-radius:10px;background:#16a34a22;text-align:center}#${PANEL_ID} .decision.warn{border-color:#fb923c88;background:#9a341e33}#${PANEL_ID} .decision.stop{border-color:#ef444488;background:#7f1d1d44}#${PANEL_ID} .decision.address{border-color:#c084fc88;background:#6b21a844}#${PANEL_ID} .decision strong{font-size:16px}
-      #${TOGGLE_ID}{position:fixed;z-index:999998;left:16px;bottom:18px;border:1px solid #fb923c;border-radius:999px;padding:11px 16px;background:#0f172a;color:#fff;box-shadow:0 12px 28px #0006;font:700 14px Arial,sans-serif;cursor:pointer}#${TOGGLE_ID}[hidden]{display:none!important}
-      #${AUTOADD_ID}{position:fixed;z-index:999997;left:16px;bottom:72px;max-width:min(520px,calc(100vw - 32px));display:flex;align-items:center;gap:10px;padding:12px 15px;border:1px solid #22c55e88;border-radius:12px;background:#052e22;color:#dcfce7;box-shadow:0 12px 28px #0006;font:700 14px Arial,sans-serif}#${AUTOADD_ID}.next-cycle{border-color:#fb923c;background:#431407;color:#ffedd5}#${AUTOADD_ID} .icon{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#ffffff18;font-size:17px}
-      #${NOTICE_ID}{position:fixed;right:16px;top:16px;z-index:999999;max-width:360px;padding:14px;border:1px solid #fb923c;border-radius:10px;background:#0f172a;color:#f8fafc;font:13px/1.5 Arial,sans-serif}
+      #${TOGGLE_ID}{position:fixed;z-index:2147483646;left:16px;bottom:18px;border:1px solid #fb923c;border-radius:999px;padding:11px 16px;background:#0f172a;color:#fff;box-shadow:0 12px 28px #0006;font:700 14px Arial,sans-serif;cursor:pointer}#${TOGGLE_ID}[hidden]{display:none!important}
+      #${AUTOADD_ID}{position:fixed;z-index:2147483645;left:16px;bottom:72px;max-width:min(520px,calc(100vw - 32px));display:flex;align-items:center;gap:10px;padding:12px 15px;border:1px solid #22c55e88;border-radius:12px;background:#052e22;color:#dcfce7;box-shadow:0 12px 28px #0006;font:700 14px Arial,sans-serif}#${AUTOADD_ID}.next-cycle{border-color:#fb923c;background:#431407;color:#ffedd5}#${AUTOADD_ID} .icon{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#ffffff18;font-size:17px}
+      #${NOTICE_ID}{position:fixed;right:16px;top:16px;z-index:2147483647;max-width:360px;padding:14px;border:1px solid #fb923c;border-radius:10px;background:#0f172a;color:#f8fafc;font:13px/1.5 Arial,sans-serif}
     `;
     document.documentElement.appendChild(style);
   }
@@ -293,13 +293,34 @@
 
   function enablePanelScrolling(panel) {
     const body = panel.querySelector('.body');
-    if (!body) return;
-    body.addEventListener('wheel', event => {
-      if (body.scrollHeight <= body.clientHeight) return;
+    if (!body || panel.dataset.scrollGuard === '1') return;
+    panel.dataset.scrollGuard = '1';
+
+    const scrollBody = event => {
+      if (body.scrollHeight <= body.clientHeight) return false;
       body.scrollTop += event.deltaY;
       event.preventDefault();
       event.stopPropagation();
-    }, { passive: false });
+      event.stopImmediatePropagation?.();
+      return true;
+    };
+
+    body.addEventListener('wheel', scrollBody, { passive: false });
+
+    // Algumas janelas do SPX colocam uma máscara sobre a página e capturam
+    // a roda do mouse. No capture, usamos a posição do ponteiro para manter
+    // a rolagem da nossa caixa funcionando sem criar outra barra.
+    window.addEventListener('wheel', event => {
+      if (panel.hidden || body.scrollHeight <= body.clientHeight) return;
+      const rect = body.getBoundingClientRect();
+      const inside =
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom;
+
+      if (inside) scrollBody(event);
+    }, { passive: false, capture: true });
   }
 
   function formatDate(timestamp) {

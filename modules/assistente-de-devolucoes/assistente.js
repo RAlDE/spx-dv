@@ -2,6 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
+  const MODULE_VERSION = '1.3.1';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -205,7 +206,7 @@
     if (!panel) {
       panel = document.createElement('section');
       panel.id = PANEL_ID;
-      panel.innerHTML = '<header><h2>Rastreio do pedido</h2><small>Shipment ID: <strong></strong></small><div class="header-actions"><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>';
+      panel.innerHTML = `<header><h2>Rastreio do pedido <small style="display:inline;font-size:11px;margin-left:5px;color:#fff;opacity:.8">v${MODULE_VERSION}</small></h2><small>Shipment ID: <strong></strong></small><div class="header-actions"><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>`;
       panel.addEventListener('click', handleAction);
       document.body.appendChild(panel);
       restorePanelPosition(panel);

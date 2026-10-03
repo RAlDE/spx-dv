@@ -503,7 +503,7 @@
       const addressActions = index === ordered.length - 1 && normalize(reason) === 'endereco nao encontrado' && address.pending
         ? `<div class="actions" data-reason-id="${escapeHtml(address.reasonId)}" data-local-lang="${escapeHtml(address.localLang)}"><button class="confirm" data-action="confirm">Confirmar</button><button class="cancel" data-action="cancel">Cancelar</button><div class="result"></div></div>`
         : '';
-      return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason">${escapeHtml(reason)}</span><div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')} <span class="driver-code">— <b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span></div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
+      return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason">${escapeHtml(reason)}</span><div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span></div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
     }).join('');
     const decision = recommendation(ordered, address);
     return `${cards}<div class="decision ${decision.className}"><strong>${escapeHtml(decision.text)}</strong></div>`;

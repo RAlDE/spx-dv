@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "name": "SPX-DV",
-  "updatedAt": "2026-09-24T00:00:00Z",
+  "updatedAt": "2026-10-03T00:00:00Z",
   "owner": {
     "github": "RAlDE",
     "repository": "https://github.com/RAlDE/spx-dv"
@@ -14,7 +14,7 @@
       "id": "assistente-de-devolucoes",
       "name": "Assistente de devoluções",
       "description": "Exibe histórico de tentativas, motorista, horários, motivos e tratativa de endereço durante o recebimento.",
-      "version": "1.2.8",
+      "version": "1.2.9",
       "enabled": true,
       "type": "user_script",
       "matches": ["https://spx.shopee.com.br/*"],

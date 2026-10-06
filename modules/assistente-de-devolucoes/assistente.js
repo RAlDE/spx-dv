@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.2';
+  const MODULE_VERSION = '1.3.3';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -189,7 +189,7 @@
       #${PANEL_ID}.dragging header{cursor:grabbing}#${PANEL_ID} h2{margin:0;font-size:19px;display:flex;align-items:baseline;gap:6px}#${PANEL_ID} .module-version{font-size:11px;font-weight:700;color:#fff;opacity:.78}#${PANEL_ID} header small{display:block;margin-top:7px;color:#fff;font-size:19px;font-weight:700}#${PANEL_ID} header small strong{font-size:inherit}#${PANEL_ID} .header-actions{position:absolute;top:9px;right:9px;display:flex;gap:6px}#${PANEL_ID} .icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #fed7aa;border-radius:8px;background:#111827;color:#fff;font-size:18px;cursor:pointer}
       #${PANEL_ID} .body{max-height:65vh;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;pointer-events:auto;padding:10px}#${PANEL_ID} .message{padding:22px;text-align:center;color:#cbd5e1}#${PANEL_ID} .error{color:#fca5a5}
       #${PANEL_ID} .attempt{display:grid;grid-template-columns:27px minmax(0,1fr) auto;gap:9px;margin-bottom:8px;padding:10px;border:1px solid #3f3f46;border-radius:10px;background:#050505}
-      #${PANEL_ID} .index{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#334155;font-size:13px;font-weight:900}#${PANEL_ID} .reason{display:inline-block;padding:5px 10px;border-radius:999px;background:#16a34a33;color:#bbf7d0;font-size:19px;font-weight:800}
+      #${PANEL_ID} .index{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#334155;font-size:13px;font-weight:900}#${PANEL_ID} .reason{display:inline-block;padding:5px 10px;border-radius:999px;background:#16a34a33;color:#bbf7d0;font-size:19px;font-weight:800}#${PANEL_ID} .reason.reason-valid{background:#2563eb33;color:#bfdbfe}#${PANEL_ID} .reason.reason-final{background:#dc262633;color:#fecaca}
       #${PANEL_ID} .driver{margin-top:9px;color:#fff;font-size:19px;line-height:1.25}#${PANEL_ID} .driver .driver-code{color:#dbeafe}#${PANEL_ID} time{color:#fff;font-size:19px;font-weight:700;white-space:nowrap}#${PANEL_ID} img{width:58px;height:58px;margin-top:8px;border-radius:7px;object-fit:cover}
       #${PANEL_ID} .actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}#${PANEL_ID} .actions button{border:0;border-radius:8px;padding:10px;color:#fff;font-size:14px;font-weight:900;cursor:pointer}#${PANEL_ID} .confirm{background:#16a34a}#${PANEL_ID} .cancel{background:#dc2626}#${PANEL_ID} .result{grid-column:1/-1;color:#cbd5e1;font-size:12px}
       #${PANEL_ID} .decision{margin-top:10px;padding:12px;border:1px solid #22c55e66;border-radius:10px;background:#16a34a22;text-align:center}#${PANEL_ID} .decision.warn{border-color:#fb923c88;background:#9a341e33}#${PANEL_ID} .decision.stop{border-color:#ef444488;background:#7f1d1d44}#${PANEL_ID} .decision.address{border-color:#c084fc88;background:#6b21a844}#${PANEL_ID} .decision strong{font-size:16px}
@@ -495,6 +495,17 @@
     return { text: 'PROCESSAR PARA ENTREGA', className: '' };
   }
 
+  function reasonClass(reason) {
+    const normalized = normalize(reason);
+    if (normalized === 'mudanca de endereco' || normalized === 'rejeitado pelo comprador') {
+      return 'reason-final';
+    }
+    if (validReasons.has(normalized)) {
+      return 'reason-valid';
+    }
+    return '';
+  }
+
   function renderAttempts(attempts, address) {
     if (!attempts.length) return '<div class="message">Nenhuma tentativa On Hold encontrada.</div>';
     const ordered = [...attempts].sort((a, b) => Number(a.ctime) - Number(b.ctime));
@@ -504,7 +515,7 @@
       const addressActions = index === ordered.length - 1 && normalize(reason) === 'endereco nao encontrado' && address.pending
         ? `<div class="actions" data-reason-id="${escapeHtml(address.reasonId)}" data-local-lang="${escapeHtml(address.localLang)}"><button class="confirm" data-action="confirm">Confirmar</button><button class="cancel" data-action="cancel">Cancelar</button><div class="result"></div></div>`
         : '';
-      return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason">${escapeHtml(reason)}</span><div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span></div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
+      return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span></div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
     }).join('');
     const decision = recommendation(ordered, address);
     return `${cards}<div class="decision ${decision.className}"><strong>${escapeHtml(decision.text)}</strong></div>`;

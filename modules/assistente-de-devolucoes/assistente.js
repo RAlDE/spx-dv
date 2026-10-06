@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.4';
+  const MODULE_VERSION = '1.3.5';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -86,6 +86,7 @@
   let monitor = null;
   let collapsed = false;
   const autoCancelledAddress = new Set();
+  const cancelledAddressState = new Set();
 
   function isTargetRoute() {
     return location.origin === 'https://spx.shopee.com.br' && ROUTES.some(route => location.hash.startsWith(route));
@@ -513,9 +514,12 @@
     const cards = ordered.map((attempt, index) => {
       const reason = translateReason(attempt.on_hold_reason__desc);
       const photo = photoUrl(attempt);
-      const addressActions = index === ordered.length - 1 && normalize(reason) === 'endereco nao encontrado' && address.pending
-        ? `<div class="actions" data-reason-id="${escapeHtml(address.reasonId)}" data-local-lang="${escapeHtml(address.localLang)}"><button class="confirm" data-action="confirm">Confirmar</button><button class="cancel" data-action="cancel">Cancelar</button><div class="result"></div></div>`
-        : '';
+      const isLatestAddress = index === ordered.length - 1 && normalize(reason) === 'endereco nao encontrado';
+      const addressActions = isLatestAddress && cancelledAddressState.has(currentShipment)
+        ? '<div class="actions"><div class="result" style="grid-column:1/-1;font-weight:900;font-size:14px">Cancelado</div></div>'
+        : isLatestAddress && address.pending
+          ? `<div class="actions" data-reason-id="${escapeHtml(address.reasonId)}" data-local-lang="${escapeHtml(address.localLang)}"><button class="confirm" data-action="confirm">Confirmar</button><button class="cancel" data-action="cancel">Cancelar</button><div class="result"></div></div>`
+          : '';
       return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span></div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
     }).join('');
     const decision = recommendation(ordered, address);
@@ -571,6 +575,7 @@
         local_lang: actions.dataset.localLang || ''
       });
 
+      cancelledAddressState.add(shipmentId);
       actions.querySelectorAll('button').forEach(item => item.remove());
       if (result) {
         result.textContent = 'Cancelado';
@@ -661,7 +666,8 @@
           local_lang: actions.dataset.localLang || ''
         });
       }
-      if (result) result.textContent = action === 'confirm' ? 'Motivo confirmado.' : 'Motivo cancelado.';
+      if (action === 'cancel') cancelledAddressState.add(shipmentId);
+      if (result) result.textContent = action === 'confirm' ? 'Motivo confirmado.' : 'Cancelado';
       button.blur();
       restoreTrackingFocus();
     } catch (error) {
@@ -675,6 +681,7 @@
     const value = String(findInput()?.value || '').trim().toUpperCase();
     if (!value || value === currentShipment) return;
     autoCancelledAddress.delete(value);
+    cancelledAddressState.delete(value);
     currentShipment = value;
     const scanUnix = Math.floor(Date.now() / 1000);
     setTimeout(() => { if (currentShipment === value && authorized) loadShipment(value, scanUnix); }, 1200);

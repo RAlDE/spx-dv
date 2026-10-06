@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.6';
+  const MODULE_VERSION = '1.3.7';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -15,6 +15,8 @@
   const POSITION_KEY = 'spxdv:attempt-panel-position';
   const AUTOADD_OPERATOR = 'Admin(Polygon Auto Add)';
   const AUTOADD_RETRY_DELAYS = [0, 1200, 1800, 2500, 3200];
+  const SHEET_WEBAPP_URL = 'https://script.google.com/a/macros/shopee.com/s/AKfycbyYCiRSUK7r5kPeI19TFUkfgYr7WR2aCFCGMOJiZiY4rZPWu3j2eppuuMjK6pFAn_bS/exec';
+  const SHEET_SENT_KEY = 'spxdv:sheet-sent-v1';
 
   if (document.documentElement.dataset[APP_MARKER] === 'true') return;
   document.documentElement.dataset[APP_MARKER] = 'true';
@@ -603,6 +605,7 @@
       });
 
       markAddressCancelled(shipmentId);
+      void sendCancelledAddressToSheet(shipmentId);
       actions.querySelectorAll('button').forEach(item => item.remove());
       if (result) {
         result.textContent = 'Cancelado';
@@ -638,6 +641,54 @@
         void autoCancelAddressIfNeeded(shipmentId);
       }
     }, 120);
+  }
+
+  function readSheetSentState() {
+    try {
+      const raw = JSON.parse(sessionStorage.getItem(SHEET_SENT_KEY) || '{}');
+      const now = Date.now();
+      const clean = {};
+      for (const [shipmentId, timestamp] of Object.entries(raw || {})) {
+        if (now - Number(timestamp || 0) < 24 * 60 * 60 * 1000) clean[shipmentId] = Number(timestamp);
+      }
+      sessionStorage.setItem(SHEET_SENT_KEY, JSON.stringify(clean));
+      return clean;
+    } catch {
+      return {};
+    }
+  }
+
+  function wasSentToSheet(shipmentId) {
+    if (!shipmentId) return false;
+    return Boolean(readSheetSentState()[shipmentId]);
+  }
+
+  function markSentToSheet(shipmentId) {
+    if (!shipmentId) return;
+    const state = readSheetSentState();
+    state[shipmentId] = Date.now();
+    try { sessionStorage.setItem(SHEET_SENT_KEY, JSON.stringify(state)); } catch {}
+  }
+
+  async function sendCancelledAddressToSheet(shipmentId) {
+    if (!shipmentId || wasSentToSheet(shipmentId)) return true;
+
+    try {
+      await fetch(SHEET_WEBAPP_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        credentials: 'include',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({ br: shipmentId }),
+        keepalive: true
+      });
+
+      markSentToSheet(shipmentId);
+      return true;
+    } catch (error) {
+      console.warn('[SPX-DV] Falha ao enviar BR para planilha', error);
+      return false;
+    }
   }
 
   async function loadShipment(shipmentId, scanUnix = Math.floor(Date.now() / 1000)) {
@@ -696,7 +747,10 @@
           local_lang: actions.dataset.localLang || ''
         });
       }
-      if (action === 'cancel') markAddressCancelled(shipmentId);
+      if (action === 'cancel') {
+        markAddressCancelled(shipmentId);
+        void sendCancelledAddressToSheet(shipmentId);
+      }
       if (result) result.textContent = action === 'confirm' ? 'Motivo confirmado.' : 'Cancelado';
       button.blur();
       restoreTrackingFocus();

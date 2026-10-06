@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.3';
+  const MODULE_VERSION = '1.3.4';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -85,6 +85,7 @@
   let authorized = false;
   let monitor = null;
   let collapsed = false;
+  const autoCancelledAddress = new Set();
 
   function isTargetRoute() {
     return location.origin === 'https://spx.shopee.com.br' && ROUTES.some(route => location.hash.startsWith(route));
@@ -521,6 +522,89 @@
     return `${cards}<div class="decision ${decision.className}"><strong>${escapeHtml(decision.text)}</strong></div>`;
   }
 
+  function isVisibleElement(element) {
+    if (!element) return false;
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return style.display !== 'none' &&
+      style.visibility !== 'hidden' &&
+      Number(style.opacity || 1) !== 0 &&
+      rect.width > 0 &&
+      rect.height > 0;
+  }
+
+  function hasMidwayInterceptModal() {
+    const candidates = [...document.querySelectorAll('body *')];
+    return candidates.some(element => {
+      if (!isVisibleElement(element)) return false;
+      const text = normalize(element.innerText || '');
+      return text.includes('interceptado no meio do caminho') &&
+        text.includes('pedido interceptado');
+    });
+  }
+
+  async function autoCancelAddressIfNeeded(shipmentId) {
+    if (!shipmentId || autoCancelledAddress.has(shipmentId)) return;
+
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel || panel.dataset.shipmentId !== shipmentId) return;
+
+    const actions = panel.querySelector('.actions');
+    if (!actions) return;
+
+    const cancelButton = actions.querySelector('[data-action="cancel"]');
+    const confirmButton = actions.querySelector('[data-action="confirm"]');
+    if (!cancelButton || !confirmButton) return;
+    if (!hasMidwayInterceptModal()) return;
+
+    autoCancelledAddress.add(shipmentId);
+    const result = actions.querySelector('.result');
+
+    actions.querySelectorAll('button').forEach(item => { item.disabled = true; });
+    if (result) result.textContent = 'Cancelando...';
+
+    try {
+      await postJson('https://spx.shopee.com.br/api/in-station/admin/common_site/eha/cancel_eo_reason', {
+        shipment_id: shipmentId,
+        reason_id: actions.dataset.reasonId || ADDRESS_REASON_ID,
+        reason_desc: ADDRESS_REASON_DESC,
+        local_lang: actions.dataset.localLang || ''
+      });
+
+      actions.querySelectorAll('button').forEach(item => item.remove());
+      if (result) {
+        result.textContent = 'Cancelado';
+        result.style.fontWeight = '900';
+        result.style.fontSize = '14px';
+      }
+
+      restoreTrackingFocus();
+    } catch (error) {
+      autoCancelledAddress.delete(shipmentId);
+      if (result) result.textContent = `Falha: ${error.message}`;
+      actions.querySelectorAll('button').forEach(item => { item.disabled = false; });
+    }
+  }
+
+  function watchForAutoAddressCancel(shipmentId) {
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      if (shipmentId !== currentShipment || Date.now() - startedAt > 7000) {
+        clearInterval(timer);
+        return;
+      }
+
+      const panel = document.getElementById(PANEL_ID);
+      const actions = panel?.querySelector('.actions');
+      if (!actions) return;
+
+      if (hasMidwayInterceptModal()) {
+        clearInterval(timer);
+        void autoCancelAddressIfNeeded(shipmentId);
+      }
+    }, 120);
+  }
+
   async function loadShipment(shipmentId, scanUnix = Math.floor(Date.now() / 1000)) {
     const version = ++currentRequest;
     showPanel(shipmentId, '<div class="message">Consultando histórico...</div>');
@@ -539,6 +623,9 @@
         catch { address = { pending: false }; }
       }
       showPanel(shipmentId, renderAttempts(attempts, address));
+      if (address.pending && normalize(latestReason) === 'endereco nao encontrado') {
+        watchForAutoAddressCancel(shipmentId);
+      }
     } catch (error) {
       showPanel(shipmentId, `<div class="message error">Não foi possível consultar: ${escapeHtml(error.message)}</div>`);
     }
@@ -587,6 +674,7 @@
     if (!isTargetRoute() || !authorized) return;
     const value = String(findInput()?.value || '').trim().toUpperCase();
     if (!value || value === currentShipment) return;
+    autoCancelledAddress.delete(value);
     currentShipment = value;
     const scanUnix = Math.floor(Date.now() / 1000);
     setTimeout(() => { if (currentShipment === value && authorized) loadShipment(value, scanUnix); }, 1200);

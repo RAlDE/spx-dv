@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.10';
+  const MODULE_VERSION = '1.3.11';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -425,24 +425,71 @@
     return output;
   }
 
+  function returnEventTimestamp(node) {
+    const candidates = [
+      node?.timestamp, node?.ctime, node?.event_time, node?.create_time,
+      node?.created_at, node?.created_time, node?.event_timestamp,
+      node?.update_time, node?.time, node?.date, node?.datetime
+    ];
+    for (const value of candidates) {
+      if (value === null || value === undefined || value === '') continue;
+      if (typeof value === 'object') {
+        const nested = value?.seconds ?? value?.timestamp ?? value?.time;
+        const numericNested = Number(nested);
+        if (Number.isFinite(numericNested) && numericNested > 0) {
+          return numericNested > 1e12 ? Math.floor(numericNested / 1000) : Math.floor(numericNested);
+        }
+      }
+      const numeric = Number(value);
+      if (Number.isFinite(numeric) && numeric > 0) {
+        return numeric > 1e12 ? Math.floor(numeric / 1000) : Math.floor(numeric);
+      }
+      const parsed = Date.parse(String(value));
+      if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
+    }
+    return 0;
+  }
+
+  function collectAllObjects(value, output = [], seen = new WeakSet(), depth = 0) {
+    if (!value || typeof value !== 'object' || depth > 16 || seen.has(value)) return output;
+    seen.add(value);
+    if (!Array.isArray(value)) output.push(value);
+    for (const child of Object.values(value)) {
+      if (child && typeof child === 'object') collectAllObjects(child, output, seen, depth + 1);
+    }
+    return output;
+  }
+
   function extractCurrentReturnOccurrence(tracking) {
-    const nodes = collectTrackingNodes(tracking?.data?.tracking_list);
+    const nodes = collectAllObjects(tracking);
     const matches = nodes.map((node, index) => {
-      const text = [node?.status, node?.state, node?.event_code, node?.event_name, node?.title, node?.message, node?.description]
-        .filter(Boolean).join(' ');
+      const text = [
+        node?.status, node?.state, node?.event_code, node?.event_name,
+        node?.status_name, node?.title, node?.message, node?.description
+      ].filter(Boolean).join(' ');
+
       if (!/retorno[_\s-]*lmhub[_\s-]*em[_\s-]*espera/i.test(text) &&
           !/return[_\s-]*lmhub[_\s-]*(onhold|on[_\s-]*hold)/i.test(text)) return null;
-      const raw = [node?.message, node?.description, node?.title].filter(Boolean).join(' ');
-      const reason = raw.match(/\[([^\]]+)\]/)?.[1] || raw.match(/\(([^)]+)\)/)?.[1] || '';
-      const stamp = Number(node?.timestamp || node?.ctime || 0);
-      return stamp > 0 ? {
-        ctime: stamp > 1e12 ? Math.floor(stamp / 1000) : stamp,
+
+      const raw = [node?.message, node?.description, node?.title, node?.remark, node?.reason]
+        .filter(Boolean).join(' ');
+      const reason =
+        raw.match(/\[([^\]]+)\]/)?.[1] ||
+        raw.match(/\(([^)]+)\)/)?.[1] ||
+        raw.match(/(?:em espera|on\s*hold)\s*[:\-]\s*([^\n]+)/i)?.[1] ||
+        '';
+      const stamp = returnEventTimestamp(node);
+      if (!stamp) return null;
+
+      return {
+        ctime: stamp,
         on_hold_reason__desc: reason || 'Retorno LMHub em espera',
         current_return: true,
-        return_operator: String(node?.operator || node?.biz_staff_name || '').trim(),
+        return_operator: String(node?.operator || node?.biz_staff_name || node?.operator_name || '').trim(),
         index
-      } : null;
+      };
     }).filter(Boolean).sort((a, b) => Number(b.ctime) - Number(a.ctime) || b.index - a.index);
+
     return matches[0] || null;
   }
 

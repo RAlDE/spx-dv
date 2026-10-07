@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.10
+Versão atual do módulo: 1.3.11
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -122,3 +122,17 @@ Agora o módulo também consulta o tracking atual. Se existir um evento mais rec
 Exemplo validado pela regra esperada: ocorrência antiga "Rejeitado pelo comprador" em 28/09 + evento atual de retorno em 07/10 07:48 com motivo "Fora de Rota" => o motivo vigente deve ser "Fora de Rota" e a recomendação deve ser "REALOCAR / FLEET".
 
 A versão 1.3.9 (abertura automática ao entrar no recebimento) foi preservada. Sintaxe do JavaScript validada antes da publicação. Teste real no SPX ainda pendente.
+
+
+## Atualização 1.3.11 — leitura ampla do retorno atual
+A correção 1.3.10 não localizou o evento real em alguns BRs porque a SPX pode entregar "Retorno_LMHub_Em_Espera" fora de `data.tracking_list` ou com campos de horário diferentes.
+
+Na 1.3.11, a busca percorre recursivamente todos os objetos da resposta de `tracking_info` e reconhece:
+- `Retorno_LMHub_Em_Espera`
+- `Return_LMHub_Onhold` / `Return_LMHub_On_Hold`
+
+Também aceita timestamp em `timestamp`, `ctime`, `event_time`, `create_time`, `created_at`, `created_time`, `event_timestamp`, `update_time`, `time`, `date` e `datetime`, inclusive datas em texto.
+
+O motivo atual é extraído de mensagens como `Devolução em espera: [Fora de Rota]`. Foi feito teste local com estrutura equivalente à imagem enviada: evento 07/10/2026 07:48, motivo "Fora de Rota", operador ROQUE DA CRUZ FERREIRA FILHO, com extração correta.
+
+O histórico antigo permanece visível, mas a ocorrência de retorno mais recente deve ser adicionada como "ATUAL DO RETORNO" e controlar a recomendação. Abertura automática da 1.3.9 permanece preservada.

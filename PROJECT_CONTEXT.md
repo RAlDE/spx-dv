@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.9
+Versão atual do módulo: 1.3.10
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -112,3 +112,13 @@ Na planilha, o Apps Script:
 
 ## Atualização 1.3.9 — abertura automática da caixa
 Ao entrar em uma das rotas de recebimento `generalReceiveTaskMgt/singleReceiveNew` ou `generalReceiveTaskOps/singleReceiveNew`, após validação de acesso, a caixa 'Rastreio do pedido' aparece imediatamente com 'Aguardando leitura do BR...', mesmo antes da primeira bipagem. Aceita as rotas com ou sem barra final. Ao bipar, o comportamento existente de consulta permanece. A regra de cancelamento e o envio à planilha não foram alterados. Sintaxe verificada antes de publicar; confirmação em ambiente real pendente.
+
+
+## Atualização 1.3.10 — ocorrência atual em BRs de retorno
+Corrigido o caso em que BRs já em fluxo de retorno continuavam usando uma ocorrência antiga do histórico On_Hold como motivo vigente, especialmente motivos finais em vermelho como "Mudança de endereço" e "Rejeitado pelo comprador".
+
+Agora o módulo também consulta o tracking atual. Se existir um evento mais recente "Retorno_LMHub_Em_Espera" / "Return_LMHub_Onhold", ele é acrescentado como ocorrência "ATUAL DO RETORNO" e passa a ser a referência para a recomendação. O histórico antigo continua visível, mas deixa de determinar a decisão quando pertence a um ciclo anterior.
+
+Exemplo validado pela regra esperada: ocorrência antiga "Rejeitado pelo comprador" em 28/09 + evento atual de retorno em 07/10 07:48 com motivo "Fora de Rota" => o motivo vigente deve ser "Fora de Rota" e a recomendação deve ser "REALOCAR / FLEET".
+
+A versão 1.3.9 (abertura automática ao entrar no recebimento) foi preservada. Sintaxe do JavaScript validada antes da publicação. Teste real no SPX ainda pendente.

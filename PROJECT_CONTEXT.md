@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.8
+Versão atual do módulo: 1.3.9
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -109,3 +109,6 @@ Na planilha, o Apps Script:
 - Manter o fluxo de bipagem rápido, sem exigir clique no campo após cancelamento.
 - Antes de editar, conferir a versão atual de `assistente.js` e `catalog.json` e manter os dois sincronizados.
 - Este arquivo é documentação apenas e não participa da execução da extensão.
+
+## Atualização 1.3.9 — abertura automática da caixa
+Ao entrar em uma das rotas de recebimento `generalReceiveTaskMgt/singleReceiveNew` ou `generalReceiveTaskOps/singleReceiveNew`, após validação de acesso, a caixa 'Rastreio do pedido' aparece imediatamente com 'Aguardando leitura do BR...', mesmo antes da primeira bipagem. Aceita as rotas com ou sem barra final. Ao bipar, o comportamento existente de consulta permanece. A regra de cancelamento e o envio à planilha não foram alterados. Sintaxe verificada antes de publicar; confirmação em ambiente real pendente.

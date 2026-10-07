@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.9';
+  const MODULE_VERSION = '1.3.10';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -425,6 +425,27 @@
     return output;
   }
 
+  function extractCurrentReturnOccurrence(tracking) {
+    const nodes = collectTrackingNodes(tracking?.data?.tracking_list);
+    const matches = nodes.map((node, index) => {
+      const text = [node?.status, node?.state, node?.event_code, node?.event_name, node?.title, node?.message, node?.description]
+        .filter(Boolean).join(' ');
+      if (!/retorno[_\s-]*lmhub[_\s-]*em[_\s-]*espera/i.test(text) &&
+          !/return[_\s-]*lmhub[_\s-]*(onhold|on[_\s-]*hold)/i.test(text)) return null;
+      const raw = [node?.message, node?.description, node?.title].filter(Boolean).join(' ');
+      const reason = raw.match(/\[([^\]]+)\]/)?.[1] || raw.match(/\(([^)]+)\)/)?.[1] || '';
+      const stamp = Number(node?.timestamp || node?.ctime || 0);
+      return stamp > 0 ? {
+        ctime: stamp > 1e12 ? Math.floor(stamp / 1000) : stamp,
+        on_hold_reason__desc: reason || 'Retorno LMHub em espera',
+        current_return: true,
+        return_operator: String(node?.operator || node?.biz_staff_name || '').trim(),
+        index
+      } : null;
+    }).filter(Boolean).sort((a, b) => Number(b.ctime) - Number(a.ctime) || b.index - a.index);
+    return matches[0] || null;
+  }
+
   function assignmentTaskId(message) {
     const text = String(message || '');
     if (!/Assignment Task/i.test(text)) return '';
@@ -516,12 +537,14 @@
 
   function recommendation(attempts, address) {
     const ordered = [...attempts].sort((a, b) => Number(a.ctime) - Number(b.ctime));
-    const reasons = ordered.map(item => normalize(translateReason(item.on_hold_reason__desc)));
-    const validDays = new Set(ordered
+    const currentReturn = [...ordered].reverse().find(item => item?.current_return === true);
+    const relevant = currentReturn ? ordered.filter(item => Number(item.ctime || 0) >= Number(currentReturn.ctime || 0)) : ordered;
+    const reasons = relevant.map(item => normalize(translateReason(item.on_hold_reason__desc)));
+    const validDays = new Set(relevant
       .filter(item => validReasons.has(normalize(translateReason(item.on_hold_reason__desc))))
       .map(item => attemptDay(item.ctime)).filter(Boolean)).size;
     if (reasons.at(-1) === 'fora de rota') return { text: 'REALOCAR / FLEET', className: 'warn' };
-    if (reasons.some(reason => finalReasons.has(reason)) || validDays >= 3) return { text: 'RETORNAR AO SOC', className: 'stop' };
+    if (finalReasons.has(reasons.at(-1)) || validDays >= 3) return { text: 'RETORNAR AO SOC', className: 'stop' };
     if (address.pending) return { text: 'TRATATIVA DE ENDEREÇO', className: 'address' };
     return { text: 'PROCESSAR PARA ENTREGA', className: '' };
   }
@@ -549,6 +572,9 @@
       const addressActions = isLatestAddress && !wasCancelled && address.pending
         ? `<div class="actions" data-reason-id="${escapeHtml(address.reasonId)}" data-local-lang="${escapeHtml(address.localLang)}"><button class="confirm" data-action="confirm">Confirmar</button><button class="cancel" data-action="cancel">Cancelar</button><div class="result"></div></div>`
         : '';
+      if (attempt?.current_return) {
+        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">ATUAL DO RETORNO</div><div class="driver">${attempt.return_operator ? '<b>Operador:</b> ' + escapeHtml(attempt.return_operator) : 'Ocorrência atual do retorno'}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
+      }
       return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span>${cancelledBadge}<div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span></div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
     }).join('');
     const decision = recommendation(ordered, address);
@@ -672,16 +698,22 @@
       if (version === currentRequest && shipmentId === currentShipment) showAutoAdd(info);
     });
     try {
-      const history = await fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`);
+      const [history, tracking] = await Promise.all([
+        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`),
+        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null)
+      ]);
       if (version !== currentRequest || shipmentId !== currentShipment) return;
       const attempts = Array.isArray(history?.data?.recipient?.On_Hold) ? history.data.recipient.On_Hold.filter(Boolean) : [];
+      const currentReturn = extractCurrentReturnOccurrence(tracking);
+      const latestAttemptTime = attempts.reduce((max, item) => Math.max(max, Number(item?.ctime || 0)), 0);
+      const visibleAttempts = currentReturn && Number(currentReturn.ctime || 0) > latestAttemptTime ? [...attempts, currentReturn] : attempts;
       let address = { pending: false };
       const latestReason = translateReason([...attempts].sort((a, b) => Number(a.ctime) - Number(b.ctime)).at(-1)?.on_hold_reason__desc);
       if (normalize(latestReason) === 'endereco nao encontrado') {
         try { address = getAddressState(await postJson('https://spx.shopee.com.br/api/in-station/admin/common_site/eha/no_reason_inbound', { shipment_id: shipmentId })); }
         catch { address = { pending: false }; }
       }
-      showPanel(shipmentId, renderAttempts(attempts, address, shipmentId));
+      showPanel(shipmentId, renderAttempts(visibleAttempts, address, shipmentId));
       if (address.pending && normalize(latestReason) === 'endereco nao encontrado') {
         watchForAutoAddressCancel(shipmentId);
       }

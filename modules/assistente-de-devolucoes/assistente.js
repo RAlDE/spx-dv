@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.8';
+  const MODULE_VERSION = '1.3.9';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -117,7 +117,8 @@
   }
 
   function isTargetRoute() {
-    return location.origin === 'https://spx.shopee.com.br' && ROUTES.some(route => location.hash.startsWith(route));
+    return location.origin === 'https://spx.shopee.com.br' &&
+      ROUTES.some(route => location.hash.startsWith(route) || location.hash === route.slice(0, -1));
   }
 
   function normalize(value) {
@@ -747,7 +748,12 @@
     if (!isTargetRoute()) return;
     showNotice('Verificando acesso da conta SPX...');
     await validateAccess();
-    if (!authorized || monitor) return;
+    if (!authorized || monitor || !isTargetRoute()) return;
+
+    // A caixa deve estar disponível ao abrir o ID de recebimento,
+    // sem aguardar a primeira bipagem de um pacote.
+    showPanel('', '<div class="message">Aguardando leitura do BR...</div>');
+    checkShipment();
     monitor = setInterval(checkShipment, 300);
     document.addEventListener('keydown', event => {
       if (event.key === 'Enter') { currentShipment = ''; checkShipment(); }

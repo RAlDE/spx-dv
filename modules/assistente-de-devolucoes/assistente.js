@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.13';
+  const MODULE_VERSION = '1.3.14';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -425,28 +425,41 @@
     return output;
   }
 
+  function parseReturnTimestamp(value) {
+    if (value === null || value === undefined || value === '') return 0;
+    if (typeof value === 'object') {
+      return parseReturnTimestamp(value?.seconds ?? value?.timestamp ?? value?.time);
+    }
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric > 1e12 ? Math.floor(numeric / 1000) : Math.floor(numeric);
+    }
+    const parsed = Date.parse(String(value));
+    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
+  }
+
   function returnEventTimestamp(node) {
     const candidates = [
       node?.timestamp, node?.ctime, node?.event_time, node?.create_time,
       node?.created_at, node?.created_time, node?.event_timestamp,
       node?.update_time, node?.time, node?.date, node?.datetime
     ];
+
     for (const value of candidates) {
-      if (value === null || value === undefined || value === '') continue;
-      if (typeof value === 'object') {
-        const nested = value?.seconds ?? value?.timestamp ?? value?.time;
-        const numericNested = Number(nested);
-        if (Number.isFinite(numericNested) && numericNested > 0) {
-          return numericNested > 1e12 ? Math.floor(numericNested / 1000) : Math.floor(numericNested);
-        }
-      }
-      const numeric = Number(value);
-      if (Number.isFinite(numeric) && numeric > 0) {
-        return numeric > 1e12 ? Math.floor(numeric / 1000) : Math.floor(numeric);
-      }
-      const parsed = Date.parse(String(value));
-      if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
+      const timestamp = parseReturnTimestamp(value);
+      if (timestamp >= 1577836800 && timestamp <= 4102444800) return timestamp;
     }
+
+    // Mesmo princípio que validamos no SPX OnHold: se o nome do campo variar,
+    // varremos as chaves de tempo do próprio objeto em vez de depender de um nome fixo.
+    for (const [key, value] of Object.entries(node || {})) {
+      const nk = normalize(key);
+      if (!/timestamp|ctime|event.*time|create.*time|created|updated|date|datetime|occurred/.test(nk)) continue;
+      if (value && typeof value === 'object') continue;
+      const timestamp = parseReturnTimestamp(value);
+      if (timestamp >= 1577836800 && timestamp <= 4102444800) return timestamp;
+    }
+
     return 0;
   }
 
@@ -464,65 +477,89 @@
     return normalize(value).replace(/[\s-]+/g, '_').replace(/_+/g, '_');
   }
 
-  function nodeHasTrackingStatus(node, expectedStatus) {
-    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
-    const expected = trackingStatusText(expectedStatus);
+  function primitiveEntries(node) {
+    return Object.entries(node || {}).filter(([, value]) =>
+      value !== null && value !== undefined && !(value && typeof value === 'object')
+    );
+  }
 
-    return Object.values(node).some(value => {
-      if (value === null || value === undefined || (value && typeof value === 'object')) return false;
+  function nodeIsReturnOnhold(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+
+    return primitiveEntries(node).some(([, value]) => {
       const text = trackingStatusText(value);
-      return text === expected || text.includes(expected);
+      return text.includes('return_lmhub_onhold') ||
+        text.includes('return_lmhub_on_hold') ||
+        text.includes('retorno_lmhub_em_espera');
     });
   }
 
-  function returnCycleStartTimestamp(tracking) {
-    const starts = collectAllObjects(tracking).map((node, index) => {
-      if (!nodeHasTrackingStatus(node, 'Return_LMHub_Onhold')) return null;
-      const timestamp = returnEventTimestamp(node);
-      if (!timestamp) return null;
-      return { timestamp, index };
-    }).filter(Boolean);
+  function returnOccurrenceReason(node) {
+    const entries = primitiveEntries(node);
 
-    if (!starts.length) return 0;
+    // O SPX real exibiu:
+    // Retorno_LMHub_Em_Espera
+    // mensagem: Devolução em espera: [Comércio Fechado]
+    // Priorizamos exatamente essa mensagem para não capturar códigos entre colchetes.
+    const preferred = entries
+      .filter(([key, value]) =>
+        /message|desc|description|remark|reason|title|content|detail/.test(normalize(key)) ||
+        /devolucao\s+em\s+espera|on\s*hold/i.test(normalize(value))
+      )
+      .map(([, value]) => String(value));
 
-    // A PRIMEIRA entrada em Return_LMHub_Onhold marca a passagem do fluxo normal
-    // para o fluxo de retorno. Retornos posteriores a Onhold após
-    // Return_LMHub_Returning continuam no mesmo ciclo e não criam um novo corte.
-    return starts.sort((a, b) => Number(a.timestamp) - Number(b.timestamp) || a.index - b.index)[0].timestamp;
+    const all = entries.map(([, value]) => String(value));
+    for (const text of [...preferred, ...all]) {
+      const exact =
+        text.match(/devolu[cç][aã]o\s+em\s+espera\s*:\s*\[([^\]]+)\]/i)?.[1] ||
+        text.match(/(?:return|retorno).*?(?:on\s*hold|em\s+espera)\s*:\s*\[([^\]]+)\]/i)?.[1] ||
+        text.match(/(?:em\s+espera|on\s*hold)\s*[:\-]\s*\[?([^\]\n]+)\]?/i)?.[1];
+      if (exact) return String(exact).trim();
+    }
+    return '';
   }
 
-  function extractCurrentReturnOccurrence(tracking) {
-    const nodes = collectAllObjects(tracking);
-    const matches = nodes.map((node, index) => {
-      const text = [
-        node?.status, node?.state, node?.event_code, node?.event_name,
-        node?.status_name, node?.title, node?.message, node?.description
-      ].filter(Boolean).join(' ');
+  function returnOccurrenceOperator(node) {
+    return String(
+      node?.operator || node?.biz_staff_name || node?.operator_name ||
+      node?.staff_name || node?.operatorName || ''
+    ).trim();
+  }
 
-      if (!nodeHasTrackingStatus(node, 'Return_LMHub_Onhold') &&
-          !/retorno[_\s-]*lmhub[_\s-]*em[_\s-]*espera/i.test(text) &&
-          !/return[_\s-]*lmhub[_\s-]*(onhold|on[_\s-]*hold)/i.test(text)) return null;
-
-      const raw = [node?.message, node?.description, node?.title, node?.remark, node?.reason]
-        .filter(Boolean).join(' ');
-      const reason =
-        raw.match(/\[([^\]]+)\]/)?.[1] ||
-        raw.match(/\(([^)]+)\)/)?.[1] ||
-        raw.match(/(?:em espera|on\s*hold)\s*[:\-]\s*([^\n]+)/i)?.[1] ||
-        '';
+  function extractReturnOccurrences(tracking) {
+    const matches = collectAllObjects(tracking).map((node, index) => {
+      if (!nodeIsReturnOnhold(node)) return null;
       const stamp = returnEventTimestamp(node);
       if (!stamp) return null;
 
       return {
         ctime: stamp,
-        on_hold_reason__desc: reason || 'Retorno LMHub em espera',
-        current_return: true,
-        return_operator: String(node?.operator || node?.biz_staff_name || node?.operator_name || '').trim(),
+        on_hold_reason__desc: returnOccurrenceReason(node) || 'Retorno LMHub em espera',
+        return_occurrence: true,
+        current_return: false,
+        return_operator: returnOccurrenceOperator(node),
         index
       };
-    }).filter(Boolean).sort((a, b) => Number(b.ctime) - Number(a.ctime) || b.index - a.index);
+    }).filter(Boolean)
+      .sort((a, b) => Number(a.ctime) - Number(b.ctime) || a.index - b.index);
 
-    return matches[0] || null;
+    // Evita duplicidade caso o mesmo evento apareça repetido em estruturas internas.
+    const unique = [];
+    const seen = new Set();
+    for (const item of matches) {
+      const key = String(item.ctime) + '|' + normalize(item.on_hold_reason__desc);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(item);
+    }
+
+    if (unique.length) unique[unique.length - 1].current_return = true;
+    return unique;
+  }
+
+  function returnCycleStartTimestamp(tracking) {
+    const occurrences = extractReturnOccurrences(tracking);
+    return occurrences.length ? Number(occurrences[0].ctime || 0) : 0;
   }
 
   function assignmentTaskId(message) {
@@ -653,8 +690,9 @@
       const addressActions = isLatestAddress && !wasCancelled && address.pending
         ? `<div class="actions" data-reason-id="${escapeHtml(address.reasonId)}" data-local-lang="${escapeHtml(address.localLang)}"><button class="confirm" data-action="confirm">Confirmar</button><button class="cancel" data-action="cancel">Cancelar</button><div class="result"></div></div>`
         : '';
-      if (attempt?.current_return) {
-        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">ATUAL DO RETORNO</div><div class="driver">${attempt.return_operator ? '<b>Operador:</b> ' + escapeHtml(attempt.return_operator) : 'Ocorrência atual do retorno'}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
+      if (attempt?.return_occurrence) {
+        const returnLabel = attempt.current_return ? 'ATUAL DO RETORNO' : 'OCORRÊNCIA DO RETORNO';
+        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${attempt.return_operator ? '<b>Operador:</b> ' + escapeHtml(attempt.return_operator) : 'Ocorrência do retorno'}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
       }
       return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span>${cancelledBadge}<div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span></div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
     }).join('');
@@ -792,20 +830,24 @@
       // BR DE RETORNO: a primeira entrada em Return_LMHub_Onhold é a fronteira.
       // Tudo anterior pertence ao fluxo normal antigo. Depois dessa fronteira,
       // Return_LMHub_Returning e novos Return_LMHub_Onhold seguem no MESMO ciclo.
-      const cycleStart = returnCycleStartTimestamp(tracking);
+      const returnOccurrences = extractReturnOccurrences(tracking);
+      const cycleStart = returnOccurrences.length ? Number(returnOccurrences[0].ctime || 0) : 0;
       const currentAttempts = cycleStart
         ? attempts.filter(item => Number(item?.ctime || 0) >= Number(cycleStart))
         : attempts;
 
-      const currentReturnRaw = extractCurrentReturnOccurrence(tracking);
-      const currentReturn = currentReturnRaw &&
-        (!cycleStart || Number(currentReturnRaw.ctime || 0) >= Number(cycleStart))
-          ? currentReturnRaw
-          : null;
-      const latestAttemptTime = currentAttempts.reduce((max, item) => Math.max(max, Number(item?.ctime || 0)), 0);
-      const visibleAttempts = currentReturn && Number(currentReturn.ctime || 0) > latestAttemptTime
-        ? [...currentAttempts, currentReturn]
-        : currentAttempts;
+      // Em BR de retorno, juntamos apenas as ocorrências do ciclo iniciado em
+      // Retorno_LMHub_Em_Espera / Return_LMHub_Onhold. O histórico normal anterior some.
+      // Se houver mais de uma ocorrência de retorno, todas permanecem visíveis.
+      const merged = cycleStart ? [...currentAttempts, ...returnOccurrences] : currentAttempts;
+      const visibleAttempts = merged
+        .filter((item, index, list) => {
+          const key = String(item?.ctime || 0) + '|' + normalize(translateReason(item?.on_hold_reason__desc));
+          return list.findIndex(other =>
+            String(other?.ctime || 0) + '|' + normalize(translateReason(other?.on_hold_reason__desc)) === key
+          ) === index;
+        })
+        .sort((a, b) => Number(a?.ctime || 0) - Number(b?.ctime || 0));
 
       let address = { pending: false };
       const latestReason = translateReason([...currentAttempts]

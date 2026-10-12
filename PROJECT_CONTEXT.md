@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.14
+Versão atual do módulo: 1.3.15
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -235,3 +235,35 @@ A 1.3.14 passa a:
 
 Teste local com o padrão exato observado na tela passou: `Retorno_LMHub_Em_Espera` -> `Comércio Fechado`.
 Sintaxe validada. Validação real da 1.3.14 ainda pendente.
+
+
+## Atualização 1.3.15 — diagnóstico da fonte real do histórico Return
+A 1.3.14 continuou exibindo o histórico antigo no teste real, embora a tela de detalhes do pedido mostrasse claramente `Retorno_LMHub_Em_Espera` com a mensagem `Devolução em espera: [Comércio Fechado]`.
+
+Decisão: não alterar novamente a regra funcional sem antes identificar a fonte real da informação.
+
+A 1.3.15 é uma versão de diagnóstico:
+- não muda as regras de recomendação;
+- não muda o filtro funcional da 1.3.14;
+- instala captura passiva de respostas `fetch` e `XMLHttpRequest` em páginas do domínio SPX;
+- funciona também fora da tela de recebimento, inclusive na página individual de detalhes do pedido;
+- procura respostas relacionadas ao BR ou que contenham sinais de retorno, como:
+  - `Retorno_LMHub_Em_Espera`
+  - `Return_LMHub_Onhold`
+  - `Retorno_LMHub_Retornando`
+  - `Return_LMHub_Returning`
+  - `Devolução em espera`
+  - `Comércio Fechado`
+- registra endpoint, tamanho da resposta, BR da página, sinais encontrados e campos relevantes da resposta;
+- armazena o diagnóstico em `localStorage`, permitindo capturar na aba de detalhes e consultar na aba de recebimento;
+- adiciona botão `i` no cabeçalho da caixa do SPX-DV para abrir o diagnóstico.
+
+Objetivo da validação:
+1. atualizar para 1.3.15 e recarregar o SPX;
+2. abrir o detalhe de um BR Return em que a timeline mostre `Retorno_LMHub_Em_Espera`;
+3. aguardar o histórico carregar;
+4. voltar à tela de recebimento e bipar o mesmo BR;
+5. abrir o botão `i`;
+6. usar o endpoint e os campos capturados para implementar a leitura definitiva, sem novas suposições.
+
+Sintaxe JavaScript validada. Validação real pendente.

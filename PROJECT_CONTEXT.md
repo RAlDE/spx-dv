@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.11
+Versão atual do módulo: 1.3.12
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -136,3 +136,18 @@ Também aceita timestamp em `timestamp`, `ctime`, `event_time`, `create_time`, `
 O motivo atual é extraído de mensagens como `Devolução em espera: [Fora de Rota]`. Foi feito teste local com estrutura equivalente à imagem enviada: evento 07/10/2026 07:48, motivo "Fora de Rota", operador ROQUE DA CRUZ FERREIRA FILHO, com extração correta.
 
 O histórico antigo permanece visível, mas a ocorrência de retorno mais recente deve ser adicionada como "ATUAL DO RETORNO" e controlar a recomendação. Abertura automática da 1.3.9 permanece preservada.
+
+
+## Atualização 1.3.12 — corte do histórico pelo último Delivering
+Após teste real, 1.3.10 e 1.3.11 ainda deixavam visíveis ocorrências antigas de ciclos anteriores, inclusive anteriores à entrada do pacote no ciclo atual do hub.
+
+Na 1.3.12, o SPX-DV passa a usar a mesma estratégia validada no projeto SPX OnHold:
+- varre recursivamente o `tracking_info` do próprio BR;
+- identifica eventos `Delivering` pelo nome textual ou pelo código interno `2` em campos de status/state;
+- seleciona o Delivering mais recente;
+- usa a data/hora desse evento como início do ciclo atual;
+- filtra `data.recipient.On_Hold` para mostrar e considerar apenas ocorrências com `ctime` igual ou posterior a esse corte.
+
+Assim, ocorrências anteriores à última saída em rota deixam de aparecer e deixam de influenciar a recomendação. Se nenhum Delivering for localizado, o módulo preserva o comportamento anterior como fallback.
+
+A lógica existente de cancelamento de endereço, Google Sheets, AutoAdd, cores e regra dos 3 dias distintos não foi alterada. Sintaxe validada e teste local de corte entre ciclo antigo e ciclo atual passou; validação no SPX real ainda pendente.

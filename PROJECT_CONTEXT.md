@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.13
+Versão atual do módulo: 1.3.14
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -206,3 +206,32 @@ Validação local:
 - cenário de retorno com `Return_LMHub_Onhold` em t=300, `Return_LMHub_Returning` em t=400 e novo `Return_LMHub_Onhold` em t=500: o corte permanece em t=300 e ocorrências t=350, 450 e 550 são preservadas.
 - Sintaxe JavaScript validada.
 - Validação real no SPX ainda pendente.
+
+
+## Atualização 1.3.14 — leitura do status real visto no SPX
+A validação real da 1.3.13 falhou no BR BR260544875792V: o painel ainda exibiu ocorrências antigas de 28/09 e 30/09, enquanto o histórico real do pedido mostrava uma ocorrência de retorno em 10/10/2026 10:28:09.
+
+No histórico visual do SPX, o estado apareceu como:
+- `Retorno_LMHub_Em_Espera`
+- mensagem: `Devolução em espera: [Comércio Fechado]`
+
+Também foram vistos estados do fluxo de retorno como:
+- `Retorno_LMHub_Retornando`
+- `Retorno_LMHub_Atribuindo`
+- `Retorno_Atribuido_LMHub`
+- `Retorno_Recebido_LMHub`
+
+Conclusão: no ambiente real, o equivalente operacional de `Return_LMHub_Onhold` aparece como `Retorno_LMHub_Em_Espera`, e o equivalente de `Return_LMHub_Returning` aparece como `Retorno_LMHub_Retornando`.
+
+A 1.3.14 passa a:
+- reconhecer `Retorno_LMHub_Em_Espera`, `Return_LMHub_Onhold` e `Return_LMHub_On_Hold` como o mesmo tipo de ocorrência de retorno;
+- varrer recursivamente todos os objetos do `tracking_info`, sem depender de um único campo fixo;
+- localizar horário também por nomes alternativos de campos de tempo;
+- extrair o motivo diretamente da mensagem real, por exemplo `Devolução em espera: [Comércio Fechado]`;
+- usar a primeira ocorrência desse tipo como fronteira entre o histórico normal antigo e o ciclo de retorno atual;
+- preservar todas as ocorrências de retorno posteriores dentro do mesmo ciclo;
+- mostrar a mais recente como `ATUAL DO RETORNO` e as anteriores do mesmo ciclo como `OCORRÊNCIA DO RETORNO`;
+- deixar de exibir/considerar ocorrências normais anteriores à entrada no retorno.
+
+Teste local com o padrão exato observado na tela passou: `Retorno_LMHub_Em_Espera` -> `Comércio Fechado`.
+Sintaxe validada. Validação real da 1.3.14 ainda pendente.

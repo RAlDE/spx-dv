@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.14';
+  const MODULE_VERSION = '1.3.15';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -16,6 +16,7 @@
   const AUTOADD_OPERATOR = 'Admin(Polygon Auto Add)';
   const AUTOADD_RETRY_DELAYS = [0, 1200, 1800, 2500, 3200];
   const SHEET_WEBAPP_URL = 'https://script.google.com/a/macros/shopee.com/s/AKfycbyYCiRSUK7r5kPeI19TFUkfgYr7WR2aCFCGMOJiZiY4rZPWu3j2eppuuMjK6pFAn_bS/exec';
+  const RETURN_DIAG_KEY = 'spxdv:return-network-diag-v1';
 
   if (document.documentElement.dataset[APP_MARKER] === 'true') return;
   document.documentElement.dataset[APP_MARKER] = 'true';
@@ -86,6 +87,7 @@
   let authorized = false;
   let monitor = null;
   let collapsed = false;
+  let diagnosticView = false;
   const autoCancelledAddress = new Set();
   const CANCELLED_ADDRESS_KEY = 'spxdv:cancelled-address-v1';
 
@@ -146,6 +148,259 @@
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+
+  function pageShipmentId() {
+    return String(location.href).match(/BR[A-Z0-9]{8,}/i)?.[0]?.toUpperCase() || '';
+  }
+
+  function collectReturnDiagnosticHints(value, path = '', out = [], depth = 0) {
+    if (!value || typeof value !== 'object' || depth > 14 || out.length >= 100) return out;
+
+    for (const [key, child] of Object.entries(value)) {
+      if (out.length >= 100) break;
+      const nextPath = path ? path + '.' + key : key;
+
+      if (child && typeof child === 'object') {
+        collectReturnDiagnosticHints(child, nextPath, out, depth + 1);
+        continue;
+      }
+
+      const nk = normalize(key);
+      const sv = String(child ?? '');
+      const nv = normalize(sv);
+
+      if (
+        /status|state|event|message|desc|description|title|reason|remark|time|date|created|updated|operator|staff|return|retorno|lmhub/.test(nk) ||
+        /return_lmhub|retorno_lmhub|devolucao em espera|comercio fechado|retornando/.test(nv)
+      ) {
+        out.push({ path: nextPath, value: sv.slice(0, 260) });
+      }
+    }
+
+    return out;
+  }
+
+  function diagnosticExcerpt(text) {
+    const raw = String(text || '');
+    const match = raw.match(/retorno[_\s-]*lmhub[_\s-]*em[_\s-]*espera|return[_\s-]*lmhub[_\s-]*(?:onhold|on[_\s-]*hold)|devolu[cç][aã]o\s+em\s+espera|com[eé]rcio\s+fechado|retorno[_\s-]*lmhub[_\s-]*retornando/i);
+    if (!match) return '';
+    const start = Math.max(0, Number(match.index || 0) - 220);
+    const end = Math.min(raw.length, Number(match.index || 0) + 520);
+    return raw.slice(start, end);
+  }
+
+  function saveReturnDiagnostic(meta, parsed, rawText) {
+    try {
+      const urlText = String(meta?.url || '');
+      if (!urlText) return;
+
+      const url = new URL(urlText, location.href);
+      if (url.origin !== location.origin) return;
+      if (!/\/api\//i.test(url.pathname)) return;
+
+      const text = String(rawText || '');
+      if (!text) return;
+
+      const normalizedText = normalize(text);
+      const pageBr = pageShipmentId();
+      const activeBr = String(currentShipment || '').trim().toUpperCase();
+      const shipment = pageBr || activeBr;
+
+      const hasReturnWait =
+        /retorno[_\s-]*lmhub[_\s-]*em[_\s-]*espera/i.test(text) ||
+        /return[_\s-]*lmhub[_\s-]*(?:onhold|on[_\s-]*hold)/i.test(text);
+      const hasReturnReturning =
+        /retorno[_\s-]*lmhub[_\s-]*retornando/i.test(text) ||
+        /return[_\s-]*lmhub[_\s-]*returning/i.test(text);
+      const hasWaitingMessage = /devolu[cç][aã]o\s+em\s+espera/i.test(text);
+      const hasCommerce = /com[eé]rcio\s+fechado/i.test(text);
+      const hasShipment = shipment ? text.toUpperCase().includes(shipment) : false;
+      const isTrackingInfo = /tracking_info/i.test(urlText);
+
+      // Guardamos respostas diretamente relacionadas ao BR, ao fluxo Return
+      // ou o tracking_info que já está sendo investigado.
+      if (!hasReturnWait && !hasReturnReturning && !hasWaitingMessage &&
+          !hasCommerce && !hasShipment && !isTrackingInfo) return;
+
+      const candidate = {
+        capturedAt: new Date().toISOString(),
+        pageBr,
+        activeBr,
+        method: String(meta?.method || 'GET').toUpperCase(),
+        url: urlText,
+        size: text.length,
+        hasReturnWait,
+        hasReturnReturning,
+        hasWaitingMessage,
+        hasCommerce,
+        hasShipment,
+        isTrackingInfo,
+        excerpt: diagnosticExcerpt(text),
+        hints: parsed && typeof parsed === 'object'
+          ? collectReturnDiagnosticHints(parsed).slice(0, 70)
+          : []
+      };
+
+      let list = [];
+      try {
+        list = JSON.parse(localStorage.getItem(RETURN_DIAG_KEY) || '[]');
+        if (!Array.isArray(list)) list = [];
+      } catch {}
+
+      const signature = candidate.method + '|' + candidate.url + '|' + (candidate.pageBr || candidate.activeBr || '');
+      list = list.filter(item =>
+        (item.method + '|' + item.url + '|' + (item.pageBr || item.activeBr || '')) !== signature
+      );
+      list.unshift(candidate);
+      localStorage.setItem(RETURN_DIAG_KEY, JSON.stringify(list.slice(0, 30)));
+    } catch {}
+  }
+
+  async function inspectReturnFetchResponse(response, meta) {
+    try {
+      const url = new URL(String(meta?.url || ''), location.href);
+      if (url.origin !== location.origin || !/\/api\//i.test(url.pathname)) return;
+
+      const clone = response.clone();
+      const text = await clone.text();
+      if (!text) return;
+
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch {}
+      saveReturnDiagnostic(meta, parsed, text);
+    } catch {}
+  }
+
+  function installReturnNetworkDiagnostic() {
+    if (window.__SPX_DV_RETURN_NETWORK_DIAG__) return;
+    window.__SPX_DV_RETURN_NETWORK_DIAG__ = true;
+
+    const originalFetch = window.fetch;
+    window.fetch = function(input, init = {}) {
+      const url = typeof input === 'string' ? input : String(input?.url || '');
+      const method = init?.method || (typeof input !== 'string' ? input?.method : '') || 'GET';
+      const body = typeof init?.body === 'string' ? init.body : '';
+      const promise = originalFetch.apply(this, arguments);
+      promise.then(response => inspectReturnFetchResponse(response, { url, method, body }));
+      return promise;
+    };
+
+    const originalOpen = XMLHttpRequest.prototype.open;
+    const originalSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function(method, url) {
+      this.__spxDvReturnDiagMeta = {
+        method: String(method || 'GET'),
+        url: String(url || ''),
+        body: ''
+      };
+      return originalOpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function(body) {
+      if (this.__spxDvReturnDiagMeta && typeof body === 'string') {
+        this.__spxDvReturnDiagMeta.body = body.slice(0, 4000);
+      }
+
+      this.addEventListener('load', function() {
+        try {
+          const meta = this.__spxDvReturnDiagMeta || {};
+          const url = new URL(String(meta.url || ''), location.href);
+          if (url.origin !== location.origin || !/\/api\//i.test(url.pathname)) return;
+
+          let text = '';
+          let parsed = null;
+
+          if (this.responseType === 'json') {
+            parsed = this.response;
+            text = JSON.stringify(parsed);
+          } else if (!this.responseType || this.responseType === 'text') {
+            text = this.responseText || '';
+            try { parsed = JSON.parse(text); } catch {}
+          }
+
+          if (text) saveReturnDiagnostic(meta, parsed, text);
+        } catch {}
+      });
+
+      return originalSend.apply(this, arguments);
+    };
+  }
+
+  function getReturnDiagnostics() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(RETURN_DIAG_KEY) || '[]');
+      return Array.isArray(raw) ? raw : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function renderReturnDiagnostics() {
+    const panel = document.getElementById(PANEL_ID);
+    const body = panel?.querySelector('.body');
+    if (!panel || !body) return;
+
+    const shipmentId = String(panel.dataset.shipmentId || currentShipment || '').trim().toUpperCase();
+    const all = getReturnDiagnostics();
+    const relevant = all.filter(item => {
+      const br = String(item.pageBr || item.activeBr || '').toUpperCase();
+      return !shipmentId || !br || br === shipmentId || item.hasShipment;
+    });
+
+    const rows = relevant.length
+      ? relevant.slice(0, 12).map((item, index) => {
+          let path = item.url || '';
+          try {
+            const u = new URL(path, location.href);
+            path = u.pathname + u.search;
+          } catch {}
+
+          const flags = [
+            item.hasReturnWait ? 'Return OnHold/Em Espera' : '',
+            item.hasReturnReturning ? 'Return Returning/Retornando' : '',
+            item.hasWaitingMessage ? 'Devolução em espera' : '',
+            item.hasCommerce ? 'Comércio Fechado' : '',
+            item.hasShipment ? 'BR encontrado' : '',
+            item.isTrackingInfo ? 'tracking_info' : ''
+          ].filter(Boolean).join(' · ') || 'sem palavra-chave';
+
+          const hints = (item.hints || []).slice(0, 18).map(h =>
+            '<div style="padding:2px 0;border-top:1px solid #292929"><b>' +
+            escapeHtml(h.path) + '</b>: <span style="word-break:break-word">' +
+            escapeHtml(h.value) + '</span></div>'
+          ).join('');
+
+          const excerpt = item.excerpt
+            ? '<div style="margin-top:6px;padding:6px;background:#111827;border-radius:6px;word-break:break-word">' +
+              escapeHtml(item.excerpt) + '</div>'
+            : '';
+
+          return '<details ' + (index === 0 ? 'open' : '') +
+            ' style="margin-bottom:8px;border:1px solid #475569;border-radius:8px;background:#050505">' +
+            '<summary style="cursor:pointer;padding:9px;font-size:12px;font-weight:900;color:#fdba74">#' +
+            (index + 1) + ' ' + escapeHtml(item.method || 'GET') + ' · ' +
+            escapeHtml(item.size || 0) + ' bytes</summary>' +
+            '<div style="padding:8px;font-size:11px;line-height:1.45">' +
+            '<div style="word-break:break-all"><b>Endpoint:</b> ' + escapeHtml(path) + '</div>' +
+            '<div style="margin-top:4px"><b>BR da página:</b> ' + escapeHtml(item.pageBr || item.activeBr || '—') + '</div>' +
+            '<div style="margin-top:4px;color:#fbbf24"><b>Sinais:</b> ' + escapeHtml(flags) + '</div>' +
+            excerpt +
+            (hints ? '<div style="margin-top:6px">' + hints + '</div>' : '') +
+            '</div></details>';
+        }).join('')
+      : '<div class="message">Nenhuma fonte de retorno capturada ainda.</div>';
+
+    body.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px">' +
+      '<strong style="font-size:15px">DIAGNÓSTICO DO RETORNO</strong>' +
+      '<button type="button" data-diag-back style="border:1px solid #fed7aa;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Voltar</button>' +
+      '</div>' +
+      '<div style="font-size:12px;color:#cbd5e1;margin-bottom:9px">BR: <b>' + escapeHtml(shipmentId || '—') +
+      '</b> · v' + escapeHtml(MODULE_VERSION) + '</div>' +
+      rows;
   }
 
   function cookie(name) {
@@ -237,7 +492,7 @@
     if (!panel) {
       panel = document.createElement('section');
       panel.id = PANEL_ID;
-      panel.innerHTML = `<header><h2><span>Rastreio do pedido</span><span class="module-version">v${MODULE_VERSION}</span></h2><small>Shipment ID: <strong></strong></small><div class="header-actions"><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>`;
+      panel.innerHTML = `<header><h2><span>Rastreio do pedido</span><span class="module-version">v${MODULE_VERSION}</span></h2><small>Shipment ID: <strong></strong></small><div class="header-actions"><button class="icon-button" data-diagnostic title="Diagnóstico">i</button><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>`;
       panel.addEventListener('click', handleAction);
       document.body.appendChild(panel);
       restorePanelPosition(panel);
@@ -811,7 +1066,7 @@
 
   async function loadShipment(shipmentId, scanUnix = Math.floor(Date.now() / 1000)) {
     const version = ++currentRequest;
-    showPanel(shipmentId, '<div class="message">Consultando histórico...</div>');
+    if (!diagnosticView) showPanel(shipmentId, '<div class="message">Consultando histórico...</div>');
     document.getElementById(AUTOADD_ID)?.remove();
     void fetchAutoAddInfo(shipmentId, scanUnix, version).then(info => {
       if (version === currentRequest && shipmentId === currentShipment) showAutoAdd(info);
@@ -857,16 +1112,28 @@
         try { address = getAddressState(await postJson('https://spx.shopee.com.br/api/in-station/admin/common_site/eha/no_reason_inbound', { shipment_id: shipmentId })); }
         catch { address = { pending: false }; }
       }
-      showPanel(shipmentId, renderAttempts(visibleAttempts, address, shipmentId));
+      if (!diagnosticView) showPanel(shipmentId, renderAttempts(visibleAttempts, address, shipmentId));
       if (address.pending && normalize(latestReason) === 'endereco nao encontrado') {
         watchForAutoAddressCancel(shipmentId);
       }
     } catch (error) {
-      showPanel(shipmentId, `<div class="message error">Não foi possível consultar: ${escapeHtml(error.message)}</div>`);
+      if (!diagnosticView) showPanel(shipmentId, `<div class="message error">Não foi possível consultar: ${escapeHtml(error.message)}</div>`);
     }
   }
 
   async function handleAction(event) {
+    if (event.target.closest('[data-diagnostic]')) {
+      diagnosticView = !diagnosticView;
+      if (diagnosticView) renderReturnDiagnostics();
+      else if (currentShipment && authorized) loadShipment(currentShipment);
+      return;
+    }
+    if (event.target.closest('[data-diag-back]')) {
+      diagnosticView = false;
+      if (currentShipment && authorized) loadShipment(currentShipment);
+      else showPanel('', '<div class="message">Aguardando leitura do BR...</div>');
+      return;
+    }
     if (event.target.closest('[data-collapse]')) {
       setCollapsed(true);
       return;
@@ -945,5 +1212,6 @@
     monitor = null; authorized = false; currentShipment = ''; start();
   });
 
+  installReturnNetworkDiagnostic();
   start();
 })();

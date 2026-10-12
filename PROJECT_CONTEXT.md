@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.12
+Versão atual do módulo: 1.3.13
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -183,3 +183,26 @@ Esses estados NÃO devem ser misturados entre os fluxos.
 Para BR de retorno, a fronteira entre histórico antigo e ciclo atual é a entrada em `Return_LMHub_Onhold`. Ocorrências anteriores a essa entrada pertencem ao ciclo normal anterior e não devem aparecer nem influenciar a análise atual do retorno.
 Após essa fronteira, movimentações `Return_LMHub_Onhold` / `Return_LMHub_Returning` pertencem ao ciclo atual de retorno.
 Não usar `Delivering` normal como marcador de ciclo em BR de retorno.
+
+
+## Atualização 1.3.13 — separação correta entre BR normal e BR de retorno
+A 1.3.12 foi substituída porque usava o último `Delivering` como corte, o que poderia apagar ocorrências válidas do mesmo ciclo.
+
+Regra implementada na 1.3.13:
+- BR normal:
+  - `LMHub_Onhold` / `Delivering`;
+  - não recebe corte de histórico por status de retorno;
+  - mantém a regra original do módulo.
+- BR de retorno:
+  - a PRIMEIRA entrada em `Return_LMHub_Onhold` marca a passagem do fluxo normal para o fluxo de retorno;
+  - ocorrências anteriores a essa entrada ficam fora da análise atual;
+  - depois desse ponto, `Return_LMHub_Returning` e novas entradas em `Return_LMHub_Onhold` continuam no MESMO ciclo de retorno;
+  - portanto, novas entradas em `Return_LMHub_Onhold` NÃO reiniciam o corte.
+- A recomendação deixou de fazer um segundo corte por `current_return`; ela trabalha com toda a lista já filtrada do ciclo correto, preservando inclusive a contagem de 3 dias distintos dentro do retorno atual.
+- A lógica de endereço usa a última ocorrência real de OnHold do ciclo atual, e não o marcador sintético de retorno.
+
+Validação local:
+- cenário normal sem `Return_LMHub_Onhold`: nenhuma ocorrência é cortada;
+- cenário de retorno com `Return_LMHub_Onhold` em t=300, `Return_LMHub_Returning` em t=400 e novo `Return_LMHub_Onhold` em t=500: o corte permanece em t=300 e ocorrências t=350, 450 e 550 são preservadas.
+- Sintaxe JavaScript validada.
+- Validação real no SPX ainda pendente.

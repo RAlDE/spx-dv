@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.12';
+  const MODULE_VERSION = '1.3.13';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -460,31 +460,35 @@
     return output;
   }
 
-  function nodeRepresentsDelivering(node) {
-    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
-
-    for (const [key, value] of Object.entries(node)) {
-      if (value && typeof value === 'object') continue;
-      const nk = normalize(key);
-      const nv = normalize(value);
-
-      if (nv === 'delivering') return true;
-      if (/status|state/.test(nk) && String(value).trim() === '2') return true;
-    }
-
-    return false;
+  function trackingStatusText(value) {
+    return normalize(value).replace(/[\s-]+/g, '_').replace(/_+/g, '_');
   }
 
-  function latestDeliveringTimestamp(tracking) {
-    const events = collectAllObjects(tracking).map((node, index) => {
-      if (!nodeRepresentsDelivering(node)) return null;
+  function nodeHasTrackingStatus(node, expectedStatus) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+    const expected = trackingStatusText(expectedStatus);
+
+    return Object.values(node).some(value => {
+      if (value === null || value === undefined || (value && typeof value === 'object')) return false;
+      const text = trackingStatusText(value);
+      return text === expected || text.includes(expected);
+    });
+  }
+
+  function returnCycleStartTimestamp(tracking) {
+    const starts = collectAllObjects(tracking).map((node, index) => {
+      if (!nodeHasTrackingStatus(node, 'Return_LMHub_Onhold')) return null;
       const timestamp = returnEventTimestamp(node);
       if (!timestamp) return null;
       return { timestamp, index };
     }).filter(Boolean);
 
-    if (!events.length) return 0;
-    return events.sort((a, b) => Number(b.timestamp) - Number(a.timestamp) || b.index - a.index)[0].timestamp;
+    if (!starts.length) return 0;
+
+    // A PRIMEIRA entrada em Return_LMHub_Onhold marca a passagem do fluxo normal
+    // para o fluxo de retorno. Retornos posteriores a Onhold após
+    // Return_LMHub_Returning continuam no mesmo ciclo e não criam um novo corte.
+    return starts.sort((a, b) => Number(a.timestamp) - Number(b.timestamp) || a.index - b.index)[0].timestamp;
   }
 
   function extractCurrentReturnOccurrence(tracking) {
@@ -495,7 +499,8 @@
         node?.status_name, node?.title, node?.message, node?.description
       ].filter(Boolean).join(' ');
 
-      if (!/retorno[_\s-]*lmhub[_\s-]*em[_\s-]*espera/i.test(text) &&
+      if (!nodeHasTrackingStatus(node, 'Return_LMHub_Onhold') &&
+          !/retorno[_\s-]*lmhub[_\s-]*em[_\s-]*espera/i.test(text) &&
           !/return[_\s-]*lmhub[_\s-]*(onhold|on[_\s-]*hold)/i.test(text)) return null;
 
       const raw = [node?.message, node?.description, node?.title, node?.remark, node?.reason]
@@ -610,9 +615,11 @@
   }
 
   function recommendation(attempts, address) {
-    const ordered = [...attempts].sort((a, b) => Number(a.ctime) - Number(b.ctime));
-    const currentReturn = [...ordered].reverse().find(item => item?.current_return === true);
-    const relevant = currentReturn ? ordered.filter(item => Number(item.ctime || 0) >= Number(currentReturn.ctime || 0)) : ordered;
+    // A lista recebida já representa o ciclo correto:
+    // - BR normal: histórico normal preservado;
+    // - BR de retorno: somente ocorrências desde a primeira entrada em Return_LMHub_Onhold.
+    // Portanto não fazemos um segundo corte aqui.
+    const relevant = [...attempts].sort((a, b) => Number(a.ctime) - Number(b.ctime));
     const reasons = relevant.map(item => normalize(translateReason(item.on_hold_reason__desc)));
     const validDays = new Set(relevant
       .filter(item => validReasons.has(normalize(translateReason(item.on_hold_reason__desc))))
@@ -779,22 +786,29 @@
       if (version !== currentRequest || shipmentId !== currentShipment) return;
       const attempts = Array.isArray(history?.data?.recipient?.On_Hold) ? history.data.recipient.On_Hold.filter(Boolean) : [];
 
-      // O ciclo atual começa no último Delivering do próprio BR.
-      // Tudo que ocorreu antes disso pertence a ciclos/rotas anteriores e não deve
-      // aparecer nem influenciar a recomendação do recebimento atual.
-      const cycleStart = latestDeliveringTimestamp(tracking);
+      // BR NORMAL (LMHub_Onhold / Delivering): sem Return_LMHub_Onhold,
+      // preserva exatamente o histórico normal já usado pelo módulo.
+      //
+      // BR DE RETORNO: a primeira entrada em Return_LMHub_Onhold é a fronteira.
+      // Tudo anterior pertence ao fluxo normal antigo. Depois dessa fronteira,
+      // Return_LMHub_Returning e novos Return_LMHub_Onhold seguem no MESMO ciclo.
+      const cycleStart = returnCycleStartTimestamp(tracking);
       const currentAttempts = cycleStart
         ? attempts.filter(item => Number(item?.ctime || 0) >= Number(cycleStart))
         : attempts;
 
-      const currentReturn = extractCurrentReturnOccurrence(tracking);
+      const currentReturnRaw = extractCurrentReturnOccurrence(tracking);
+      const currentReturn = currentReturnRaw &&
+        (!cycleStart || Number(currentReturnRaw.ctime || 0) >= Number(cycleStart))
+          ? currentReturnRaw
+          : null;
       const latestAttemptTime = currentAttempts.reduce((max, item) => Math.max(max, Number(item?.ctime || 0)), 0);
       const visibleAttempts = currentReturn && Number(currentReturn.ctime || 0) > latestAttemptTime
         ? [...currentAttempts, currentReturn]
         : currentAttempts;
 
       let address = { pending: false };
-      const latestReason = translateReason([...visibleAttempts]
+      const latestReason = translateReason([...currentAttempts]
         .sort((a, b) => Number(a.ctime) - Number(b.ctime))
         .at(-1)?.on_hold_reason__desc);
       if (normalize(latestReason) === 'endereco nao encontrado') {

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.11';
+  const MODULE_VERSION = '1.3.12';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -460,6 +460,33 @@
     return output;
   }
 
+  function nodeRepresentsDelivering(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+
+    for (const [key, value] of Object.entries(node)) {
+      if (value && typeof value === 'object') continue;
+      const nk = normalize(key);
+      const nv = normalize(value);
+
+      if (nv === 'delivering') return true;
+      if (/status|state/.test(nk) && String(value).trim() === '2') return true;
+    }
+
+    return false;
+  }
+
+  function latestDeliveringTimestamp(tracking) {
+    const events = collectAllObjects(tracking).map((node, index) => {
+      if (!nodeRepresentsDelivering(node)) return null;
+      const timestamp = returnEventTimestamp(node);
+      if (!timestamp) return null;
+      return { timestamp, index };
+    }).filter(Boolean);
+
+    if (!events.length) return 0;
+    return events.sort((a, b) => Number(b.timestamp) - Number(a.timestamp) || b.index - a.index)[0].timestamp;
+  }
+
   function extractCurrentReturnOccurrence(tracking) {
     const nodes = collectAllObjects(tracking);
     const matches = nodes.map((node, index) => {
@@ -751,11 +778,25 @@
       ]);
       if (version !== currentRequest || shipmentId !== currentShipment) return;
       const attempts = Array.isArray(history?.data?.recipient?.On_Hold) ? history.data.recipient.On_Hold.filter(Boolean) : [];
+
+      // O ciclo atual começa no último Delivering do próprio BR.
+      // Tudo que ocorreu antes disso pertence a ciclos/rotas anteriores e não deve
+      // aparecer nem influenciar a recomendação do recebimento atual.
+      const cycleStart = latestDeliveringTimestamp(tracking);
+      const currentAttempts = cycleStart
+        ? attempts.filter(item => Number(item?.ctime || 0) >= Number(cycleStart))
+        : attempts;
+
       const currentReturn = extractCurrentReturnOccurrence(tracking);
-      const latestAttemptTime = attempts.reduce((max, item) => Math.max(max, Number(item?.ctime || 0)), 0);
-      const visibleAttempts = currentReturn && Number(currentReturn.ctime || 0) > latestAttemptTime ? [...attempts, currentReturn] : attempts;
+      const latestAttemptTime = currentAttempts.reduce((max, item) => Math.max(max, Number(item?.ctime || 0)), 0);
+      const visibleAttempts = currentReturn && Number(currentReturn.ctime || 0) > latestAttemptTime
+        ? [...currentAttempts, currentReturn]
+        : currentAttempts;
+
       let address = { pending: false };
-      const latestReason = translateReason([...attempts].sort((a, b) => Number(a.ctime) - Number(b.ctime)).at(-1)?.on_hold_reason__desc);
+      const latestReason = translateReason([...visibleAttempts]
+        .sort((a, b) => Number(a.ctime) - Number(b.ctime))
+        .at(-1)?.on_hold_reason__desc);
       if (normalize(latestReason) === 'endereco nao encontrado') {
         try { address = getAddressState(await postJson('https://spx.shopee.com.br/api/in-station/admin/common_site/eha/no_reason_inbound', { shipment_id: shipmentId })); }
         catch { address = { pending: false }; }

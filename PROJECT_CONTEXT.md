@@ -168,3 +168,18 @@ Correção de entendimento sobre 1.3.12:
 - usar o último `Delivering` como início do ciclo NÃO equivale necessariamente a identificar a entrada do pacote no nosso hub;
 - portanto, a 1.3.12 não deve ser usada como base conceitual para filtrar ocorrências até que o evento exato de entrada/retorno no hub seja identificado;
 - o objetivo original permanece: ocultar apenas ocorrências anteriores à entrada do BR no nosso hub e manter todas as ocorrências válidas do ciclo atual dentro do hub.
+
+
+## Estados equivalentes — fluxo normal x fluxo de retorno
+Regra confirmada pela operação:
+- Fluxo normal do BR:
+  - `LMHub_Onhold` = OnHold normal no hub.
+  - `Delivering` = saiu para entrega.
+- Fluxo de retorno:
+  - `Return_LMHub_Onhold` = OnHold do BR já no fluxo de retorno.
+  - `Return_LMHub_Returning` = equivalente ao `Delivering` dentro do fluxo de retorno; indica que o BR saiu na rota de retorno.
+
+Esses estados NÃO devem ser misturados entre os fluxos.
+Para BR de retorno, a fronteira entre histórico antigo e ciclo atual é a entrada em `Return_LMHub_Onhold`. Ocorrências anteriores a essa entrada pertencem ao ciclo normal anterior e não devem aparecer nem influenciar a análise atual do retorno.
+Após essa fronteira, movimentações `Return_LMHub_Onhold` / `Return_LMHub_Returning` pertencem ao ciclo atual de retorno.
+Não usar `Delivering` normal como marcador de ciclo em BR de retorno.

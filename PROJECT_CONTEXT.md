@@ -151,3 +151,20 @@ Na 1.3.12, o SPX-DV passa a usar a mesma estratégia validada no projeto SPX OnH
 Assim, ocorrências anteriores à última saída em rota deixam de aparecer e deixam de influenciar a recomendação. Se nenhum Delivering for localizado, o módulo preserva o comportamento anterior como fallback.
 
 A lógica existente de cancelamento de endereço, Google Sheets, AutoAdd, cores e regra dos 3 dias distintos não foi alterada. Sintaxe validada e teste local de corte entre ciclo antigo e ciclo atual passou; validação no SPX real ainda pendente.
+
+
+## Regra de trabalho do projeto — preservar o planejamento original
+O desenvolvimento do SPX-DV deve ser incremental. Alterações futuras devem preservar o comportamento, as regras e o fluxo já planejados/validados, adicionando apenas novas necessidades sem reinterpretar silenciosamente a lógica existente.
+
+Antes de qualquer mudança que possa alterar uma regra operacional já definida:
+- comparar a proposta com o planejamento atual deste documento;
+- sinalizar explicitamente qualquer divergência antes de editar o código;
+- apontar riscos de cortar dados válidos, mudar recomendação, alterar fluxo ou criar efeitos colaterais;
+- preferir extensões/aditivos à lógica existente em vez de substituições;
+- quando houver incerteza sobre o significado de um evento/campo da SPX, primeiro diagnosticar/varrer a fonte real e só depois implementar a regra;
+- não considerar uma versão “estável” até haver validação real no SPX.
+
+Correção de entendimento sobre 1.3.12:
+- usar o último `Delivering` como início do ciclo NÃO equivale necessariamente a identificar a entrada do pacote no nosso hub;
+- portanto, a 1.3.12 não deve ser usada como base conceitual para filtrar ocorrências até que o evento exato de entrada/retorno no hub seja identificado;
+- o objetivo original permanece: ocultar apenas ocorrências anteriores à entrada do BR no nosso hub e manter todas as ocorrências válidas do ciclo atual dentro do hub.

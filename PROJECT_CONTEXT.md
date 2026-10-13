@@ -320,3 +320,16 @@ Validação local:
 
 Observação importante:
 Os códigos numéricos 128/124 observados anteriormente não devem ser tratados como mapeamento global confiável. A classificação funcional deve se basear na semântica real do evento/resposta.
+
+
+## Validação real da 1.3.17
+Teste real em 13/10/2026 confirmou que a separação do ciclo Return passou a funcionar:
+- ocorrências antigas anteriores ao fluxo de retorno deixaram de aparecer;
+- o motivo atual `Comércio Fechado` foi lido corretamente do tracking do retorno;
+- o painel passou a mostrar apenas ocorrências do ciclo Return atual;
+- a recomendação resultou em `PROCESSAR PARA ENTREGA`, coerente com apenas um dia válido de tentativa no ciclo atual.
+
+Observação para próxima revisão:
+- no BR testado apareceram duas entradas `Comércio Fechado` muito próximas (10/10/2026 11:32:25 e 11:33:06), com o mesmo operador;
+- isso pode representar dois registros técnicos do mesmo evento, e não duas ocorrências operacionais distintas;
+- não aplicar deduplicação automática ainda sem confirmar o padrão em mais BRs ou na estrutura do tracking.

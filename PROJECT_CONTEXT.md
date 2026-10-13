@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.16
+Versão atual do módulo: 1.3.17
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -297,3 +297,26 @@ A regra de ciclo permanece:
 - um novo status 128 posterior continua no mesmo ciclo e representa nova ocorrência do retorno.
 
 Sintaxe validada e teste local reproduzindo o objeto real do diagnóstico passou. Validação real da 1.3.16 ainda pendente.
+
+
+## Atualização 1.3.17 — remove falso positivo de status numérico e isola diagnóstico por BR
+O teste real da 1.3.16 mostrou duas falhas importantes:
+1. `status 128` não é identificador exclusivo de `Retorno_LMHub_Em_Espera`. No BR BR264020490470K, um objeto com status 128 representava a mensagem `Não havia pacotes para coletar`, gerando uma ocorrência falsa na caixa.
+2. O diagnóstico estava exibindo uma requisição de outro BR anterior (BR260544875792V), porque os registros de localStorage não estavam sendo filtrados de forma estrita pelo BR atual.
+
+Correção da 1.3.17:
+- remove a regra `status 128 => Return_LMHub_Onhold`;
+- um objeto só é tratado como ocorrência Return quando:
+  - contém o nome textual `Return_LMHub_Onhold` / `Retorno_LMHub_Em_Espera`, ou
+  - a mensagem contém explicitamente `Devolução em espera: ...`, ou
+  - há `on_hold_reason` junto com linguagem explícita de devolução/retorno no mesmo objeto;
+- `Não havia pacotes para coletar` não é mais reconhecido como Return OnHold;
+- o diagnóstico passa a extrair o BR diretamente do parâmetro `shipment_id` da requisição e exibir somente registros compatíveis com o BR atual da caixa.
+
+Validação local:
+- falso positivo `status 128 + Não havia pacotes para coletar` => rejeitado;
+- evento real `Devolução em espera: [Comércio Fechado]` => reconhecido;
+- sintaxe JavaScript validada.
+
+Observação importante:
+Os códigos numéricos 128/124 observados anteriormente não devem ser tratados como mapeamento global confiável. A classificação funcional deve se basear na semântica real do evento/resposta.

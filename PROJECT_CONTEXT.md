@@ -330,6 +330,6 @@ Teste real em 13/10/2026 confirmou que a separação do ciclo Return passou a fu
 - a recomendação resultou em `PROCESSAR PARA ENTREGA`, coerente com apenas um dia válido de tentativa no ciclo atual.
 
 Observação para próxima revisão:
-- no BR testado apareceram duas entradas `Comércio Fechado` muito próximas (10/10/2026 11:32:25 e 11:33:06), com o mesmo operador;
-- isso pode representar dois registros técnicos do mesmo evento, e não duas ocorrências operacionais distintas;
-- não aplicar deduplicação automática ainda sem confirmar o padrão em mais BRs ou na estrutura do tracking.
+- no BR testado apareceram duas entradas `Comércio Fechado` no mesmo dia (10/10/2026 11:32:25 e 11:33:06), com o mesmo operador;
+- validação do usuário: são duas ocorrências operacionais reais, portanto ambas devem permanecer visíveis;
+- não aplicar deduplicação automática entre ocorrências do mesmo motivo/dia apenas por proximidade de horário.

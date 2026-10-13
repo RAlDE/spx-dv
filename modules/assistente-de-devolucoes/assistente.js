@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.16';
+  const MODULE_VERSION = '1.3.17';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -206,7 +206,8 @@
       const normalizedText = normalize(text);
       const pageBr = pageShipmentId();
       const activeBr = String(currentShipment || '').trim().toUpperCase();
-      const shipment = pageBr || activeBr;
+      const requestBr = String(url.searchParams.get('shipment_id') || '').trim().toUpperCase();
+      const shipment = requestBr || pageBr || activeBr;
 
       const hasReturnWait =
         /retorno[_\s-]*lmhub[_\s-]*em[_\s-]*espera/i.test(text) ||
@@ -228,6 +229,7 @@
         capturedAt: new Date().toISOString(),
         pageBr,
         activeBr,
+        requestBr,
         method: String(meta?.method || 'GET').toUpperCase(),
         url: urlText,
         size: text.length,
@@ -249,9 +251,9 @@
         if (!Array.isArray(list)) list = [];
       } catch {}
 
-      const signature = candidate.method + '|' + candidate.url + '|' + (candidate.pageBr || candidate.activeBr || '');
+      const signature = candidate.method + '|' + candidate.url + '|' + (candidate.requestBr || candidate.pageBr || candidate.activeBr || '');
       list = list.filter(item =>
-        (item.method + '|' + item.url + '|' + (item.pageBr || item.activeBr || '')) !== signature
+        (item.method + '|' + item.url + '|' + (item.requestBr || item.pageBr || item.activeBr || '')) !== signature
       );
       list.unshift(candidate);
       localStorage.setItem(RETURN_DIAG_KEY, JSON.stringify(list.slice(0, 30)));
@@ -346,8 +348,8 @@
     const shipmentId = String(panel.dataset.shipmentId || currentShipment || '').trim().toUpperCase();
     const all = getReturnDiagnostics();
     const relevant = all.filter(item => {
-      const br = String(item.pageBr || item.activeBr || '').toUpperCase();
-      return !shipmentId || !br || br === shipmentId || item.hasShipment;
+      const br = String(item.requestBr || item.pageBr || item.activeBr || '').toUpperCase();
+      return !shipmentId || !br || br === shipmentId;
     });
 
     const rows = relevant.length
@@ -385,7 +387,7 @@
             escapeHtml(item.size || 0) + ' bytes</summary>' +
             '<div style="padding:8px;font-size:11px;line-height:1.45">' +
             '<div style="word-break:break-all"><b>Endpoint:</b> ' + escapeHtml(path) + '</div>' +
-            '<div style="margin-top:4px"><b>BR da página:</b> ' + escapeHtml(item.pageBr || item.activeBr || '—') + '</div>' +
+            '<div style="margin-top:4px"><b>BR da requisição:</b> ' + escapeHtml(item.requestBr || item.pageBr || item.activeBr || '—') + '</div>' +
             '<div style="margin-top:4px;color:#fbbf24"><b>Sinais:</b> ' + escapeHtml(flags) + '</div>' +
             excerpt +
             (hints ? '<div style="margin-top:6px">' + hints + '</div>' : '') +
@@ -741,17 +743,34 @@
   function nodeIsReturnOnhold(node) {
     if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
 
-    // Confirmado no tracking_info real do SPX:
-    // status 128 = Retorno_LMHub_Em_Espera / Return_LMHub_Onhold.
-    if (String(node?.status ?? '').trim() === '128') return true;
+    const entries = primitiveEntries(node);
 
-    // Mantemos suporte aos nomes textuais caso apareçam em outras respostas/versões.
-    return primitiveEntries(node).some(([, value]) => {
+    // NÃO usar código numérico isolado. O teste real mostrou que o mesmo status
+    // pode aparecer associado a eventos que não são Return OnHold.
+    //
+    // O sinal operacional confiável é o próprio evento:
+    // "Devolução em espera: [motivo]" / on_hold_reason,
+    // ou o nome textual Return_LMHub_Onhold / Retorno_LMHub_Em_Espera.
+    const hasExplicitReturnStatus = entries.some(([, value]) => {
       const text = trackingStatusText(value);
       return text.includes('return_lmhub_onhold') ||
         text.includes('return_lmhub_on_hold') ||
         text.includes('retorno_lmhub_em_espera');
     });
+
+    if (hasExplicitReturnStatus) return true;
+
+    const messageText = [
+      node?.message, node?.description, node?.title, node?.remark
+    ].filter(Boolean).join(' ');
+
+    if (/devolu[cç][aã]o\s+em\s+espera\s*:/i.test(messageText)) return true;
+
+    // Se a estrutura trouxer motivo de OnHold junto com linguagem explícita de
+    // devolução/retorno no mesmo objeto, também é uma ocorrência Return válida.
+    const directReason = String(node?.on_hold_reason || node?.reason_desc || '').trim();
+    const objectText = entries.map(([, value]) => String(value)).join(' ');
+    return Boolean(directReason) && /devolu[cç][aã]o|retorno|return/i.test(objectText);
   }
 
   function returnOccurrenceReason(node) {

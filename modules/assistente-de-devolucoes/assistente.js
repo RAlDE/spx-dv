@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.15';
+  const MODULE_VERSION = '1.3.16';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -741,6 +741,11 @@
   function nodeIsReturnOnhold(node) {
     if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
 
+    // Confirmado no tracking_info real do SPX:
+    // status 128 = Retorno_LMHub_Em_Espera / Return_LMHub_Onhold.
+    if (String(node?.status ?? '').trim() === '128') return true;
+
+    // Mantemos suporte aos nomes textuais caso apareçam em outras respostas/versões.
     return primitiveEntries(node).some(([, value]) => {
       const text = trackingStatusText(value);
       return text.includes('return_lmhub_onhold') ||
@@ -750,12 +755,15 @@
   }
 
   function returnOccurrenceReason(node) {
+    // No tracking_info real, o motivo já vem limpo em on_hold_reason.
+    // Ex.: status 128 + on_hold_reason: "Comércio Fechado".
+    const direct = String(node?.on_hold_reason || node?.reason_desc || '').trim();
+    if (direct) return direct;
+
     const entries = primitiveEntries(node);
 
-    // O SPX real exibiu:
-    // Retorno_LMHub_Em_Espera
-    // mensagem: Devolução em espera: [Comércio Fechado]
-    // Priorizamos exatamente essa mensagem para não capturar códigos entre colchetes.
+    // Fallback pela mensagem:
+    // Devolução em espera: [Comércio Fechado]
     const preferred = entries
       .filter(([key, value]) =>
         /message|desc|description|remark|reason|title|content|detail/.test(normalize(key)) ||

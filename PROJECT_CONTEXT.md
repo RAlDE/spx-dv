@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.15
+Versão atual do módulo: 1.3.16
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -267,3 +267,33 @@ Objetivo da validação:
 6. usar o endpoint e os campos capturados para implementar a leitura definitiva, sem novas suposições.
 
 Sintaxe JavaScript validada. Validação real pendente.
+
+
+## Atualização 1.3.16 — mapeamento real dos status Return no tracking_info
+O diagnóstico 1.3.15 identificou a fonte correta no ambiente real:
+`/api/fleet_order/order/detail/tracking_info?shipment_id=<BR>`
+
+No BR BR264020490470K, a resposta real trouxe:
+- `status: 128`
+- `message: "Devolução em espera: [Comércio Fechado]"`
+- `on_hold_reason: "Comércio Fechado"`
+- `operator: ...`
+- `timestamp: ...`
+
+Também apareceu um evento subsequente com:
+- `status: 124`
+- mensagem `Pedido em devolução ao vendedor`
+
+Mapeamento operacional confirmado pelo diagnóstico:
+- `128 = Retorno_LMHub_Em_Espera / Return_LMHub_Onhold`
+- `124 = Retorno_LMHub_Returning / Retorno_LMHub_Retornando`
+
+A 1.3.16 deixa de depender do texto `Retorno_LMHub_Em_Espera` para reconhecer a ocorrência do retorno e passa a reconhecer diretamente `status 128` no objeto real do tracking_info. O motivo é lido prioritariamente de `on_hold_reason`, com fallback para a mensagem `Devolução em espera: [motivo]`.
+
+A regra de ciclo permanece:
+- a primeira ocorrência status 128 inicia o ciclo Return;
+- tudo anterior é histórico normal antigo e deve ficar fora da caixa/análise atual;
+- status 124 não reinicia o ciclo;
+- um novo status 128 posterior continua no mesmo ciclo e representa nova ocorrência do retorno.
+
+Sintaxe validada e teste local reproduzindo o objeto real do diagnóstico passou. Validação real da 1.3.16 ainda pendente.

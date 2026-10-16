@@ -12,7 +12,7 @@
 >
 > Última versão validada em ambiente real: **1.3.17**
 >
-> Última atualização consolidada: **13/10/2026**
+> Última atualização consolidada: **15/10/2026**
 
 ---
 
@@ -637,7 +637,7 @@ Isso deve ser suficiente para retomar sem reexplicar o histórico.
 ## 24. ESTADO ATUAL
 
 Versão atual:
-**1.3.17**
+**1.3.18**
 
 Estado:
 **validada em teste real no SPX para separação do ciclo Return.**
@@ -649,3 +649,28 @@ Comportamento validado:
 - regra de 3 dias distintos permanece correta.
 
 Próximas mudanças devem partir desta versão como referência, salvo se o usuário solicitar explicitamente outra base.
+
+
+---
+
+## 25. ATUALIZAÇÃO 1.3.18 — ABERTURA AUTOMÁTICA NO RECEBIMENTO UNITÁRIO
+
+Necessidade operacional confirmada em vídeo:
+- usuário navega por `Entrada → Recebimento`;
+- na lista `#/generalReceiveTaskOps`, clica em **Recebimento unitário**;
+- o SPX navega para `#/generalReceiveTaskOps/singleReceiveNew/<RT>`;
+- a caixa do SPX-DV deve aparecer automaticamente, aberta, sem depender de bipagem.
+
+Falha anterior:
+- o módulo dependia principalmente de `hashchange`;
+- em navegações SPA do SPX, a entrada em `singleReceiveNew` nem sempre reconstruía a caixa.
+
+Regra da 1.3.18:
+- detectar mudanças por `hashchange`, `popstate` e observação de `location.href`;
+- ao detectar entrada em `singleReceiveNew`, remover UI antiga, resetar estado visual e abrir a caixa;
+- forçar `collapsed = false` em cada nova entrada no Recebimento unitário;
+- mostrar `Aguardando leitura do BR...` antes da primeira bipagem;
+- sair da tela e entrar novamente deve abrir novamente;
+- não alterar nenhuma regra funcional de ocorrências ou devolução.
+
+A 1.3.17 continua sendo a última versão validada em ambiente real para a lógica Return. A 1.3.18 preserva essa lógica e altera apenas o ciclo de abertura/navegação da interface. Validação real da abertura automática ainda pendente.

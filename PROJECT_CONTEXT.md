@@ -351,3 +351,12 @@ A 1.3.18 torna a detecção de rota mais robusta:
 Não houve alteração nas ocorrências, fluxo Return, recomendação, AutoAdd, cancelamento de endereço ou integração com planilha.
 
 Sintaxe JavaScript validada. Validação real no SPX ainda pendente.
+
+
+## Validação real da 1.3.18
+Teste real confirmado pelo usuário em 15/10/2026:
+- ao navegar por `Entrada → Recebimento → Recebimento unitário`, a caixa do SPX-DV voltou a abrir automaticamente;
+- a abertura ocorre antes da primeira bipagem, com o estado de espera;
+- o ajuste de navegação SPA funcionou no ambiente real.
+
+A 1.3.18 passa a ser a referência validada também para o comportamento de abertura automática no recebimento unitário.

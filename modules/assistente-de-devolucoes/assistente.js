@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.17';
+  const MODULE_VERSION = '1.3.18';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -88,6 +88,8 @@
   let monitor = null;
   let collapsed = false;
   let diagnosticView = false;
+  let lastObservedUrl = location.href;
+  let shipmentKeyListenerInstalled = false;
   const autoCancelledAddress = new Set();
   const CANCELLED_ADDRESS_KEY = 'spxdv:cancelled-address-v1';
 
@@ -1213,32 +1215,75 @@
     setTimeout(() => { if (currentShipment === value && authorized) loadShipment(value, scanUnix); }, 1200);
   }
 
-  async function start() {
-    ensureStyle();
-    if (!isTargetRoute()) return;
-    showNotice('Verificando acesso da conta SPX...');
-    await validateAccess();
-    if (!authorized || monitor || !isTargetRoute()) return;
-
-    // A caixa deve estar disponível ao abrir o ID de recebimento,
-    // sem aguardar a primeira bipagem de um pacote.
-    showPanel('', '<div class="message">Aguardando leitura do BR...</div>');
-    checkShipment();
-    monitor = setInterval(checkShipment, 300);
+  function ensureShipmentKeyListener() {
+    if (shipmentKeyListenerInstalled) return;
+    shipmentKeyListenerInstalled = true;
     document.addEventListener('keydown', event => {
-      if (event.key === 'Enter') { currentShipment = ''; checkShipment(); }
+      if (event.key === 'Enter') {
+        currentShipment = '';
+        checkShipment();
+      }
     }, true);
   }
 
-  window.addEventListener('hashchange', () => {
+  function clearReceiveUi() {
     document.getElementById(PANEL_ID)?.remove();
     document.getElementById(TOGGLE_ID)?.remove();
     document.getElementById(AUTOADD_ID)?.remove();
     document.getElementById(NOTICE_ID)?.remove();
     if (monitor) clearInterval(monitor);
-    monitor = null; authorized = false; currentShipment = ''; start();
-  });
+    monitor = null;
+    currentShipment = '';
+    diagnosticView = false;
+  }
+
+  async function start() {
+    ensureStyle();
+    if (!isTargetRoute()) return;
+
+    // Ao entrar em Recebimento unitário, a caixa deve SEMPRE nascer aberta,
+    // mesmo se ela tiver sido recolhida anteriormente em outra tela/RT.
+    collapsed = false;
+    diagnosticView = false;
+
+    // Dentro da mesma sessão SPA, uma validação já aprovada continua válida.
+    // Em recarga completa a variável volta a false e a validação é refeita.
+    if (!authorized) {
+      showNotice('Verificando acesso da conta SPX...');
+      await validateAccess();
+    }
+
+    if (!authorized || !isTargetRoute()) return;
+
+    showPanel('', '<div class="message">Aguardando leitura do BR...</div>');
+    checkShipment();
+
+    if (!monitor) monitor = setInterval(checkShipment, 300);
+    ensureShipmentKeyListener();
+  }
+
+  function syncReceiveRoute(force = false) {
+    const currentUrl = location.href;
+    if (!force && currentUrl === lastObservedUrl) return;
+    lastObservedUrl = currentUrl;
+
+    // O SPX é uma SPA e algumas navegações internas nem sempre são percebidas
+    // de forma confiável apenas pelo hashchange. Sempre reconstruímos a UI
+    // quando a URL muda e reabrimos ao entrar em singleReceiveNew.
+    clearReceiveUi();
+    collapsed = false;
+
+    if (isTargetRoute()) void start();
+  }
+
+  window.addEventListener('hashchange', () => syncReceiveRoute(true));
+  window.addEventListener('popstate', () => syncReceiveRoute(true));
+
+  // Fallback para navegação interna do SPX (pushState/roteador próprio).
+  // Garante abertura toda vez que o usuário entra em Recebimento unitário.
+  window.setInterval(() => syncReceiveRoute(false), 250);
 
   installReturnNetworkDiagnostic();
-  start();
+  ensureShipmentKeyListener();
+  if (isTargetRoute()) void start();
 })();

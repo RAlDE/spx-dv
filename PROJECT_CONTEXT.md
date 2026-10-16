@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.17
+Versão atual do módulo: 1.3.18
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -333,3 +333,21 @@ Observação para próxima revisão:
 - no BR testado apareceram duas entradas `Comércio Fechado` no mesmo dia (10/10/2026 11:32:25 e 11:33:06), com o mesmo operador;
 - validação do usuário: são duas ocorrências operacionais reais, portanto ambas devem permanecer visíveis;
 - não aplicar deduplicação automática entre ocorrências do mesmo motivo/dia apenas por proximidade de horário.
+
+
+## Atualização 1.3.18 — abrir automaticamente ao entrar em Recebimento unitário
+Problema observado em vídeo real: ao navegar pelo menu `Entrada → Recebimento` e clicar em `Recebimento unitário`, o SPX entrava em `#/generalReceiveTaskOps/singleReceiveNew/<RT>`, mas a caixa do SPX-DV não reaparecia automaticamente.
+
+A 1.3.18 torna a detecção de rota mais robusta:
+- mantém suporte a `hashchange`;
+- adiciona `popstate`;
+- adiciona observação da URL a cada 250 ms para cobrir navegação SPA/pushState do próprio SPX;
+- ao entrar em qualquer rota `singleReceiveNew`, força `collapsed = false`;
+- recria a caixa imediatamente com `Aguardando leitura do BR...`;
+- ao sair e entrar novamente em Recebimento unitário, a caixa deve abrir novamente;
+- uma autorização já validada dentro da mesma sessão SPA é reaproveitada; em recarga completa a validação é refeita;
+- evita instalar múltiplos listeners de Enter ao alternar entre telas.
+
+Não houve alteração nas ocorrências, fluxo Return, recomendação, AutoAdd, cancelamento de endereço ou integração com planilha.
+
+Sintaxe JavaScript validada. Validação real no SPX ainda pendente.

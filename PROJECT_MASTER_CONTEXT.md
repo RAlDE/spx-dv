@@ -10,7 +10,7 @@
 >
 > Este arquivo consolida a história do projeto, decisões operacionais, arquitetura, versões, testes, erros já cometidos e regras que não devem ser reinterpretadas sem aviso.
 >
-> Última versão validada em ambiente real: **1.3.17**
+> Última versão validada em ambiente real: **1.3.18**
 >
 > Última atualização consolidada: **15/10/2026**
 
@@ -673,4 +673,4 @@ Regra da 1.3.18:
 - sair da tela e entrar novamente deve abrir novamente;
 - não alterar nenhuma regra funcional de ocorrências ou devolução.
 
-A 1.3.17 continua sendo a última versão validada em ambiente real para a lógica Return. A 1.3.18 preserva essa lógica e altera apenas o ciclo de abertura/navegação da interface. Validação real da abertura automática ainda pendente.
+A 1.3.18 foi validada em ambiente real para a abertura automática no recebimento unitário. Ela preserva a lógica Return validada da 1.3.17 e passa a ser a referência atual do projeto.

@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.19
+Versão atual do módulo: 1.3.20
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -404,3 +404,18 @@ Teste local:
 
 A lógica de recomendação, regra dos 3 dias, Return, cancelamento de endereço, planilha, AutoAdd e abertura automática da 1.3.18 não foi alterada.
 Validação real no SPX da transportadora por ocorrência ainda pendente.
+
+
+## Atualização 1.3.20 — 3PL ao lado do motorista
+A lógica da v1.3.19 foi preservada integralmente. Foi alterada apenas a apresentação visual:
+- removido o texto `Transportadora:`;
+- o valor de `agency` passa a aparecer na mesma linha do motorista;
+- o ID continua na linha seguinte;
+- quando a agência não é localizada, nenhum texto extra é mostrado.
+
+Exemplo:
+`Motorista: TIAGO PIRES TRINDADE — SPXOWNFLEET`
+`ID: 2169742`
+
+Nenhuma alteração na associação ocorrência → AT → Agência (3PL), Return, recomendação, AutoAdd, endereço, planilha ou abertura automática.
+Sintaxe JavaScript validada. Validação visual real no SPX pendente.

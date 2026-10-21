@@ -12,7 +12,7 @@
 >
 > Última versão validada em ambiente real: **1.3.18**
 >
-> Última atualização consolidada: **15/10/2026**
+> Última atualização consolidada: **21/10/2026**
 
 ---
 
@@ -637,7 +637,7 @@ Isso deve ser suficiente para retomar sem reexplicar o histórico.
 ## 24. ESTADO ATUAL
 
 Versão atual:
-**1.3.18**
+**1.3.19**
 
 Estado:
 **validada em teste real no SPX para separação do ciclo Return.**
@@ -674,3 +674,36 @@ Regra da 1.3.18:
 - não alterar nenhuma regra funcional de ocorrências ou devolução.
 
 A 1.3.18 foi validada em ambiente real para a abertura automática no recebimento unitário. Ela preserva a lógica Return validada da 1.3.17 e passa a ser a referência atual do projeto.
+
+
+---
+
+## 26. ATUALIZAÇÃO 1.3.19 — TRANSPORTADORA POR OCORRÊNCIA
+
+Objetivo:
+mostrar, em cada ocorrência normal, a transportadora/Agência (3PL) correspondente ao motorista e à AT daquela tentativa específica.
+
+Descoberta real:
+1. `tracking_info` contém eventos `Pedido adicionado à Assignment Task [AT...]`;
+2. em seguida aparece o evento Delivering (`status 2`) com motorista;
+3. depois aparece o OnHold daquela tentativa;
+4. a tela Atribuição de Entrega consulta `POST /spx_delivery/admin/assignment/assignment_task/search/v2`;
+5. o retorno dessa consulta contém `agency`, `driver_id` e `driver_name`.
+
+Regra implementada:
+- cada ocorrência é ligada à AT do ciclo de entrega imediatamente anterior;
+- o ID do motorista é usado como validação adicional;
+- a Agência (3PL) retornada por essa AT é mostrada no mesmo card;
+- ATs diferentes podem produzir transportadoras diferentes dentro do mesmo BR;
+- não usar uma única transportadora geral para todo o BR;
+- não usar `tracking_info.3pl_name` como fonte principal, pois no caso real analisado esse campo estava vazio;
+- a fonte da transportadora é o campo `agency` do `search/v2`.
+
+Caso real usado para validar a associação local:
+- AT20261016BAEPX → CAMILA / ID 2308746 → OnHold Cliente Ausente;
+- AT20261018BEGXJ → DIEGO / ID 174601 → OnHold Cliente Ausente;
+- AT20261020BHHQR → TIAGO / ID 2169742 → OnHold Palavra-chave.
+
+A associação dos três ciclos passou em teste local. A chamada real ao `search/v2` e a exibição da transportadora na tela de recebimento precisam ser validadas pelo usuário no SPX.
+
+A 1.3.18 continua sendo a última versão validada em ambiente real para o conjunto completo anterior. A 1.3.19 é a versão atual em teste para a nova informação de transportadora.

@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.18
+Versão atual do módulo: 1.3.19
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -360,3 +360,47 @@ Teste real confirmado pelo usuário em 15/10/2026:
 - o ajuste de navegação SPA funcionou no ambiente real.
 
 A 1.3.18 passa a ser a referência validada também para o comportamento de abertura automática no recebimento unitário.
+
+
+## Atualização 1.3.19 — transportadora por ocorrência
+Necessidade confirmada pelo usuário: cada ocorrência deve mostrar a transportadora do motorista correspondente à AT daquela tentativa, e não uma transportadora geral do BR.
+
+Fonte real confirmada em 21/10/2026:
+- `tracking_info?shipment_id=<BR>` traz a sequência operacional do BR;
+- antes de cada saída em rota (`status: 2` / Delivering), o histórico traz eventos como `Pedido adicionado à Assignment Task [AT...]`;
+- a tela `#/delivery-assignment/list` consulta:
+  `POST /spx_delivery/admin/assignment/assignment_task/search/v2`;
+- payload confirmado:
+  `{ assignment_task_id, pageno: 1, count: 20, search_type: 0 }`;
+- a resposta traz diretamente:
+  - `assignment_task_id`;
+  - `driver_id`;
+  - `driver_name`;
+  - `agency` (Agência 3PL / transportadora);
+  - `agency_id`.
+
+Implementação:
+- percorre cronologicamente o `tracking_info`;
+- mantém a AT mais recente observada antes de cada Delivering;
+- liga cada ocorrência normal de OnHold à saída em rota anterior;
+- prioriza correspondência pelo ID do motorista da ocorrência;
+- consulta o `search/v2` apenas para as ATs únicas encontradas;
+- usa cache em memória para não repetir a mesma consulta de AT;
+- antes de exibir a Agência 3PL, valida o ID do motorista retornado pela AT quando ambos os IDs estão disponíveis;
+- mostra em cada card normal:
+  - Motorista;
+  - ID;
+  - Transportadora.
+- se a AT foi localizada mas a Agência 3PL não puder ser obtida, mostra `Transportadora: Não localizada`.
+- ocorrências sintéticas do fluxo Return continuam exibindo `Operador` e não recebem uma transportadora inventada.
+
+Teste local:
+- cenário baseado no BR real com três ciclos:
+  - AT20261016BAEPX → motorista 2308746;
+  - AT20261018BEGXJ → motorista 174601;
+  - AT20261020BHHQR → motorista 2169742;
+- cada ocorrência foi associada à AT correta.
+- sintaxe JavaScript validada.
+
+A lógica de recomendação, regra dos 3 dias, Return, cancelamento de endereço, planilha, AutoAdd e abertura automática da 1.3.18 não foi alterada.
+Validação real no SPX da transportadora por ocorrência ainda pendente.

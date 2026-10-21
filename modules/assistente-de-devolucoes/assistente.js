@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.18';
+  const MODULE_VERSION = '1.3.19';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -17,6 +17,7 @@
   const AUTOADD_RETRY_DELAYS = [0, 1200, 1800, 2500, 3200];
   const SHEET_WEBAPP_URL = 'https://script.google.com/a/macros/shopee.com/s/AKfycbyYCiRSUK7r5kPeI19TFUkfgYr7WR2aCFCGMOJiZiY4rZPWu3j2eppuuMjK6pFAn_bS/exec';
   const RETURN_DIAG_KEY = 'spxdv:return-network-diag-v1';
+  const ASSIGNMENT_SEARCH_URL = 'https://spx.shopee.com.br/spx_delivery/admin/assignment/assignment_task/search/v2';
 
   if (document.documentElement.dataset[APP_MARKER] === 'true') return;
   document.documentElement.dataset[APP_MARKER] = 'true';
@@ -91,6 +92,7 @@
   let lastObservedUrl = location.href;
   let shipmentKeyListenerInstalled = false;
   const autoCancelledAddress = new Set();
+  const assignmentAgencyCache = new Map();
   const CANCELLED_ADDRESS_KEY = 'spxdv:cancelled-address-v1';
 
   function readCancelledAddressState() {
@@ -852,6 +854,178 @@
     return String(text.match(/\[(AT[^\]\s]+)\]/i)?.[1] || '').trim();
   }
 
+  function trackingDriverIdentity(node) {
+    const operator = String(node?.operator || '').trim();
+    const operatorMatch = operator.match(/^\s*\[([^\]]+)\]\s*(.+?)\s*$/);
+    if (operatorMatch) {
+      return { id: String(operatorMatch[1] || '').trim(), name: String(operatorMatch[2] || '').trim() };
+    }
+
+    const message = String(node?.message || '').trim();
+    const messageMatch = message.match(/Motorista\s*:\s*\[([^\]]+)\]\s*([^;]+)/i);
+    if (messageMatch) {
+      return { id: String(messageMatch[1] || '').trim(), name: String(messageMatch[2] || '').trim() };
+    }
+
+    return { id: '', name: '' };
+  }
+
+  function nodeRepresentsDelivering(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+    if (String(node?.status ?? '').trim() === '2') return true;
+
+    return primitiveEntries(node).some(([key, value]) => {
+      const nk = normalize(key);
+      if (!/status|state/.test(nk)) return false;
+      return trackingStatusText(value) === 'delivering';
+    });
+  }
+
+  function extractAssignmentDeliveryCycles(tracking) {
+    const events = collectAllObjects(tracking)
+      .map((node, index) => ({
+        node,
+        index,
+        ctime: returnEventTimestamp(node)
+      }))
+      .filter(item => item.ctime)
+      .sort((a, b) => Number(a.ctime) - Number(b.ctime) || a.index - b.index);
+
+    let currentAssignmentId = '';
+    const cycles = [];
+
+    for (const event of events) {
+      const at = assignmentTaskId(event.node?.message);
+      if (at) currentAssignmentId = at;
+
+      if (!currentAssignmentId || !nodeRepresentsDelivering(event.node)) continue;
+
+      const driver = trackingDriverIdentity(event.node);
+      cycles.push({
+        assignmentId: currentAssignmentId,
+        ctime: Number(event.ctime),
+        driverId: driver.id,
+        driverName: driver.name
+      });
+    }
+
+    return cycles;
+  }
+
+  function assignmentCycleForAttempt(attempt, cycles) {
+    const attemptTime = Number(attempt?.ctime || 0);
+    if (!attemptTime || !cycles.length) return null;
+
+    const beforeAttempt = cycles.filter(item => Number(item.ctime || 0) <= attemptTime);
+    if (!beforeAttempt.length) return null;
+
+    const attemptDriverId = getDriverId(attempt);
+    const hasDriverId = attemptDriverId && attemptDriverId !== 'Não informado';
+    if (hasDriverId) {
+      const sameDriver = beforeAttempt.filter(item =>
+        String(item.driverId || '').trim() === String(attemptDriverId).trim()
+      );
+      if (sameDriver.length) return sameDriver[sameDriver.length - 1];
+    }
+
+    return beforeAttempt[beforeAttempt.length - 1];
+  }
+
+  async function fetchAssignmentAgency(assignmentId) {
+    const key = String(assignmentId || '').trim().toUpperCase();
+    if (!key) return null;
+    if (assignmentAgencyCache.has(key)) return assignmentAgencyCache.get(key);
+
+    try {
+      const response = await fetchJson(ASSIGNMENT_SEARCH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json;charset=UTF-8' },
+        body: JSON.stringify({
+          assignment_task_id: key,
+          pageno: 1,
+          count: 20,
+          search_type: 0
+        })
+      });
+
+      const list = Array.isArray(response?.data?.list) ? response.data.list : [];
+      const item = list.find(row =>
+        String(row?.assignment_task_id || '').trim().toUpperCase() === key
+      ) || list[0] || null;
+
+      if (!item) return null;
+
+      const result = {
+        assignmentId: String(item?.assignment_task_id || key).trim(),
+        agency: String(item?.agency || '').trim(),
+        agencyId: String(item?.agency_id ?? '').trim(),
+        driverId: String(item?.driver_id ?? '').trim(),
+        driverName: String(item?.driver_name || '').trim()
+      };
+
+      assignmentAgencyCache.set(key, result);
+      return result;
+    } catch (error) {
+      console.warn('[SPX-DV] Falha ao consultar Agência (3PL) da AT', key, error);
+      return null;
+    }
+  }
+
+  async function enrichAttemptsWithAssignmentAgency(attempts, tracking, version) {
+    if (!Array.isArray(attempts) || !attempts.length || !tracking) return attempts || [];
+
+    const cycles = extractAssignmentDeliveryCycles(tracking);
+    if (!cycles.length) return attempts;
+
+    const linked = attempts.map(attempt => {
+      const cycle = assignmentCycleForAttempt(attempt, cycles);
+      if (!cycle) return attempt;
+      return {
+        ...attempt,
+        assignment_task_id: cycle.assignmentId,
+        assignment_driver_id: cycle.driverId,
+        assignment_driver_name: cycle.driverName
+      };
+    });
+
+    const assignmentIds = [...new Set(linked
+      .map(item => String(item?.assignment_task_id || '').trim().toUpperCase())
+      .filter(Boolean))];
+
+    if (!assignmentIds.length) return linked;
+
+    const results = await Promise.all(assignmentIds.map(async assignmentId => [
+      assignmentId,
+      await fetchAssignmentAgency(assignmentId)
+    ]));
+
+    if (version !== currentRequest) return linked;
+
+    const byAssignment = new Map(results);
+    return linked.map(attempt => {
+      const assignmentId = String(attempt?.assignment_task_id || '').trim().toUpperCase();
+      const details = byAssignment.get(assignmentId);
+      if (!details) return attempt;
+
+      const attemptDriverId = getDriverId(attempt);
+      const knownAttemptDriver = attemptDriverId && attemptDriverId !== 'Não informado';
+      const agencyDriverId = String(details.driverId || '').trim();
+
+      // A AT deve apontar para o mesmo motorista da ocorrência. Se ambos os IDs
+      // estiverem disponíveis e forem diferentes, não mostramos uma 3PL incorreta.
+      if (knownAttemptDriver && agencyDriverId && String(attemptDriverId).trim() !== agencyDriverId) {
+        return { ...attempt, assignment_agency_mismatch: true };
+      }
+
+      return {
+        ...attempt,
+        assignment_agency: details.agency,
+        assignment_agency_id: details.agencyId,
+        assignment_driver_lookup_name: details.driverName
+      };
+    });
+  }
+
   function findRecentAutoAddTarget(tracking, scanUnix) {
     const lowerBound = Number(scanUnix) - 30;
     const upperBound = Number(scanUnix) + 14400;
@@ -978,7 +1152,9 @@
         const returnLabel = attempt.current_return ? 'ATUAL DO RETORNO' : 'OCORRÊNCIA DO RETORNO';
         return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${attempt.return_operator ? '<b>Operador:</b> ' + escapeHtml(attempt.return_operator) : 'Ocorrência do retorno'}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
       }
-      return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span>${cancelledBadge}<div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span></div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
+      const agency = String(attempt?.assignment_agency || '').trim();
+      const agencyText = agency || 'Não localizada';
+      return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span>${cancelledBadge}<div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span><br><span class="driver-code"><b>Transportadora:</b> ${escapeHtml(agencyText)}</span></div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
     }).join('');
     const decision = recommendation(ordered, address);
     return `${cards}<div class="decision ${decision.className}"><strong>${escapeHtml(decision.text)}</strong></div>`;
@@ -1120,10 +1296,16 @@
         ? attempts.filter(item => Number(item?.ctime || 0) >= Number(cycleStart))
         : attempts;
 
+      // Cada ocorrência normal é ligada à AT usada na saída em rota imediatamente
+      // anterior (status 2 / Delivering). A AT é então consultada no mesmo endpoint
+      // da tela Atribuição de Entrega para obter a coluna Agência (3PL).
+      const attemptsWithAgency = await enrichAttemptsWithAssignmentAgency(currentAttempts, tracking, version);
+      if (version !== currentRequest || shipmentId !== currentShipment) return;
+
       // Em BR de retorno, juntamos apenas as ocorrências do ciclo iniciado em
       // Retorno_LMHub_Em_Espera / Return_LMHub_Onhold. O histórico normal anterior some.
       // Se houver mais de uma ocorrência de retorno, todas permanecem visíveis.
-      const merged = cycleStart ? [...currentAttempts, ...returnOccurrences] : currentAttempts;
+      const merged = cycleStart ? [...attemptsWithAgency, ...returnOccurrences] : attemptsWithAgency;
       const visibleAttempts = merged
         .filter((item, index, list) => {
           const key = String(item?.ctime || 0) + '|' + normalize(translateReason(item?.on_hold_reason__desc));

@@ -637,7 +637,7 @@ Isso deve ser suficiente para retomar sem reexplicar o histórico.
 ## 24. ESTADO ATUAL
 
 Versão atual:
-**1.3.19**
+**1.3.20**
 
 Estado:
 **validada em teste real no SPX para separação do ciclo Return.**
@@ -707,3 +707,21 @@ Caso real usado para validar a associação local:
 A associação dos três ciclos passou em teste local. A chamada real ao `search/v2` e a exibição da transportadora na tela de recebimento precisam ser validadas pelo usuário no SPX.
 
 A 1.3.18 continua sendo a última versão validada em ambiente real para o conjunto completo anterior. A 1.3.19 é a versão atual em teste para a nova informação de transportadora.
+
+
+---
+
+## 27. ATUALIZAÇÃO 1.3.20 — 3PL AO LADO DO MOTORISTA
+
+A v1.3.19 foi validada pelo usuário em ambiente real: a transportadora/Agência (3PL) apareceu corretamente por ocorrência.
+
+Na v1.3.20, apenas a apresentação foi simplificada:
+- não exibir o rótulo `Transportadora:`;
+- mostrar somente o nome da Agência (3PL) ao lado do motorista;
+- manter o ID na linha de baixo.
+
+Formato:
+`Motorista: <nome> — <agency>`
+`ID: <id>`
+
+Toda a lógica funcional da v1.3.19 permanece igual.

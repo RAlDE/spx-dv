@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.23';
+  const MODULE_VERSION = '1.3.24';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -1000,7 +1000,7 @@
       await fetchAssignmentAgency(assignmentId)
     ]));
 
-    if (version !== currentRequest) return linked;
+    if (version !== null && version !== undefined && version !== currentRequest) return linked;
 
     const byAssignment = new Map(results);
     return linked.map(attempt => {
@@ -1148,21 +1148,15 @@
     };
   }
 
-  async function sendCurrentOccurrenceToDataSheet(shipmentId, attempt, tracking, returnFlow, scanUnix, version) {
+  async function sendCurrentOccurrenceToDataSheet(shipmentId, attempt, returnFlow) {
     if (!shipmentId || !attempt || !ONHOLD_DATA_WEBAPP_URL) return false;
 
-    // Regra operacional simples: se o BR foi bipado no Recebimento e existe
-    // ocorrência no ciclo atual, envia a ocorrência mais recente para a planilha.
-    // Não tentamos inferir "pendência" por eventos posteriores do tracking.
-    // A mesma ocorrência não duplica porque o Web App usa BR + timestamp.
     let neighborhood = '';
     try {
       neighborhood = await fetchOccurrenceNeighborhood(shipmentId, returnFlow);
     } catch (error) {
       console.warn('[SPX-DV] Não foi possível obter o bairro da ocorrência', error);
     }
-
-    if (version !== currentRequest || shipmentId !== currentShipment) return false;
 
     const payload = currentOccurrenceSheetPayload(
       shipmentId, attempt, returnFlow, neighborhood
@@ -1184,6 +1178,75 @@
       console.warn('[SPX-DV] Falha ao enviar ocorrência atual para a aba Dados', error);
       return false;
     }
+  }
+
+  async function processDataSheetScan(shipmentId) {
+    if (!shipmentId || !ONHOLD_DATA_WEBAPP_URL) return false;
+
+    try {
+      const [history, tracking] = await Promise.all([
+        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`),
+        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null)
+      ]);
+
+      const attempts = Array.isArray(history?.data?.recipient?.On_Hold)
+        ? history.data.recipient.On_Hold.filter(Boolean)
+        : [];
+
+      const returnOccurrences = extractReturnOccurrences(tracking);
+      const cycleStart = returnOccurrences.length
+        ? Number(returnOccurrences[0].ctime || 0)
+        : 0;
+
+      const currentAttempts = cycleStart
+        ? attempts.filter(item => Number(item?.ctime || 0) >= cycleStart)
+        : attempts;
+
+      // Esta execução é independente do painel. Um novo bip pode trocar
+      // currentShipment sem cancelar o BR anterior.
+      const attemptsWithAgency = await enrichAttemptsWithAssignmentAgency(
+        currentAttempts,
+        tracking,
+        null
+      );
+
+      const merged = cycleStart
+        ? [...attemptsWithAgency, ...returnOccurrences]
+        : attemptsWithAgency;
+
+      const visibleAttempts = merged
+        .filter((item, index, list) => {
+          const key = String(item?.ctime || 0) + '|' +
+            normalize(translateReason(item?.on_hold_reason__desc));
+          return list.findIndex(other =>
+            String(other?.ctime || 0) + '|' +
+            normalize(translateReason(other?.on_hold_reason__desc)) === key
+          ) === index;
+        })
+        .sort((a, b) => Number(a?.ctime || 0) - Number(b?.ctime || 0));
+
+      const currentOccurrence = visibleAttempts.at(-1);
+      if (!currentOccurrence) return false;
+
+      return await sendCurrentOccurrenceToDataSheet(
+        shipmentId,
+        currentOccurrence,
+        Boolean(cycleStart)
+      );
+    } catch (error) {
+      console.warn('[SPX-DV] Falha no processamento independente da planilha', shipmentId, error);
+      return false;
+    }
+  }
+
+  function queueDataSheetScan(shipmentId) {
+    if (!shipmentId) return;
+
+    // O SPX precisa de um pequeno intervalo para consolidar o recebimento.
+    // Diferente do painel, esta tarefa NÃO é cancelada quando outro BR é bipado.
+    window.setTimeout(() => {
+      void processDataSheetScan(shipmentId);
+    }, 1200);
   }
 
   function findRecentAutoAddTarget(tracking, scanUnix) {
@@ -1485,20 +1548,6 @@
       }
       if (!diagnosticView) showPanel(shipmentId, renderAttempts(visibleAttempts, address, shipmentId));
 
-      // A automação da aba Dados usa SOMENTE a última ocorrência do ciclo atual.
-      // Ocorrências antigas continuam visíveis no painel, mas não são reenviadas.
-      const currentOccurrence = visibleAttempts.at(-1);
-      if (currentOccurrence) {
-        void sendCurrentOccurrenceToDataSheet(
-          shipmentId,
-          currentOccurrence,
-          tracking,
-          Boolean(cycleStart),
-          scanUnix,
-          version
-        );
-      }
-
       if (address.pending && normalize(latestReason) === 'endereco nao encontrado') {
         watchForAutoAddressCancel(shipmentId);
       }
@@ -1569,7 +1618,14 @@
     autoCancelledAddress.delete(value);
     currentShipment = value;
     const scanUnix = Math.floor(Date.now() / 1000);
-    setTimeout(() => { if (currentShipment === value && authorized) loadShipment(value, scanUnix); }, 1200);
+
+    // Cada leitura ganha sua própria tarefa de planilha. Ela continua mesmo
+    // se o operador bipar outro BR antes de o painel terminar de carregar.
+    queueDataSheetScan(value);
+
+    setTimeout(() => {
+      if (currentShipment === value && authorized) loadShipment(value, scanUnix);
+    }, 1200);
   }
 
   function ensureShipmentKeyListener() {

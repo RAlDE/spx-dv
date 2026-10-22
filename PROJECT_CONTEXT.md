@@ -581,3 +581,25 @@ Otimizações no arquivo `apps-script/recebimento-onhold-dados.gs`:
 
 Observação operacional:
 o Web App já implantado não é atualizado automaticamente quando o arquivo GitHub muda. É necessário copiar novamente o conteúdo atualizado para o projeto Apps Script e criar uma nova versão da mesma implantação para manter a URL `/exec`.
+
+
+## Correção do Web App — duplicidade e linhas apagadas
+Em 22/10/2026 o teste real mostrou dois efeitos da versão sem deduplicação:
+1. rebipar o mesmo BR com a mesma ocorrência criava uma nova linha;
+2. ao excluir linhas já usadas, o ponteiro persistido continuava adiante e deixava os espaços apagados sem reaproveitamento.
+
+Correção aplicada em `apps-script/recebimento-onhold-dados.gs`:
+- deduplicação voltou usando chave `BR + occurrence_timestamp`;
+- não usa mais notas na coluna C;
+- controle fica na aba técnica oculta `_SPX_DV_CONTROLE`;
+- essa aba guarda chave da ocorrência, linha de Dados e data/hora de registro;
+- a aba é criada automaticamente e ocultada;
+- a busca por duplicidade ocorre somente nessa aba técnica, não nas 258 mil linhas de Dados;
+- `findWritableRow_` volta a procurar desde o início do lote atual para reaproveitar linhas apagadas;
+- nova linha verde encontrada atualiza o início do lote;
+- A, B e H seguem intocadas;
+- C:G e I:J continuam sendo gravadas em bloco;
+- sintaxe validada.
+
+Observação:
+ocorrências gravadas durante a janela temporária sem deduplicação não possuem chave anterior na nova aba técnica. A proteção passa a ser confiável para registros feitos após a implantação desta correção.

@@ -637,7 +637,7 @@ Isso deve ser suficiente para retomar sem reexplicar o histórico.
 ## 24. ESTADO ATUAL
 
 Versão atual:
-**1.3.21**
+**1.3.22**
 
 Estado:
 **validada em teste real no SPX para separação do ciclo Return.**
@@ -799,3 +799,41 @@ Regra anti-rebip:
 
 Teste local com tracking real confirmou os três casos acima.
 A nova integração precisa de validação real no SPX e na planilha antes de ser considerada estável.
+
+
+---
+
+## 30. ATUALIZAÇÃO 1.3.22 — CORREÇÃO DO FILTRO DE PENDÊNCIA
+
+Problema real:
+alguns BRs com ocorrência válida, bipados no Recebimento unitário, não eram enviados para a aba Dados.
+
+Exemplo:
+`BR268328614230Y`, ocorrência Endereço não encontrado, motorista EDUARDO EDSON FLORES, ID 1732584, SPXOWNFLEET.
+
+Diagnóstico:
+a v1.3.21 considerava qualquer evento posterior à ocorrência como sinal de que o OnHold havia terminado. Isso era incorreto porque o tracking possui vários eventos informativos sem mudança de status.
+
+Regra corrigida:
+somente eventos que efetivamente encerram a pendência bloqueiam o envio:
+- Delivering;
+- Delivered;
+- Return_LMHub_Returning;
+- recebimento/entrada operacional no LMHub.
+
+Eventos de AT, auditoria, endereço e similares não encerram mais a ocorrência.
+
+Se a mudança real de status foi criada pela própria leitura no Recebimento, permanece a tolerância de até 5 minutos em relação ao scan.
+
+A v1.3.22 mantém intactos:
+- painel;
+- transportadora por AT;
+- Return;
+- recomendação;
+- 3 dias;
+- endereço;
+- AutoAdd;
+- integração antiga;
+- Apps Script da aba Dados.
+
+Validação real ainda necessária.

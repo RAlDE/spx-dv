@@ -880,3 +880,23 @@ reduzir bastante as operações do Apps Script sobre uma aba com mais de 258 mil
 
 A extensão continua em v1.3.23; esta mudança é apenas no Web App da planilha.
 Para entrar em produção é necessário atualizar o Código.gs no projeto Apps Script e gerar nova versão da implantação existente, preservando a URL /exec.
+
+
+---
+
+## 33. CORREÇÃO DO WEB APP — DUPLICIDADE E REUSO DE LINHAS
+
+Teste real mostrou:
+- rebip da mesma ocorrência duplicava;
+- excluir linhas fazia o ponteiro pular os espaços apagados.
+
+Regra corrigida:
+- mesma ocorrência = mesmo BR + timestamp → não cria nova linha;
+- nova ocorrência do mesmo BR → timestamp diferente → pode criar nova linha;
+- deduplicação fica em aba técnica oculta `_SPX_DV_CONTROLE`, sem notas nas células;
+- a aba Dados não é varrida para deduplicação;
+- linhas vazias apagadas dentro do lote atual são reaproveitadas antes de avançar;
+- linha verde continua fechando o lote anterior;
+- escrita em bloco C:G e I:J permanece.
+
+A extensão permanece em v1.3.23. A alteração exige atualizar novamente a implantação do Apps Script.

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.22';
+  const MODULE_VERSION = '1.3.23';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -1150,8 +1150,11 @@
 
   async function sendCurrentOccurrenceToDataSheet(shipmentId, attempt, tracking, returnFlow, scanUnix, version) {
     if (!shipmentId || !attempt || !ONHOLD_DATA_WEBAPP_URL) return false;
-    if (!occurrenceIsReceivableNow(attempt, tracking, scanUnix)) return false;
 
+    // Regra operacional simples: se o BR foi bipado no Recebimento e existe
+    // ocorrência no ciclo atual, envia a ocorrência mais recente para a planilha.
+    // Não tentamos inferir "pendência" por eventos posteriores do tracking.
+    // A mesma ocorrência não duplica porque o Web App usa BR + timestamp.
     let neighborhood = '';
     try {
       neighborhood = await fetchOccurrenceNeighborhood(shipmentId, returnFlow);

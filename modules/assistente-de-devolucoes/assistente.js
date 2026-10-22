@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.25';
+  const MODULE_VERSION = '1.3.26';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -1675,31 +1675,45 @@
     }
   }
 
-  function checkShipment() {
+  function checkShipment(submitted = false) {
     if (!isTargetRoute() || !authorized) return;
+
     const value = String(findInput()?.value || '').trim().toUpperCase();
-    if (!value || value === currentShipment) return;
-    autoCancelledAddress.delete(value);
-    currentShipment = value;
-    const scanUnix = Math.floor(Date.now() / 1000);
+    if (!value) return;
 
-    // Cada leitura ganha sua própria tarefa de planilha. Ela continua mesmo
-    // se o operador bipar outro BR antes de o painel terminar de carregar.
-    queueDataSheetScan(value);
+    const isNewValue = value !== currentShipment;
 
-    setTimeout(() => {
-      if (currentShipment === value && authorized) loadShipment(value, scanUnix);
-    }, 1200);
+    if (isNewValue) {
+      autoCancelledAddress.delete(value);
+      currentShipment = value;
+
+      const scanUnix = Math.floor(Date.now() / 1000);
+      setTimeout(() => {
+        if (currentShipment === value && authorized) loadShipment(value, scanUnix);
+      }, 1200);
+    }
+
+    // IMPORTANTE:
+    // apenas aparecer/colar um BR na caixa serve para atualizar o painel.
+    // A planilha só entra na fila quando houve submissão real pelo Enter
+    // (scanner/bip ou Enter manual).
+    if (submitted) {
+      queueDataSheetScan(value);
+    }
   }
 
   function ensureShipmentKeyListener() {
     if (shipmentKeyListenerInstalled) return;
     shipmentKeyListenerInstalled = true;
+
     document.addEventListener('keydown', event => {
-      if (event.key === 'Enter') {
-        currentShipment = '';
-        checkShipment();
-      }
+      if (event.key !== 'Enter') return;
+      if (!isTargetRoute() || !authorized) return;
+
+      // No keydown do Enter o scanner já terminou de preencher o SPX TN.
+      // Não limpamos currentShipment: o painel pode continuar no mesmo BR.
+      // Apenas sinalizamos que este valor foi efetivamente submetido.
+      checkShipment(true);
     }, true);
   }
 

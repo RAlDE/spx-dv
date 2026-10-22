@@ -10,14 +10,17 @@
  * - C é a referência de ocupação da linha
  * - linha verde é separador de recebimento e nunca pode ser usada
  * - entradas manuais em C são preservadas
- * - não faz deduplicação: cada recebimento enviado gera uma nova linha
+ * - a mesma ocorrência (BR + timestamp) não é duplicada
+ * - o controle de duplicidade fica em aba técnica oculta, nunca em notas da coluna C
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
   sheetName: 'Dados',
+  controlSheetName: '_SPX_DV_CONTROLE',
   pointerProperty: 'SPX_DV_NEXT_ROW_V1',
+  batchStartProperty: 'SPX_DV_BATCH_START_V1',
   timezone: 'America/Sao_Paulo'
 });
 
@@ -50,8 +53,20 @@ function doPost(e) {
       return jsonResponse_({ ok: false, error: 'Aba Dados não encontrada' });
     }
 
+    const occurrenceKey = record.shipmentId + '|' + record.occurrenceTimestamp;
+    const controlSheet = getControlSheet_(spreadsheet);
+
+    if (occurrenceAlreadyRecorded_(controlSheet, occurrenceKey)) {
+      return jsonResponse_({
+        ok: true,
+        duplicate: true,
+        occurrence_key: occurrenceKey
+      });
+    }
+
     const row = findWritableRow_(sheet);
     writeRecord_(sheet, row, record);
+    rememberOccurrence_(controlSheet, occurrenceKey, row);
 
     PropertiesService.getScriptProperties()
       .setProperty(SPX_DV_CONFIG.pointerProperty, String(row + 1));
@@ -59,7 +74,8 @@ function doPost(e) {
     return jsonResponse_({
       ok: true,
       inserted: true,
-      row
+      row,
+      occurrence_key: occurrenceKey
     });
   } catch (error) {
     console.error('[SPX-DV] Falha no recebimento da planilha', error);
@@ -118,6 +134,45 @@ function writeRecord_(sheet, row, record) {
   ]]);
 }
 
+function getControlSheet_(spreadsheet) {
+  let sheet = spreadsheet.getSheetByName(SPX_DV_CONFIG.controlSheetName);
+
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(SPX_DV_CONFIG.controlSheetName);
+    sheet.getRange(1, 1, 1, 3).setValues([[
+      'occurrence_key',
+      'dados_row',
+      'registered_at'
+    ]]);
+  }
+
+  if (!sheet.isSheetHidden()) sheet.hideSheet();
+  return sheet;
+}
+
+function occurrenceAlreadyRecorded_(controlSheet, occurrenceKey) {
+  const lastRow = controlSheet.getLastRow();
+  if (lastRow < 2) return false;
+
+  const match = controlSheet
+    .getRange(2, 1, lastRow - 1, 1)
+    .createTextFinder(occurrenceKey)
+    .matchEntireCell(true)
+    .matchCase(true)
+    .findNext();
+
+  return Boolean(match);
+}
+
+function rememberOccurrence_(controlSheet, occurrenceKey, dadosRow) {
+  const row = Math.max(controlSheet.getLastRow() + 1, 2);
+  controlSheet.getRange(row, 1, 1, 3).setValues([[
+    occurrenceKey,
+    dadosRow,
+    new Date()
+  ]]);
+}
+
 function numericIfSafe_(value) {
   const text = clean_(value);
   if (!/^\d+$/.test(text)) return text;
@@ -127,31 +182,57 @@ function numericIfSafe_(value) {
 
 function findWritableRow_(sheet) {
   const properties = PropertiesService.getScriptProperties();
-  const stored = Number(properties.getProperty(SPX_DV_CONFIG.pointerProperty) || 0);
+  const storedPointer = Number(properties.getProperty(SPX_DV_CONFIG.pointerProperty) || 0);
+  const storedBatchStart = Number(properties.getProperty(SPX_DV_CONFIG.batchStartProperty) || 0);
 
-  let row = Number.isInteger(stored) && stored >= 2
-    ? stored
+  let batchStart = Number.isInteger(storedBatchStart) && storedBatchStart >= 2
+    ? storedBatchStart
     : findRowAfterLastGreen_(sheet);
 
-  if (row < 2) row = 2;
+  if (batchStart < 2) batchStart = 2;
 
-  // Procura em blocos para reduzir chamadas ao Sheets.
-  const chunkSize = 50;
+  // O ponteiro serve apenas para limitar a leitura. A escolha da linha sempre
+  // recomeça no início do bloco atual, então linhas apagadas são reaproveitadas.
+  let scanEnd = Math.max(
+    batchStart + 99,
+    Number.isInteger(storedPointer) && storedPointer >= batchStart
+      ? storedPointer + 50
+      : batchStart + 99
+  );
 
   while (true) {
-    ensureRowExists_(sheet, row + chunkSize - 1);
+    ensureRowExists_(sheet, scanEnd);
 
-    const backgrounds = sheet.getRange(row, 1, chunkSize, 1).getBackgrounds();
-    const cValues = sheet.getRange(row, 3, chunkSize, 1).getDisplayValues();
+    const count = scanEnd - batchStart + 1;
+    const backgrounds = sheet.getRange(batchStart, 1, count, 1).getBackgrounds();
+    const cValues = sheet.getRange(batchStart, 3, count, 1).getDisplayValues();
 
-    for (let index = 0; index < chunkSize; index += 1) {
+    // Se uma nova linha verde foi criada depois do início conhecido do bloco,
+    // tudo que está acima dela pertence ao lote encerrado e não pode ser usado.
+    let latestGreenOffset = -1;
+    for (let index = 0; index < backgrounds.length; index += 1) {
+      if (isGreenColor_(backgrounds[index][0])) latestGreenOffset = index;
+    }
+
+    const effectiveStartOffset = latestGreenOffset >= 0
+      ? latestGreenOffset + 1
+      : 0;
+
+    const effectiveBatchStart = batchStart + effectiveStartOffset;
+    properties.setProperty(
+      SPX_DV_CONFIG.batchStartProperty,
+      String(effectiveBatchStart)
+    );
+
+    for (let index = effectiveStartOffset; index < cValues.length; index += 1) {
       if (isGreenColor_(backgrounds[index][0])) continue;
 
       const displayValue = String(cValues[index][0] || '').trim();
-      if (!displayValue) return row + index;
+      if (!displayValue) return batchStart + index;
     }
 
-    row += chunkSize;
+    // Não encontrou vazio no trecho conhecido: amplia de 100 em 100 linhas.
+    scanEnd += 100;
   }
 }
 
@@ -174,7 +255,10 @@ function findRowAfterLastGreen_(sheet) {
     }
   }
 
-  return lastGreen + 1;
+  const batchStart = lastGreen + 1;
+  PropertiesService.getScriptProperties()
+    .setProperty(SPX_DV_CONFIG.batchStartProperty, String(batchStart));
+  return batchStart;
 }
 
 function isGreenColor_(hex) {

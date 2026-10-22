@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.24
+Versão atual do módulo: 1.3.25
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -627,5 +627,28 @@ Correção v1.3.24:
 - o envio antigo dentro de `loadShipment()` foi removido para evitar duas tentativas paralelas desnecessárias;
 - Web App e sua URL não mudaram;
 - deduplicação no Apps Script por BR + timestamp continua ativa.
+
+Sintaxe JavaScript validada. Validação real pendente.
+
+
+## Atualização 1.3.25 — trava local por BR + timestamp
+Após validação com o usuário, a extensão passou a reaproveitar a ideia operacional do fluxo de cancelamento de endereço para evitar reenvio da mesma ocorrência.
+
+Regra:
+- chave local = `BR + occurrence_timestamp`;
+- mesma ocorrência no mesmo BR → envia uma vez;
+- rebip da mesma ocorrência → não envia de novo;
+- mesmo BR com nova ocorrência, mesmo motivo ou motivo diferente, mas novo timestamp → envia normalmente.
+
+Implementação:
+- novo estado em `sessionStorage`: `spxdv:data-sheet-occurrences-v1`;
+- retenção local de 24h apenas para evitar reenvios na sessão;
+- novo `Set` em memória para ocorrências em voo, evitando dois POSTs simultâneos quando dois bips acontecem muito próximos;
+- a ocorrência é marcada como enviada somente depois que o fetch ao Web App é aceito pelo navegador;
+- em falha de fetch, a reserva em voo é liberada para permitir nova tentativa;
+- o Apps Script continua como segunda proteção, deduplicando `BR + timestamp` entre sessões/recargas.
+
+A fila independente da v1.3.24 permanece:
+- um novo bip não cancela o envio do BR anterior.
 
 Sintaxe JavaScript validada. Validação real pendente.

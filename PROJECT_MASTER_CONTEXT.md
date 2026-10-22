@@ -637,7 +637,7 @@ Isso deve ser suficiente para retomar sem reexplicar o histórico.
 ## 24. ESTADO ATUAL
 
 Versão atual:
-**1.3.25**
+**1.3.26**
 
 Estado:
 **validada em teste real no SPX para separação do ciclo Return.**
@@ -942,3 +942,24 @@ Comportamento:
 - Apps Script continua como segunda camada de deduplicação entre sessões.
 
 Preserva integralmente a fila independente da v1.3.24, que impede perda do BR anterior quando o operador bipa rapidamente o próximo.
+
+
+---
+
+## 36. ATUALIZAÇÃO 1.3.26 — ENVIO SOMENTE NO ENTER DO SPX TN
+
+Problema:
+colar um BR no campo de Recebimento já disparava a planilha sem o operador confirmar o recebimento.
+
+Nova regra:
+- mudança/colagem no campo → apenas painel;
+- Enter no próprio campo SPX TN → agenda envio para a planilha;
+- Enter fora do campo → não envia.
+
+Preservado:
+- fila independente para não perder BR anterior;
+- deduplicação local por BR + timestamp;
+- segunda proteção no Apps Script;
+- painel e demais funções.
+
+A v1.3.26 passou em validação de sintaxe e inspeção estática do fluxo. A confirmação definitiva depende de teste real no SPX.

@@ -1710,6 +1710,13 @@
       if (event.key !== 'Enter') return;
       if (!isTargetRoute() || !authorized) return;
 
+      const input = findInput();
+      if (!input) return;
+
+      // Só o Enter do próprio campo SPX TN conta como submissão para a planilha.
+      // Isso evita que um Enter em botão/modal com um BR ainda preenchido dispare envio.
+      if (event.target !== input && document.activeElement !== input) return;
+
       // No keydown do Enter o scanner já terminou de preencher o SPX TN.
       // Não limpamos currentShipment: o painel pode continuar no mesmo BR.
       // Apenas sinalizamos que este valor foi efetivamente submetido.

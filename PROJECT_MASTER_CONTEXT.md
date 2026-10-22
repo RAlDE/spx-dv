@@ -637,7 +637,7 @@ Isso deve ser suficiente para retomar sem reexplicar o histórico.
 ## 24. ESTADO ATUAL
 
 Versão atual:
-**1.3.22**
+**1.3.23**
 
 Estado:
 **validada em teste real no SPX para separação do ciclo Return.**
@@ -837,3 +837,21 @@ A v1.3.22 mantém intactos:
 - Apps Script da aba Dados.
 
 Validação real ainda necessária.
+
+
+---
+
+## 31. ATUALIZAÇÃO 1.3.23 — TODO BR COM OCORRÊNCIA É ENVIADO
+
+Regra definitiva:
+- bipou no Recebimento unitário;
+- existe ocorrência no ciclo atual;
+- enviar a ocorrência mais recente para a aba Dados.
+
+Removida a tentativa de inferir "ainda pendente" pelo tracking, pois eventos posteriores informativos geravam bloqueios incorretos.
+
+Duplicidade:
+- mesma ocorrência = mesmo BR + mesmo timestamp → Web App não cria nova linha;
+- nova ocorrência do mesmo BR = timestamp diferente → pode criar nova linha.
+
+Essa regra representa diretamente o objetivo do usuário: todos os BRs recebidos com ocorrência devem aparecer na planilha.

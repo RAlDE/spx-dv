@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.25
+Versão atual do módulo: 1.3.26
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -652,3 +652,30 @@ A fila independente da v1.3.24 permanece:
 - um novo bip não cancela o envio do BR anterior.
 
 Sintaxe JavaScript validada. Validação real pendente.
+
+
+## Atualização 1.3.26 — planilha só dispara no Enter do SPX TN
+Em 22/10/2026 o usuário identificou que apenas colar um BR no campo de Recebimento, sem confirmar o recebimento, já fazia o BR chegar à planilha.
+
+Causa:
+- `checkShipment()` era chamado pelo monitor a cada 300ms;
+- qualquer mudança no valor do campo SPX TN podia chamar `queueDataSheetScan()`;
+- portanto "campo mudou" estava sendo usado como se fosse "recebimento submetido".
+
+Correção:
+- `checkShipment(submitted = false)` agora separa atualização do painel e submissão;
+- monitor, carregamento inicial e simples colagem chamam `checkShipment()` sem envio;
+- somente Enter chama `checkShipment(true)`;
+- o Enter só é aceito quando o próprio campo SPX TN está focado/alvo;
+- colar/digitar BR sem Enter pode atualizar o painel, mas não envia à planilha;
+- Enter em outro botão/modal não dispara envio;
+- fila independente da v1.3.24 permanece;
+- trava local BR + timestamp da v1.3.25 permanece;
+- Apps Script não mudou.
+
+Verificação:
+- sintaxe JavaScript passou;
+- busca no código confirmou que a única chamada de `queueDataSheetScan(value)` está dentro de `if (submitted)`;
+- chamadas automáticas `checkShipment()` e `setInterval(checkShipment, 300)` continuam com submitted=false.
+
+Validação real no SPX ainda pendente.

@@ -637,7 +637,7 @@ Isso deve ser suficiente para retomar sem reexplicar o histórico.
 ## 24. ESTADO ATUAL
 
 Versão atual:
-**1.3.23**
+**1.3.24**
 
 Estado:
 **validada em teste real no SPX para separação do ciclo Return.**
@@ -900,3 +900,25 @@ Regra corrigida:
 - escrita em bloco C:G e I:J permanece.
 
 A extensão permanece em v1.3.23. A alteração exige atualizar novamente a implantação do Apps Script.
+
+
+---
+
+## 34. ATUALIZAÇÃO 1.3.24 — FILA INDEPENDENTE DA PLANILHA
+
+Problema real:
+alguns BRs eram recebidos normalmente no SPX, mas não iam para a planilha na primeira leitura. Quando bipados novamente, entravam.
+
+Causa:
+o processamento da planilha estava preso ao mesmo `currentRequest/currentShipment` usado para cancelar o painel anterior quando chegava um novo BR. Em operação rápida, o próximo bip interrompia o envio anterior.
+
+Nova arquitetura:
+- painel continua mostrando somente o BR mais recente;
+- cada bip cria uma tarefa independente de planilha;
+- tarefa anterior não é cancelada pelo próximo bip;
+- cada tarefa busca os dados necessários e envia a ocorrência mais recente;
+- Apps Script continua deduplicando BR + timestamp;
+- não houve alteração no Web App nesta versão.
+
+Objetivo:
+nenhum BR recebido com ocorrência deve ser perdido apenas porque o operador bipou o próximo pacote rapidamente.

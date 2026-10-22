@@ -855,3 +855,28 @@ Duplicidade:
 - nova ocorrência do mesmo BR = timestamp diferente → pode criar nova linha.
 
 Essa regra representa diretamente o objetivo do usuário: todos os BRs recebidos com ocorrência devem aparecer na planilha.
+
+
+---
+
+## 32. OTIMIZAÇÃO DO WEB APP — SEM DEDUPLICAÇÃO
+
+Decisão do usuário:
+confiar no fluxo de recebimento do SPX e remover o controle de duplicidade da planilha.
+
+Mudanças:
+- não procurar ocorrências antigas;
+- não adicionar notas nas células de BR;
+- cada payload recebido gera uma nova linha;
+- C:G são gravadas juntas;
+- I:J são gravadas juntas;
+- busca da próxima linha livre é feita em blocos de 50 linhas;
+- linha verde continua sendo separador;
+- C preenchida continua sendo ocupação;
+- A, B e H não são alteradas.
+
+Benefício esperado:
+reduzir bastante as operações do Apps Script sobre uma aba com mais de 258 mil linhas, principalmente eliminando TextFinder e gravações célula a célula.
+
+A extensão continua em v1.3.23; esta mudança é apenas no Web App da planilha.
+Para entrar em produção é necessário atualizar o Código.gs no projeto Apps Script e gerar nova versão da implantação existente, preservando a URL /exec.

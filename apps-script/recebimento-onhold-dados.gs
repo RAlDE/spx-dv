@@ -10,15 +10,14 @@
  * - C é a referência de ocupação da linha
  * - linha verde é separador de recebimento e nunca pode ser usada
  * - entradas manuais em C são preservadas
- * - uma ocorrência exata (BR + timestamp) não é duplicada
- * - fórmulas nas células-alvo podem ser substituídas quando houver dado real
+ * - não faz deduplicação: cada recebimento enviado gera uma nova linha
+ * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
   sheetName: 'Dados',
   pointerProperty: 'SPX_DV_NEXT_ROW_V1',
-  notePrefix: 'SPX-DV:',
   timezone: 'America/Sao_Paulo'
 });
 
@@ -51,34 +50,16 @@ function doPost(e) {
       return jsonResponse_({ ok: false, error: 'Aba Dados não encontrada' });
     }
 
-    const occurrenceKey = record.shipmentId + '|' + record.occurrenceTimestamp;
-    const existingRow = findExistingOccurrenceRow_(sheet, record.shipmentId, occurrenceKey);
-
-    if (existingRow) {
-      // Reenvio da mesma ocorrência: não cria nova linha.
-      // Se uma nova tentativa trouxer algum campo que antes estava vazio,
-      // completamos apenas as células que agora possuem informação.
-      writeRecord_(sheet, existingRow, record, false);
-      return jsonResponse_({
-        ok: true,
-        duplicate: true,
-        row: existingRow,
-        occurrence_key: occurrenceKey
-      });
-    }
-
     const row = findWritableRow_(sheet);
-    writeRecord_(sheet, row, record, true);
+    writeRecord_(sheet, row, record);
 
-    sheet.getRange(row, 3).setNote(SPX_DV_CONFIG.notePrefix + occurrenceKey);
     PropertiesService.getScriptProperties()
       .setProperty(SPX_DV_CONFIG.pointerProperty, String(row + 1));
 
     return jsonResponse_({
       ok: true,
       inserted: true,
-      row,
-      occurrence_key: occurrenceKey
+      row
     });
   } catch (error) {
     console.error('[SPX-DV] Falha no recebimento da planilha', error);
@@ -120,25 +101,21 @@ function normalizeRecord_(payload) {
   };
 }
 
-function writeRecord_(sheet, row, record, overwriteKnownFields) {
-  // C — Pedido: sempre define a identidade da linha.
-  if (overwriteKnownFields || !sheet.getRange(row, 3).getDisplayValue().trim()) {
-    sheet.getRange(row, 3).setValue(record.shipmentId);
-  }
+function writeRecord_(sheet, row, record) {
+  // C:G em uma única operação.
+  sheet.getRange(row, 3, 1, 5).setValues([[
+    record.shipmentId,
+    record.reason,
+    numericIfSafe_(record.driverId),
+    record.driverName,
+    record.agency
+  ]]);
 
-  // D, E, F, G, I e J: só sobrescreve quando temos informação real.
-  // Dessa forma, se algum campo não vier do SPX, uma fórmula existente pode permanecer.
-  setIfKnown_(sheet, row, 4, record.reason);
-  setIfKnown_(sheet, row, 5, numericIfSafe_(record.driverId));
-  setIfKnown_(sheet, row, 6, record.driverName);
-  setIfKnown_(sheet, row, 7, record.agency);
-  setIfKnown_(sheet, row, 9, record.neighborhood);
-  setIfKnown_(sheet, row, 10, record.occurrenceDate);
-}
-
-function setIfKnown_(sheet, row, column, value) {
-  if (value === '' || value === null || value === undefined) return;
-  sheet.getRange(row, column).setValue(value);
+  // H permanece intocada. I:J são gravadas juntas.
+  sheet.getRange(row, 9, 1, 2).setValues([[
+    record.neighborhood,
+    record.occurrenceDate
+  ]]);
 }
 
 function numericIfSafe_(value) {
@@ -146,22 +123,6 @@ function numericIfSafe_(value) {
   if (!/^\d+$/.test(text)) return text;
   const number = Number(text);
   return Number.isSafeInteger(number) ? number : text;
-}
-
-function findExistingOccurrenceRow_(sheet, shipmentId, occurrenceKey) {
-  const marker = SPX_DV_CONFIG.notePrefix + occurrenceKey;
-  const maxRows = Math.max(sheet.getMaxRows(), 2);
-  const range = sheet.getRange(2, 3, maxRows - 1, 1);
-
-  const matches = range.createTextFinder(shipmentId)
-    .matchEntireCell(true)
-    .matchCase(false)
-    .findAll();
-
-  for (const cell of matches) {
-    if (String(cell.getNote() || '') === marker) return cell.getRow();
-  }
-  return 0;
 }
 
 function findWritableRow_(sheet) {
@@ -174,21 +135,23 @@ function findWritableRow_(sheet) {
 
   if (row < 2) row = 2;
 
-  while (true) {
-    ensureRowExists_(sheet, row);
+  // Procura em blocos para reduzir chamadas ao Sheets.
+  const chunkSize = 50;
 
-    // A linha verde representa fim de recebimento e nunca recebe BR.
-    if (isGreenSeparatorRow_(sheet, row)) {
-      row += 1;
-      continue;
+  while (true) {
+    ensureRowExists_(sheet, row + chunkSize - 1);
+
+    const backgrounds = sheet.getRange(row, 1, chunkSize, 1).getBackgrounds();
+    const cValues = sheet.getRange(row, 3, chunkSize, 1).getDisplayValues();
+
+    for (let index = 0; index < chunkSize; index += 1) {
+      if (isGreenColor_(backgrounds[index][0])) continue;
+
+      const displayValue = String(cValues[index][0] || '').trim();
+      if (!displayValue) return row + index;
     }
 
-    // C é a única referência de ocupação. Fórmula que exibe vazio conta como vazia.
-    const displayValue = String(sheet.getRange(row, 3).getDisplayValue() || '').trim();
-    if (!displayValue) return row;
-
-    // Linha preenchida manualmente ou automaticamente: pula.
-    row += 1;
+    row += chunkSize;
   }
 }
 
@@ -212,12 +175,6 @@ function findRowAfterLastGreen_(sheet) {
   }
 
   return lastGreen + 1;
-}
-
-function isGreenSeparatorRow_(sheet, row) {
-  // A linha de fechamento é pintada inteira. A coluna A é suficiente para
-  // reconhecer o separador sem ler dez células a cada recebimento.
-  return isGreenColor_(sheet.getRange(row, 1).getBackground());
 }
 
 function isGreenColor_(hex) {

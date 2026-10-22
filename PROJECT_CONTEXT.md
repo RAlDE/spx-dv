@@ -419,3 +419,47 @@ Exemplo:
 
 Nenhuma alteração na associação ocorrência → AT → Agência (3PL), Return, recomendação, AutoAdd, endereço, planilha ou abertura automática.
 Sintaxe JavaScript validada. Validação visual real no SPX pendente.
+
+
+## Preparação da automação da aba Dados
+Em 21/10/2026 o usuário liberou o início da automação da planilha:
+https://docs.google.com/spreadsheets/d/14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY/edit
+Aba alvo: `Dados`.
+
+Regras confirmadas:
+- enviar somente a ocorrência atual que está sendo recebida naquele momento;
+- não reenviar o histórico inteiro do BR;
+- se o mesmo BR for bipado novamente sem uma nova ocorrência pendente, não criar nova linha;
+- colunas preenchidas pela automação:
+  - C Pedido;
+  - D Motivo do APP;
+  - E Driver ID;
+  - F Motorista;
+  - G Transportadora 3PL;
+  - I BAIRRO;
+  - J Data da ocorrência;
+- A, B e H não são preenchidas pela automação;
+- C é a referência de ocupação: se C tiver valor, pular para a próxima linha;
+- fórmulas existentes nas células de destino podem ser sobrescritas por dados reais;
+- entradas manuais devem ser preservadas;
+- linha verde representa fim de um recebimento/lote, nunca recebe BR; o lote seguinte começa abaixo dela;
+- bairro:
+  - fluxo LMHub normal → `buyer_addr_district` (Bairro do Comprador);
+  - fluxo Return_LMHub → `seller_addr_district` (Bairro do Vendedor);
+- endpoint confirmado para revelar bairro sensível:
+  `GET /api/fleet_order/order/detail/show_sensitive_data?shipment_id=<BR>&data_field=<campo>`;
+- resposta: `data.data_detail`.
+
+Foi criado `apps-script/recebimento-onhold-dados.gs` com o Web App receptor da planilha.
+Ele já implementa:
+- gravação somente em C,D,E,F,G,I,J;
+- preservação de A,B,H;
+- coluna C como ocupação;
+- reconhecimento de linha verde;
+- proteção contra concorrência;
+- deduplicação exata por BR + timestamp da ocorrência usando nota em C;
+- preservação de entradas manuais;
+- preenchimento apenas de campos conhecidos.
+
+O módulo principal permanece em v1.3.20 até o Web App ser implantado e sua URL ser adicionada. Isso evita publicar uma integração incompleta.
+Próximo passo obrigatório: implantar o Apps Script como Web App e obter a URL `.../exec`. Depois ligar o SPX-DV ao endpoint e publicar a próxima versão para teste real.

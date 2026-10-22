@@ -725,3 +725,48 @@ Formato:
 `ID: <id>`
 
 Toda a lógica funcional da v1.3.19 permanece igual.
+
+
+---
+
+## 28. AUTOMAÇÃO DA ABA DADOS — PREPARAÇÃO
+
+Planilha:
+`14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY`
+Aba: `Dados`.
+
+Objetivo:
+quando um BR for recebido no Recebimento unitário e houver ocorrência atual válida, enviar automaticamente somente essa ocorrência para a aba Dados.
+
+Mapeamento:
+- C Pedido → BR;
+- D Motivo do APP → motivo traduzido da ocorrência atual;
+- E Driver ID → motorista da ocorrência atual;
+- F Motorista → nome do motorista;
+- G Transportadora 3PL → `agency` da AT;
+- I BAIRRO → bairro conforme fluxo;
+- J Data da ocorrência → data da ocorrência atual;
+- A, B e H não são tocadas.
+
+Bairro:
+- LMHub normal → Bairro do Comprador → `buyer_addr_district`;
+- Return_LMHub → Bairro do Vendedor → `seller_addr_district`.
+Endpoint sensível confirmado:
+`/api/fleet_order/order/detail/show_sensitive_data?shipment_id=<BR>&data_field=<buyer_addr_district|seller_addr_district>`.
+O valor vem em `data.data_detail`.
+
+Regras de linha:
+- linha verde = encerramento de lote e nunca pode ser usada;
+- novos dados começam abaixo da última linha verde;
+- dentro do lote, C vazia = linha disponível;
+- C preenchida manualmente ou automaticamente = pular;
+- fórmulas nas células alvo podem ser substituídas;
+- preservar A, B e H.
+
+Idempotência:
+uma ocorrência é identificada por BR + timestamp real. O Web App grava essa chave como nota na célula C para não duplicar a mesma ocorrência em rebipes/recarregamentos, sem impedir uma futura nova ocorrência do mesmo BR.
+
+Implementação preparada:
+`apps-script/recebimento-onhold-dados.gs`.
+O arquivo passou em validação de sintaxe.
+A v1.3.20 continua sendo a versão ativa/validada enquanto o novo Web App não estiver implantado. Após receber a URL `/exec`, integrar ao módulo e publicar a próxima versão.

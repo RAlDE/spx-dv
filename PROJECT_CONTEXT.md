@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.22
+Versão atual do módulo: 1.3.23
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -538,3 +538,20 @@ A planilha foi inspecionada diretamente:
 - isso não impede a automação, pois a regra de ocupação continua sendo o valor visível da coluna C.
 
 Sintaxe JavaScript validada. Validação real da v1.3.22 pendente.
+
+
+## Atualização 1.3.23 — todo BR recebido com ocorrência vai para Dados
+Regra operacional simplificada após validação com o usuário:
+- se o BR foi bipado no Recebimento unitário e o SPX-DV encontrou ocorrência no ciclo atual, enviar para a aba Dados;
+- enviar somente a ocorrência mais recente do ciclo atual;
+- não tentar mais inferir se a ocorrência continua pendente a partir de eventos posteriores do tracking_info;
+- essa inferência da 1.3.21/1.3.22 gerava falsos negativos e deixava BRs válidos fora da planilha;
+- a mesma ocorrência continua protegida contra duplicação pelo Web App usando BR + timestamp;
+- uma ocorrência nova do mesmo BR terá timestamp diferente e poderá gerar nova linha.
+
+Bairro e demais campos permanecem iguais:
+- LMHub normal → buyer_addr_district;
+- Return_LMHub → seller_addr_district;
+- grava somente C,D,E,F,G,I,J;
+- A,B,H permanecem intocadas;
+- linha verde e coluna C continuam controlando a posição de gravação.

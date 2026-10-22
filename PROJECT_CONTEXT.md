@@ -555,3 +555,29 @@ Bairro e demais campos permanecem iguais:
 - grava somente C,D,E,F,G,I,J;
 - A,B,H permanecem intocadas;
 - linha verde e coluna C continuam controlando a posição de gravação.
+
+
+## Otimização do Web App — sem deduplicação e sem notas
+Em 22/10/2026 o usuário decidiu remover a deduplicação do Web App da aba Dados.
+
+Nova regra:
+- cada recebimento enviado pelo SPX-DV gera uma nova linha;
+- não pesquisar BR antigo na aba Dados;
+- não gravar nota `SPX-DV:BR|timestamp` na coluna C;
+- a extensão continua enviando somente a ocorrência mais recente do ciclo atual;
+- a posição continua respeitando linha verde e coluna C.
+
+Otimizações no arquivo `apps-script/recebimento-onhold-dados.gs`:
+- removido `findExistingOccurrenceRow_`;
+- removido `notePrefix`;
+- removido `setNote`;
+- removida busca com TextFinder sobre a coluna C;
+- C:G agora são gravadas em um único `setValues`;
+- I:J são gravadas em um único `setValues`;
+- H continua intocada;
+- busca pela próxima linha livre passou a ler A e C em blocos de 50 linhas, reduzindo chamadas ao Google Sheets;
+- A, B e H continuam preservadas;
+- sintaxe do Apps Script validada.
+
+Observação operacional:
+o Web App já implantado não é atualizado automaticamente quando o arquivo GitHub muda. É necessário copiar novamente o conteúdo atualizado para o projeto Apps Script e criar uma nova versão da mesma implantação para manter a URL `/exec`.

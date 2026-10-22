@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.23
+Versão atual do módulo: 1.3.24
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -603,3 +603,29 @@ Correção aplicada em `apps-script/recebimento-onhold-dados.gs`:
 
 Observação:
 ocorrências gravadas durante a janela temporária sem deduplicação não possuem chave anterior na nova aba técnica. A proteção passa a ser confiável para registros feitos após a implantação desta correção.
+
+
+## Atualização 1.3.24 — envio da planilha não é cancelado pelo próximo bip
+Em 22/10/2026 o usuário reportou que alguns BRs recebidos com ocorrência não entravam na planilha na primeira leitura e só apareciam após bipar novamente.
+
+Casos observados:
+- BR final `89N`: recebido no SPX, não apareceu na planilha;
+- BR final `98M`: não entrou na primeira leitura, entrou após novo recebimento/bip.
+
+Causa confirmada no código da v1.3.23:
+- `loadShipment()` usa `currentRequest` e `currentShipment` para cancelar o processamento do painel quando chega um novo BR;
+- o envio à planilha acontecia dentro desse mesmo fluxo, somente depois de histórico, tracking, AT/3PL e bairro;
+- se o operador bipasse o próximo BR antes de tudo terminar, o BR anterior era interrompido e nunca chegava ao Web App.
+
+Correção v1.3.24:
+- envio para a aba Dados foi separado do ciclo visual do painel;
+- cada bip agenda `processDataSheetScan(shipmentId)`;
+- essa tarefa não depende de `currentShipment` nem de `currentRequest`;
+- um novo bip pode trocar o painel sem cancelar o envio do BR anterior;
+- a tarefa independente busca histórico, tracking, AT/3PL, bairro e envia a ocorrência mais recente;
+- `enrichAttemptsWithAssignmentAgency` aceita execução sem guarda de versão quando chamada pela fila independente;
+- o envio antigo dentro de `loadShipment()` foi removido para evitar duas tentativas paralelas desnecessárias;
+- Web App e sua URL não mudaram;
+- deduplicação no Apps Script por BR + timestamp continua ativa.
+
+Sintaxe JavaScript validada. Validação real pendente.

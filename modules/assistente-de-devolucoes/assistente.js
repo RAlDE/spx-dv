@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.21';
+  const MODULE_VERSION = '1.3.22';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -1061,23 +1061,61 @@
       .sort((a, b) => Number(a.ctime) - Number(b.ctime) || a.index - b.index);
   }
 
+  function nodeEndsPendingOnhold(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+    if (nodeIsAnyOnhold(node)) return false;
+
+    // Uma nova saída em rota encerra a ocorrência anterior.
+    if (nodeRepresentsDelivering(node)) return true;
+
+    const entries = primitiveEntries(node);
+    const statusTexts = entries.map(([, value]) => trackingStatusText(value));
+    const messageText = [
+      node?.message, node?.description, node?.title, node?.remark
+    ].filter(Boolean).join(' ');
+    const normalizedMessage = normalize(messageText);
+
+    // Entregue.
+    if (String(node?.status ?? '').trim() === '4') return true;
+    if (statusTexts.some(text => text === 'delivered' || text.endsWith('_delivered'))) return true;
+    if (/pedido\s+entregue|entrega\s+concluida/.test(normalizedMessage)) return true;
+
+    // Retorno saiu do OnHold e passou a retornar.
+    if (statusTexts.some(text =>
+      text.includes('return_lmhub_returning') ||
+      text.includes('retorno_lmhub_retornando')
+    )) return true;
+    if (/devolucao\s+em\s+retorno|retorno.*retornando/.test(normalizedMessage)) return true;
+
+    // Entrada/recebimento efetivo no LMHub também encerra o OnHold anterior.
+    // Não basta a palavra LMHub isolada: exigimos linguagem operacional de
+    // recebimento/entrada para não confundir eventos informativos.
+    if (
+      /lmhub/.test(normalizedMessage) &&
+      /recebid|entrada|inbound|recepcao/.test(normalizedMessage)
+    ) return true;
+
+    return false;
+  }
+
   function occurrenceIsReceivableNow(attempt, tracking, scanUnix) {
     const occurrenceTime = Number(attempt?.ctime || 0);
     if (!occurrenceTime) return false;
 
     const events = trackingEventsChronological(tracking);
 
-    // Enquanto a ocorrência ainda está realmente pendente, não existe uma
-    // mudança de estado posterior ao OnHold.
+    // Antes, qualquer evento posterior ao OnHold bloqueava o envio. Isso gerou
+    // falso negativo em BRs válidos porque o tracking contém eventos meramente
+    // informativos (AT, auditoria, endereço etc.). Agora só uma mudança REAL do
+    // ciclo encerra a ocorrência pendente.
     const firstLaterState = events.find(item =>
-      Number(item.ctime) > occurrenceTime && !nodeIsAnyOnhold(item.node)
+      Number(item.ctime) > occurrenceTime && nodeEndsPendingOnhold(item.node)
     );
 
     if (!firstLaterState) return true;
 
-    // O próprio bip no Recebimento pode gerar a próxima mudança de estado antes
-    // de terminarmos nossas consultas. Nesse caso ainda é a ocorrência que acabou
-    // de ser recebida e deve entrar na planilha.
+    // Se a própria leitura no Recebimento acabou de gerar a mudança de estado,
+    // ainda é a ocorrência que está sendo recebida agora.
     const scannedAt = Number(scanUnix || 0);
     return scannedAt > 0 && Math.abs(Number(firstLaterState.ctime) - scannedAt) <= 300;
   }

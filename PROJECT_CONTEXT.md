@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.21
+Versão atual do módulo: 1.3.22
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -503,3 +503,38 @@ Teste local com o tracking real do BR de três ocorrências:
 
 A v1.3.21 preserva painel, Return, recomendação, regra dos 3 dias, endereço, planilha antiga de cancelamento, AutoAdd e navegação da v1.3.20.
 Validação real da nova gravação na aba Dados ainda pendente.
+
+
+## Atualização 1.3.22 — correção de BRs válidos não enviados
+Em 22/10/2026 o usuário reportou que vários BRs bipados no Recebimento unitário, com ocorrência válida visível no painel, não estavam chegando à aba `Dados`.
+
+Caso observado:
+- BR `BR268328614230Y`;
+- ocorrência visível: `Endereço não encontrado`;
+- data/hora: 22/10/2026 08:28:43;
+- motorista: EDUARDO EDSON FLORES;
+- ID: 1732584;
+- 3PL: SPXOWNFLEET;
+- BR não encontrado na faixa atual da aba Dados após o bip.
+
+Causa identificada na v1.3.21:
+- `occurrenceIsReceivableNow()` tratava QUALQUER evento posterior no `tracking_info` como encerramento da ocorrência;
+- o tracking contém eventos informativos que não mudam o estado operacional (AT, auditoria, endereço etc.);
+- isso gerava falsos negativos e bloqueava envios válidos.
+
+Correção v1.3.22:
+- adicionada `nodeEndsPendingOnhold()`;
+- somente mudanças reais de ciclo encerram a pendência:
+  - nova saída em rota / Delivering;
+  - Delivered;
+  - Return_LMHub_Returning / equivalente semântico;
+  - recebimento/entrada operacional em LMHub;
+- eventos meramente informativos deixam de bloquear;
+- continua válida a janela de até 5 minutos quando a própria leitura no Recebimento acabou de gerar a mudança de estado.
+
+A planilha foi inspecionada diretamente:
+- o BR do caso não estava presente em `Dados!C258800:C258932`;
+- as linhas disponíveis possuem fórmulas em D,E,F,G,I,J;
+- isso não impede a automação, pois a regra de ocupação continua sendo o valor visível da coluna C.
+
+Sintaxe JavaScript validada. Validação real da v1.3.22 pendente.

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.20';
+  const MODULE_VERSION = '1.3.21';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -16,6 +16,7 @@
   const AUTOADD_OPERATOR = 'Admin(Polygon Auto Add)';
   const AUTOADD_RETRY_DELAYS = [0, 1200, 1800, 2500, 3200];
   const SHEET_WEBAPP_URL = 'https://script.google.com/a/macros/shopee.com/s/AKfycbyYCiRSUK7r5kPeI19TFUkfgYr7WR2aCFCGMOJiZiY4rZPWu3j2eppuuMjK6pFAn_bS/exec';
+  const ONHOLD_DATA_WEBAPP_URL = 'https://script.google.com/a/macros/shopee.com/s/AKfycbzVqz60x9ZBTt2dL83cxXaaHRMlqhEpU1r7AVlczQFmQSUdNGkyPUQcRsXzY17ImcbNOQ/exec';
   const RETURN_DIAG_KEY = 'spxdv:return-network-diag-v1';
   const ASSIGNMENT_SEARCH_URL = 'https://spx.shopee.com.br/spx_delivery/admin/assignment/assignment_task/search/v2';
 
@@ -1026,6 +1027,124 @@
     });
   }
 
+  function nodeIsAnyOnhold(node) {
+    if (!node || typeof node !== 'object') return false;
+    if (String(node?.status ?? '').trim() === '5') return true;
+    if (nodeIsReturnOnhold(node)) return true;
+
+    const text = [
+      node?.message, node?.description, node?.title, node?.remark
+    ].filter(Boolean).join(' ');
+
+    return /pedido\s+em\s+espera\s*:/i.test(text) ||
+      /on\s*hold/i.test(text) && Boolean(String(node?.on_hold_reason || '').trim());
+  }
+
+  function trackingEventsChronological(tracking) {
+    const nodes = collectTrackingNodes(tracking?.data?.tracking_list);
+    const seen = new Set();
+
+    return nodes.map((node, index) => ({
+      node,
+      index,
+      ctime: returnEventTimestamp(node)
+    }))
+      .filter(item => item.ctime)
+      .filter(item => {
+        const key = String(item.node?.id || '') + '|' +
+          String(item.ctime) + '|' + String(item.node?.status ?? '') + '|' +
+          String(item.node?.message || '');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => Number(a.ctime) - Number(b.ctime) || a.index - b.index);
+  }
+
+  function occurrenceIsReceivableNow(attempt, tracking, scanUnix) {
+    const occurrenceTime = Number(attempt?.ctime || 0);
+    if (!occurrenceTime) return false;
+
+    const events = trackingEventsChronological(tracking);
+
+    // Enquanto a ocorrência ainda está realmente pendente, não existe uma
+    // mudança de estado posterior ao OnHold.
+    const firstLaterState = events.find(item =>
+      Number(item.ctime) > occurrenceTime && !nodeIsAnyOnhold(item.node)
+    );
+
+    if (!firstLaterState) return true;
+
+    // O próprio bip no Recebimento pode gerar a próxima mudança de estado antes
+    // de terminarmos nossas consultas. Nesse caso ainda é a ocorrência que acabou
+    // de ser recebida e deve entrar na planilha.
+    const scannedAt = Number(scanUnix || 0);
+    return scannedAt > 0 && Math.abs(Number(firstLaterState.ctime) - scannedAt) <= 300;
+  }
+
+  async function fetchOccurrenceNeighborhood(shipmentId, returnFlow) {
+    const dataField = returnFlow ? 'seller_addr_district' : 'buyer_addr_district';
+    const url = 'https://spx.shopee.com.br/api/fleet_order/order/detail/show_sensitive_data' +
+      '?shipment_id=' + encodeURIComponent(shipmentId) +
+      '&data_field=' + encodeURIComponent(dataField);
+
+    const response = await fetchJson(url);
+    return String(response?.data?.data_detail || '').trim();
+  }
+
+  function currentOccurrenceSheetPayload(shipmentId, attempt, returnFlow, neighborhood) {
+    const reason = translateReason(attempt?.on_hold_reason__desc);
+    const normalAttempt = !attempt?.return_occurrence;
+    const rawDriverId = normalAttempt ? getDriverId(attempt) : '';
+    const driverId = rawDriverId === 'Não informado' ? '' : rawDriverId;
+
+    return {
+      shipment_id: String(shipmentId || '').trim().toUpperCase(),
+      reason: String(reason || '').trim(),
+      driver_id: String(driverId || '').trim(),
+      driver_name: normalAttempt ? String(attempt?.driver_name || '').trim() : '',
+      agency: normalAttempt ? String(attempt?.assignment_agency || '').trim() : '',
+      neighborhood: String(neighborhood || '').trim(),
+      occurrence_timestamp: Number(attempt?.ctime || 0),
+      flow: returnFlow ? 'Return_LMHub' : 'LMHub'
+    };
+  }
+
+  async function sendCurrentOccurrenceToDataSheet(shipmentId, attempt, tracking, returnFlow, scanUnix, version) {
+    if (!shipmentId || !attempt || !ONHOLD_DATA_WEBAPP_URL) return false;
+    if (!occurrenceIsReceivableNow(attempt, tracking, scanUnix)) return false;
+
+    let neighborhood = '';
+    try {
+      neighborhood = await fetchOccurrenceNeighborhood(shipmentId, returnFlow);
+    } catch (error) {
+      console.warn('[SPX-DV] Não foi possível obter o bairro da ocorrência', error);
+    }
+
+    if (version !== currentRequest || shipmentId !== currentShipment) return false;
+
+    const payload = currentOccurrenceSheetPayload(
+      shipmentId, attempt, returnFlow, neighborhood
+    );
+
+    if (!payload.occurrence_timestamp || !payload.reason) return false;
+
+    try {
+      await fetch(ONHOLD_DATA_WEBAPP_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        credentials: 'include',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify(payload),
+        keepalive: true
+      });
+      return true;
+    } catch (error) {
+      console.warn('[SPX-DV] Falha ao enviar ocorrência atual para a aba Dados', error);
+      return false;
+    }
+  }
+
   function findRecentAutoAddTarget(tracking, scanUnix) {
     const lowerBound = Number(scanUnix) - 30;
     const upperBound = Number(scanUnix) + 14400;
@@ -1324,6 +1443,21 @@
         catch { address = { pending: false }; }
       }
       if (!diagnosticView) showPanel(shipmentId, renderAttempts(visibleAttempts, address, shipmentId));
+
+      // A automação da aba Dados usa SOMENTE a última ocorrência do ciclo atual.
+      // Ocorrências antigas continuam visíveis no painel, mas não são reenviadas.
+      const currentOccurrence = visibleAttempts.at(-1);
+      if (currentOccurrence) {
+        void sendCurrentOccurrenceToDataSheet(
+          shipmentId,
+          currentOccurrence,
+          tracking,
+          Boolean(cycleStart),
+          scanUnix,
+          version
+        );
+      }
+
       if (address.pending && normalize(latestReason) === 'endereco nao encontrado') {
         watchForAutoAddressCancel(shipmentId);
       }

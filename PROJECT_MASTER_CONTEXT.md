@@ -637,7 +637,7 @@ Isso deve ser suficiente para retomar sem reexplicar o histórico.
 ## 24. ESTADO ATUAL
 
 Versão atual:
-**1.3.20**
+**1.3.21**
 
 Estado:
 **validada em teste real no SPX para separação do ciclo Return.**
@@ -770,3 +770,32 @@ Implementação preparada:
 `apps-script/recebimento-onhold-dados.gs`.
 O arquivo passou em validação de sintaxe.
 A v1.3.20 continua sendo a versão ativa/validada enquanto o novo Web App não estiver implantado. Após receber a URL `/exec`, integrar ao módulo e publicar a próxima versão.
+
+
+---
+
+## 29. ATUALIZAÇÃO 1.3.21 — ENVIO AUTOMÁTICO PARA DADOS
+
+Web App:
+`https://script.google.com/a/macros/shopee.com/s/AKfycbzVqz60x9ZBTt2dL83cxXaaHRMlqhEpU1r7AVlczQFmQSUdNGkyPUQcRsXzY17ImcbNOQ/exec`
+
+Fluxo:
+1. operador bipa BR em Recebimento unitário;
+2. SPX-DV carrega histórico e identifica o ciclo atual;
+3. liga ocorrência normal à AT e à Agência 3PL quando disponível;
+4. seleciona somente a última ocorrência do ciclo atual;
+5. valida se essa ocorrência está pendente ou acabou de ser recebida naquele scan;
+6. busca bairro sensível:
+   - LMHub normal → comprador;
+   - Return_LMHub → vendedor;
+7. envia JSON ao Web App;
+8. Web App grava somente C,D,E,F,G,I,J na próxima linha válida da aba Dados;
+9. BR + timestamp impede duplicação da mesma ocorrência.
+
+Regra anti-rebip:
+- OnHold sem estado posterior → pode enviar;
+- estado posterior gerado no próprio recebimento (até 5 min do scan) → pode enviar;
+- estado posterior antigo → não enviar.
+
+Teste local com tracking real confirmou os três casos acima.
+A nova integração precisa de validação real no SPX e na planilha antes de ser considerada estável.

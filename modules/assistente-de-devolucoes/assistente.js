@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.24';
+  const MODULE_VERSION = '1.3.25';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -95,6 +95,8 @@
   const autoCancelledAddress = new Set();
   const assignmentAgencyCache = new Map();
   const CANCELLED_ADDRESS_KEY = 'spxdv:cancelled-address-v1';
+  const DATA_SHEET_OCCURRENCE_KEY = 'spxdv:data-sheet-occurrences-v1';
+  const dataSheetOccurrenceInFlight = new Set();
 
   function readCancelledAddressState() {
     try {
@@ -121,6 +123,46 @@
   function isAddressCancelled(shipmentId) {
     if (!shipmentId) return false;
     return Boolean(readCancelledAddressState()[shipmentId]);
+  }
+
+  function dataSheetOccurrenceKey(shipmentId, occurrenceTimestamp) {
+    const shipment = String(shipmentId || '').trim().toUpperCase();
+    const timestamp = Math.floor(Number(occurrenceTimestamp || 0));
+    return shipment && timestamp ? shipment + '|' + timestamp : '';
+  }
+
+  function readDataSheetOccurrenceState() {
+    try {
+      const raw = JSON.parse(sessionStorage.getItem(DATA_SHEET_OCCURRENCE_KEY) || '{}');
+      const now = Date.now();
+      const clean = {};
+
+      for (const [key, savedAt] of Object.entries(raw || {})) {
+        if (now - Number(savedAt || 0) < 24 * 60 * 60 * 1000) {
+          clean[key] = Number(savedAt);
+        }
+      }
+
+      sessionStorage.setItem(DATA_SHEET_OCCURRENCE_KEY, JSON.stringify(clean));
+      return clean;
+    } catch {
+      return {};
+    }
+  }
+
+  function wasDataSheetOccurrenceSent(occurrenceKey) {
+    if (!occurrenceKey) return false;
+    return Boolean(readDataSheetOccurrenceState()[occurrenceKey]);
+  }
+
+  function markDataSheetOccurrenceSent(occurrenceKey) {
+    if (!occurrenceKey) return;
+    const state = readDataSheetOccurrenceState();
+    state[occurrenceKey] = Date.now();
+
+    try {
+      sessionStorage.setItem(DATA_SHEET_OCCURRENCE_KEY, JSON.stringify(state));
+    } catch {}
   }
 
   function isTargetRoute() {
@@ -1151,20 +1193,36 @@
   async function sendCurrentOccurrenceToDataSheet(shipmentId, attempt, returnFlow) {
     if (!shipmentId || !attempt || !ONHOLD_DATA_WEBAPP_URL) return false;
 
-    let neighborhood = '';
-    try {
-      neighborhood = await fetchOccurrenceNeighborhood(shipmentId, returnFlow);
-    } catch (error) {
-      console.warn('[SPX-DV] Não foi possível obter o bairro da ocorrência', error);
+    const occurrenceKey = dataSheetOccurrenceKey(shipmentId, attempt?.ctime);
+    if (!occurrenceKey) return false;
+
+    // Primeira trava: não refaz nem consulta bairro/3PL se esta ocorrência
+    // já foi enviada nesta sessão.
+    if (
+      wasDataSheetOccurrenceSent(occurrenceKey) ||
+      dataSheetOccurrenceInFlight.has(occurrenceKey)
+    ) {
+      return true;
     }
 
-    const payload = currentOccurrenceSheetPayload(
-      shipmentId, attempt, returnFlow, neighborhood
-    );
-
-    if (!payload.occurrence_timestamp || !payload.reason) return false;
+    // Reserva a ocorrência imediatamente. Isso evita que dois bips muito
+    // próximos disparem dois POSTs antes de o primeiro terminar.
+    dataSheetOccurrenceInFlight.add(occurrenceKey);
 
     try {
+      let neighborhood = '';
+      try {
+        neighborhood = await fetchOccurrenceNeighborhood(shipmentId, returnFlow);
+      } catch (error) {
+        console.warn('[SPX-DV] Não foi possível obter o bairro da ocorrência', error);
+      }
+
+      const payload = currentOccurrenceSheetPayload(
+        shipmentId, attempt, returnFlow, neighborhood
+      );
+
+      if (!payload.occurrence_timestamp || !payload.reason) return false;
+
       await fetch(ONHOLD_DATA_WEBAPP_URL, {
         method: 'POST',
         mode: 'no-cors',
@@ -1173,10 +1231,16 @@
         body: JSON.stringify(payload),
         keepalive: true
       });
+
+      // Mesma lógica operacional já validada no cancelamento de endereço:
+      // após o envio ser aceito pelo navegador, guardamos o estado da sessão.
+      markDataSheetOccurrenceSent(occurrenceKey);
       return true;
     } catch (error) {
       console.warn('[SPX-DV] Falha ao enviar ocorrência atual para a aba Dados', error);
       return false;
+    } finally {
+      dataSheetOccurrenceInFlight.delete(occurrenceKey);
     }
   }
 

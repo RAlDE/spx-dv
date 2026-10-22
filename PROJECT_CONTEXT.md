@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.20
+Versão atual do módulo: 1.3.21
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -463,3 +463,43 @@ Ele já implementa:
 
 O módulo principal permanece em v1.3.20 até o Web App ser implantado e sua URL ser adicionada. Isso evita publicar uma integração incompleta.
 Próximo passo obrigatório: implantar o Apps Script como Web App e obter a URL `.../exec`. Depois ligar o SPX-DV ao endpoint e publicar a próxima versão para teste real.
+
+
+## Atualização 1.3.21 — envio automático para aba Dados
+Web App implantado pelo usuário:
+`https://script.google.com/a/macros/shopee.com/s/AKfycbzVqz60x9ZBTt2dL83cxXaaHRMlqhEpU1r7AVlczQFmQSUdNGkyPUQcRsXzY17ImcbNOQ/exec`
+
+A extensão passou a enviar automaticamente somente a ocorrência atual recebida para a aba `Dados`.
+
+Payload enviado:
+- `shipment_id`
+- `reason`
+- `driver_id`
+- `driver_name`
+- `agency`
+- `neighborhood`
+- `occurrence_timestamp`
+- `flow`
+
+Bairro:
+- LMHub normal → `buyer_addr_district`;
+- Return_LMHub → `seller_addr_district`;
+- fonte: `/api/fleet_order/order/detail/show_sensitive_data`;
+- valor: `data.data_detail`.
+
+Proteção contra histórico antigo:
+- a última ocorrência visível é candidata;
+- se não existe estado posterior ao OnHold, ela continua pendente e pode ser enviada;
+- se o próprio bip do Recebimento já gerou o próximo estado, a ocorrência ainda é aceita quando essa mudança aconteceu até 5 minutos do scan;
+- se existe mudança posterior antiga, o BR é tratado como não pendente e não é enviado;
+- o Web App também deduplica por BR + timestamp da ocorrência.
+
+Teste local com o tracking real do BR de três ocorrências:
+- última ocorrência: Palavra-chave em 1792503229;
+- próximo estado real: LMHub em 1792612152;
+- scan 2s após esse estado → elegível, representando o recebimento naquele momento;
+- scan 15min depois → não elegível;
+- cenário ainda pendente sem estado posterior → elegível.
+
+A v1.3.21 preserva painel, Return, recomendação, regra dos 3 dias, endereço, planilha antiga de cancelamento, AutoAdd e navegação da v1.3.20.
+Validação real da nova gravação na aba Dados ainda pendente.

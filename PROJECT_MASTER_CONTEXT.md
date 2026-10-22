@@ -637,7 +637,7 @@ Isso deve ser suficiente para retomar sem reexplicar o histórico.
 ## 24. ESTADO ATUAL
 
 Versão atual:
-**1.3.24**
+**1.3.25**
 
 Estado:
 **validada em teste real no SPX para separação do ciclo Return.**
@@ -922,3 +922,23 @@ Nova arquitetura:
 
 Objetivo:
 nenhum BR recebido com ocorrência deve ser perdido apenas porque o operador bipou o próximo pacote rapidamente.
+
+
+---
+
+## 35. ATUALIZAÇÃO 1.3.25 — BR + TIMESTAMP NA EXTENSÃO
+
+Objetivo:
+evitar reenvio da mesma ocorrência sem bloquear futuras ocorrências do mesmo BR.
+
+Chave:
+`shipment_id + occurrence_timestamp`.
+
+Comportamento:
+- mesma ocorrência bipada novamente → não envia novamente;
+- nova ocorrência mais tarde, mesmo motivo → envia porque o timestamp mudou;
+- trava em memória evita concorrência entre dois bips muito próximos;
+- sessionStorage evita novo envio da mesma ocorrência durante a sessão;
+- Apps Script continua como segunda camada de deduplicação entre sessões.
+
+Preserva integralmente a fila independente da v1.3.24, que impede perda do BR anterior quando o operador bipa rapidamente o próximo.

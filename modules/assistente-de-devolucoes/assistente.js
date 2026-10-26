@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.26';
+  const MODULE_VERSION = '1.3.27';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -95,8 +95,8 @@
   const autoCancelledAddress = new Set();
   const assignmentAgencyCache = new Map();
   const CANCELLED_ADDRESS_KEY = 'spxdv:cancelled-address-v1';
-  const DATA_SHEET_OCCURRENCE_KEY = 'spxdv:data-sheet-occurrences-v1';
   const dataSheetOccurrenceInFlight = new Set();
+  const DATA_SHEET_RETRY_DELAYS = [1200, 2500, 5000];
 
   function readCancelledAddressState() {
     try {
@@ -129,40 +129,6 @@
     const shipment = String(shipmentId || '').trim().toUpperCase();
     const timestamp = Math.floor(Number(occurrenceTimestamp || 0));
     return shipment && timestamp ? shipment + '|' + timestamp : '';
-  }
-
-  function readDataSheetOccurrenceState() {
-    try {
-      const raw = JSON.parse(sessionStorage.getItem(DATA_SHEET_OCCURRENCE_KEY) || '{}');
-      const now = Date.now();
-      const clean = {};
-
-      for (const [key, savedAt] of Object.entries(raw || {})) {
-        if (now - Number(savedAt || 0) < 24 * 60 * 60 * 1000) {
-          clean[key] = Number(savedAt);
-        }
-      }
-
-      sessionStorage.setItem(DATA_SHEET_OCCURRENCE_KEY, JSON.stringify(clean));
-      return clean;
-    } catch {
-      return {};
-    }
-  }
-
-  function wasDataSheetOccurrenceSent(occurrenceKey) {
-    if (!occurrenceKey) return false;
-    return Boolean(readDataSheetOccurrenceState()[occurrenceKey]);
-  }
-
-  function markDataSheetOccurrenceSent(occurrenceKey) {
-    if (!occurrenceKey) return;
-    const state = readDataSheetOccurrenceState();
-    state[occurrenceKey] = Date.now();
-
-    try {
-      sessionStorage.setItem(DATA_SHEET_OCCURRENCE_KEY, JSON.stringify(state));
-    } catch {}
   }
 
   function isTargetRoute() {
@@ -1196,17 +1162,12 @@
     const occurrenceKey = dataSheetOccurrenceKey(shipmentId, attempt?.ctime);
     if (!occurrenceKey) return false;
 
-    // Primeira trava: não refaz nem consulta bairro/3PL se esta ocorrência
-    // já foi enviada nesta sessão.
-    if (
-      wasDataSheetOccurrenceSent(occurrenceKey) ||
-      dataSheetOccurrenceInFlight.has(occurrenceKey)
-    ) {
-      return true;
-    }
+    // Mantemos apenas a trava de concorrência em memória.
+    // Não marcamos como "enviado" em sessionStorage porque o POST usa no-cors:
+    // o navegador não consegue confirmar se o Apps Script realmente gravou.
+    // A deduplicação definitiva fica no servidor por BR + timestamp.
+    if (dataSheetOccurrenceInFlight.has(occurrenceKey)) return true;
 
-    // Reserva a ocorrência imediatamente. Isso evita que dois bips muito
-    // próximos disparem dois POSTs antes de o primeiro terminar.
     dataSheetOccurrenceInFlight.add(occurrenceKey);
 
     try {
@@ -1232,9 +1193,6 @@
         keepalive: true
       });
 
-      // Mesma lógica operacional já validada no cancelamento de endereço:
-      // após o envio ser aceito pelo navegador, guardamos o estado da sessão.
-      markDataSheetOccurrenceSent(occurrenceKey);
       return true;
     } catch (error) {
       console.warn('[SPX-DV] Falha ao enviar ocorrência atual para a aba Dados', error);
@@ -1306,11 +1264,18 @@
   function queueDataSheetScan(shipmentId) {
     if (!shipmentId) return;
 
-    // O SPX precisa de um pequeno intervalo para consolidar o recebimento.
-    // Diferente do painel, esta tarefa NÃO é cancelada quando outro BR é bipado.
-    window.setTimeout(() => {
-      void processDataSheetScan(shipmentId);
-    }, 1200);
+    // O painel costuma ter os dados rapidamente, mas o caminho da planilha
+    // depende de várias consultas. Se uma delas falhar naquele instante,
+    // repetimos automaticamente sem depender de novo bip do operador.
+    void (async () => {
+      for (const delay of DATA_SHEET_RETRY_DELAYS) {
+        await sleep(delay);
+        const sent = await processDataSheetScan(shipmentId);
+        if (sent) return;
+      }
+
+      console.warn('[SPX-DV] Não foi possível concluir o envio para a planilha após novas tentativas', shipmentId);
+    })();
   }
 
   function findRecentAutoAddTarget(tracking, scanUnix) {

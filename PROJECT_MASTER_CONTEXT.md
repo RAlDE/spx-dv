@@ -637,7 +637,7 @@ Isso deve ser suficiente para retomar sem reexplicar o histórico.
 ## 24. ESTADO ATUAL
 
 Versão atual:
-**1.3.26**
+**1.3.27**
 
 Estado:
 **validada em teste real no SPX para separação do ciclo Return.**
@@ -963,3 +963,32 @@ Preservado:
 - painel e demais funções.
 
 A v1.3.26 passou em validação de sintaxe e inspeção estática do fluxo. A confirmação definitiva depende de teste real no SPX.
+
+
+---
+
+## 37. ATUALIZAÇÃO 1.3.27 — CORREÇÃO DE PERDA/SOBRESCRITA NA PLANILHA
+
+Problema:
+painel mostrava os dados, mas parte dos BRs não permanecia na planilha.
+
+Causas:
+- pipeline da planilha era separado e mais longo que o painel;
+- tentativa única;
+- no-cors sem confirmação legível;
+- sessionStorage podia marcar como enviado sem prova de gravação;
+- Apps Script podia reutilizar linha ainda não visível, causando sobrescrita.
+
+Evidência:
+aba oculta de controle apresentou occurrence_keys diferentes apontando para a mesma linha de Dados.
+
+Correção:
+- extensão com tentativas automáticas e sem marca persistente local de sucesso;
+- deduplicação definitiva continua no servidor;
+- Apps Script passa a usar flush antes/depois da seleção e escrita;
+- escrita é verificada na coluna C antes de registrar a occurrence_key.
+
+Necessário:
+- atualizar extensão para v1.3.27;
+- copiar novamente o Apps Script atualizado e criar nova versão da implantação existente;
+- manter a mesma URL /exec.

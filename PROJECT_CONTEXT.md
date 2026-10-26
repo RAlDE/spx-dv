@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-06
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.26
+Versão atual do módulo: 1.3.27
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".
@@ -679,3 +679,40 @@ Verificação:
 - chamadas automáticas `checkShipment()` e `setInterval(checkShipment, 300)` continuam com submitted=false.
 
 Validação real no SPX ainda pendente.
+
+
+## Atualização 1.3.27 — confiabilidade do envio para a planilha
+Em 26/10/2026 o usuário reportou que o painel mostrava praticamente todos os BRs com ocorrência, mas somente parte deles aparecia na planilha.
+
+Diagnóstico confirmado:
+1. o painel e a planilha usam fluxos diferentes;
+2. o painel apenas lê e mostra os dados;
+3. a planilha fazia uma segunda coleta independente após o Enter e dependia de histórico, tracking, AT/3PL, bairro e Web App;
+4. essa segunda coleta era de tentativa única;
+5. o POST ao Apps Script usa `no-cors`, então o navegador não consegue ler a resposta real do servidor;
+6. a extensão marcava localmente a ocorrência como enviada mesmo sem confirmação legível do Apps Script;
+7. a aba oculta `_SPX_DV_CONTROLE` mostrou ocorrências diferentes registradas na mesma `dados_row`, provando sobrescrita de linhas na aba Dados.
+
+Exemplos reais vistos no controle oculto:
+- mais de uma occurrence_key apontando para `252897`;
+- mais de uma occurrence_key apontando para `252898`;
+- mais de uma occurrence_key apontando para `252901`;
+- mais de uma occurrence_key apontando para `252902`.
+
+Correções:
+### Extensão v1.3.27
+- remove estado persistente de "já enviado" em sessionStorage;
+- mantém apenas trava temporária em memória para dois envios simultâneos da mesma ocorrência;
+- deduplicação definitiva permanece no Apps Script por BR + timestamp;
+- `queueDataSheetScan` agora tenta novamente automaticamente em 1200ms, 2500ms e 5000ms quando a coleta não consegue concluir;
+- próximo bip não cancela essas tentativas;
+- envio continua restrito ao Enter no campo SPX TN.
+
+### Apps Script
+- `SpreadsheetApp.flush()` antes de escolher a linha;
+- `SpreadsheetApp.flush()` imediatamente após gravar C:G e I:J;
+- confirmação de que a coluna C realmente contém o BR esperado antes de registrar a occurrence_key;
+- novo flush antes de liberar o lock;
+- objetivo: impedir duas execuções sequenciais de enxergarem a mesma linha como vazia e uma sobrescrever a outra.
+
+A atualização do arquivo Apps Script no GitHub exige nova implantação manual no projeto Google Apps Script para entrar em produção.

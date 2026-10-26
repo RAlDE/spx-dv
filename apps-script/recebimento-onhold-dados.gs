@@ -53,6 +53,11 @@ function doPost(e) {
       return jsonResponse_({ ok: false, error: 'Aba Dados não encontrada' });
     }
 
+    // Garante que qualquer gravação anterior já esteja visível antes de
+    // escolher a próxima linha. Isso evita duas execuções sequenciais enxergarem
+    // a mesma linha C como vazia.
+    SpreadsheetApp.flush();
+
     const occurrenceKey = record.shipmentId + '|' + record.occurrenceTimestamp;
     const controlSheet = getControlSheet_(spreadsheet);
 
@@ -66,7 +71,19 @@ function doPost(e) {
 
     const row = findWritableRow_(sheet);
     writeRecord_(sheet, row, record);
+
+    // Força a escrita na aba Dados antes de liberar o lock.
+    // Sem isso, a próxima execução podia reutilizar a mesma linha e sobrescrever
+    // o BR anterior.
+    SpreadsheetApp.flush();
+
+    const writtenShipment = clean_(sheet.getRange(row, 3).getDisplayValue()).toUpperCase();
+    if (writtenShipment !== record.shipmentId) {
+      throw new Error('Falha ao confirmar gravação do BR na linha ' + row);
+    }
+
     rememberOccurrence_(controlSheet, occurrenceKey, row);
+    SpreadsheetApp.flush();
 
     PropertiesService.getScriptProperties()
       .setProperty(SPX_DV_CONFIG.pointerProperty, String(row + 1));

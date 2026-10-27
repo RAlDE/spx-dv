@@ -716,3 +716,35 @@ Correções:
 - objetivo: impedir duas execuções sequenciais de enxergarem a mesma linha como vazia e uma sobrescrever a outra.
 
 A atualização do arquivo Apps Script no GitHub exige nova implantação manual no projeto Google Apps Script para entrar em produção.
+
+
+## Atualização 1.3.28 — início da fila e Dashboard de Recebimento
+Em 27/10/2026 foi iniciada a nova arquitetura operacional inspirada no padrão visual de dashboard analisado, sem substituir ainda o envio automático da v1.3.27.
+
+Alterações:
+- adicionada a chave local `spxdv:dashboard-queue-v1`;
+- a mesma ficha já preparada para a aba Dados passa a ser salva também na fila do Dashboard;
+- chave da ficha continua sendo `BR + occurrence_timestamp`, permitindo nova ocorrência real do mesmo BR sem duplicar a mesma ocorrência;
+- o armazenamento preserva registros não confirmados mesmo após a virada do dia; confirmados antigos poderão ser limpos automaticamente quando o fluxo de confirmação estiver ativo;
+- botão `Dash` adicionado ao cabeçalho da caixa;
+- o Dashboard abre em aba própria, com tema escuro e tabela na mesma ordem da planilha:
+  - Pedido;
+  - Motivo do APP;
+  - Driver ID;
+  - Motorista;
+  - Transportadora 3PL;
+  - BAIRRO;
+  - Data da ocorrência;
+  - Status;
+- o Dashboard mostra capturados hoje, registros na fila, confirmados e pendentes antigos, além de pesquisa;
+- o bairro passa a ser consultado também para exibição na caixa:
+  - LMHub normal → `buyer_addr_district`;
+  - Return_LMHub → `seller_addr_district`;
+- removido o traço visual entre Motorista e 3PL. Exemplo atual:
+  `Motorista: ALEX DOS SANTOS OLIVEIRA SPXOWNFLEET`;
+- o envio automático existente para a aba Dados foi preservado nesta versão para permitir validar primeiro captura, bairro e Dashboard sem alterar de uma vez o fluxo crítico de produção.
+
+Próxima etapa planejada após validação real:
+- substituir o envio individual/automático pelo envio em lote iniciado pelo botão do Dashboard;
+- obter confirmação real do Apps Script antes de marcar registros como confirmados;
+- somente então remover registros confirmados na virada do dia.

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.27';
+  const MODULE_VERSION = '1.3.28';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -19,6 +19,8 @@
   const ONHOLD_DATA_WEBAPP_URL = 'https://script.google.com/a/macros/shopee.com/s/AKfycbzVqz60x9ZBTt2dL83cxXaaHRMlqhEpU1r7AVlczQFmQSUdNGkyPUQcRsXzY17ImcbNOQ/exec';
   const RETURN_DIAG_KEY = 'spxdv:return-network-diag-v1';
   const ASSIGNMENT_SEARCH_URL = 'https://spx.shopee.com.br/spx_delivery/admin/assignment/assignment_task/search/v2';
+  const DASHBOARD_QUEUE_KEY = 'spxdv:dashboard-queue-v1';
+  const DASHBOARD_WINDOW_NAME = 'spxdv-receiving-dashboard';
 
   if (document.documentElement.dataset[APP_MARKER] === 'true') return;
   document.documentElement.dataset[APP_MARKER] = 'true';
@@ -129,6 +131,183 @@
     const shipment = String(shipmentId || '').trim().toUpperCase();
     const timestamp = Math.floor(Number(occurrenceTimestamp || 0));
     return shipment && timestamp ? shipment + '|' + timestamp : '';
+  }
+
+  function saoPauloDay(value = Date.now()) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date(Number(value) || Date.now()));
+  }
+
+  function readDashboardQueue() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(DASHBOARD_QUEUE_KEY) || '{}');
+      const store = parsed && typeof parsed === 'object' ? parsed : {};
+      if (!store.records || typeof store.records !== 'object' || Array.isArray(store.records)) {
+        store.records = {};
+      }
+      store.version = 1;
+
+      // Confirmados antigos poderão ser descartados automaticamente quando o
+      // envio em lote estiver ativo. Registros ainda não confirmados nunca somem
+      // apenas porque virou o dia.
+      const today = saoPauloDay();
+      let changed = false;
+      for (const [key, record] of Object.entries(store.records)) {
+        if (!record || typeof record !== 'object') {
+          delete store.records[key];
+          changed = true;
+          continue;
+        }
+        if (record.status === 'confirmed' && record.received_day && record.received_day !== today) {
+          delete store.records[key];
+          changed = true;
+        }
+      }
+      if (changed) localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(store));
+      return store;
+    } catch {
+      return { version: 1, records: {} };
+    }
+  }
+
+  function saveDashboardRecord(payload) {
+    const key = dataSheetOccurrenceKey(payload?.shipment_id, payload?.occurrence_timestamp);
+    if (!key) return false;
+
+    const store = readDashboardQueue();
+    const now = Date.now();
+    const previous = store.records[key] && typeof store.records[key] === 'object'
+      ? store.records[key]
+      : {};
+
+    store.records[key] = {
+      ...previous,
+      ...payload,
+      key,
+      received_day: previous.received_day || saoPauloDay(now),
+      captured_at: Number(previous.captured_at || now),
+      updated_at: now,
+      status: previous.status || 'captured'
+    };
+
+    try {
+      localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(store));
+      return true;
+    } catch (error) {
+      console.warn('[SPX-DV] Não foi possível salvar a ficha no Dashboard', error);
+      return false;
+    }
+  }
+
+  function dashboardStatusLabel(status) {
+    if (status === 'confirmed') return 'Confirmado';
+    if (status === 'sending') return 'Enviando';
+    if (status === 'failed') return 'Pendente';
+    return 'Capturado';
+  }
+
+  function openReceivingDashboard() {
+    const tab = window.open('', DASHBOARD_WINDOW_NAME);
+    if (!tab) {
+      alert('Permita pop-ups para abrir o Dashboard de Recebimento.');
+      return;
+    }
+
+    const doc = tab.document;
+    doc.open();
+    doc.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SPX-DV · Dashboard</title><style>
+      *{box-sizing:border-box}body{margin:0;background:#0b1220;color:#f8fafc;font:13px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}main{max-width:1500px;margin:auto;padding:28px 22px}
+      header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}h1{font-size:27px;letter-spacing:-.6px;margin:0}h2{font-size:16px;margin:0}.muted{color:#94a3b8}.actions{display:flex;gap:9px;align-items:center}
+      button{background:#23344d;color:#fff;border:1px solid #3b4a60;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750}button:hover{background:#30445d}
+      .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#152238;border:1px solid #334155;border-radius:14px;padding:18px}.metric span{display:block;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
+      .panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}.search{width:min(420px,100%);padding:10px 12px;background:#0e1828;border:1px solid #40516a;color:#fff;border-radius:9px}
+      .table-wrap{max-height:65vh;overflow:auto;border:1px solid #334155;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1180px}th,td{padding:11px 12px;border-bottom:1px solid #334155;text-align:left;vertical-align:top}th{position:sticky;top:0;z-index:1;background:#17253a;color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:.35px}tbody tr:hover{background:#1b2c44}
+      .status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#2563eb2c;color:#bfdbfe;font-size:11px;font-weight:800}.status.confirmed{background:#16a34a2c;color:#bbf7d0}.status.failed{background:#f59e0b2c;color:#fde68a}.empty{padding:34px;text-align:center;color:#94a3b8}
+      footer{margin-top:14px;color:#94a3b8;font-size:11px}.warning{margin:0 0 16px;padding:11px 14px;border:1px solid #f59e0b55;border-radius:10px;background:#78350f25;color:#fde68a}
+      @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}main{padding:16px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
+    </style></head><body><main>
+      <header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV v${MODULE_VERSION} · fila operacional deste navegador</div></div><div class="actions"><button id="refresh" type="button">Atualizar</button></div></header>
+      <div id="oldWarning"></div>
+      <section class="metrics">
+        <div class="metric"><span>Capturados hoje</span><strong id="metricTotal">0</strong></div>
+        <div class="metric"><span>Na fila</span><strong id="metricQueue">0</strong></div>
+        <div class="metric"><span>Confirmados</span><strong id="metricConfirmed">0</strong></div>
+        <div class="metric"><span>Pendentes antigos</span><strong id="metricOld">0</strong></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><div><h2>Remessa / recebimentos de hoje</h2><div class="muted">Mesma ordem de dados usada na aba Dados.</div></div><input id="search" class="search" type="search" placeholder="Pesquisar pedido, motorista, 3PL, bairro ou motivo"></div>
+        <div class="table-wrap"><table><thead><tr><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>BAIRRO</th><th>Data da ocorrência</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>Nenhum recebimento capturado hoje.</div></div>
+      </section>
+      <footer>v1.3.28 inicia a fila e o Dashboard. O envio automático da v1.3.27 continua preservado nesta etapa; o envio em lote com confirmação será ligado somente após validarmos a captura.</footer>
+    </main></body></html>`);
+    doc.close();
+
+    const search = doc.getElementById('search');
+
+    const filterRows = () => {
+      const query = String(search?.value || '').trim().toLowerCase();
+      doc.querySelectorAll('tbody tr[data-filter]').forEach(row => {
+        row.hidden = Boolean(query) && !String(row.dataset.filter || '').includes(query);
+      });
+    };
+
+    const render = () => {
+      if (tab.closed) return;
+      const today = saoPauloDay();
+      const records = Object.values(readDashboardQueue().records || {}).filter(Boolean);
+      const todayRows = records
+        .filter(row => row.received_day === today)
+        .sort((x, y) => Number(y.captured_at || 0) - Number(x.captured_at || 0));
+      const oldPending = records.filter(row =>
+        row.received_day && row.received_day !== today && row.status !== 'confirmed'
+      );
+
+      doc.getElementById('metricTotal').textContent = String(todayRows.length);
+      doc.getElementById('metricQueue').textContent = String(todayRows.filter(row => row.status !== 'confirmed').length);
+      doc.getElementById('metricConfirmed').textContent = String(todayRows.filter(row => row.status === 'confirmed').length);
+      doc.getElementById('metricOld').textContent = String(oldPending.length);
+      doc.getElementById('oldWarning').innerHTML = oldPending.length
+        ? '<div class="warning">⚠ ' + oldPending.length + ' registro(s) de dia anterior ainda não confirmado(s). Eles foram preservados por segurança.</div>'
+        : '';
+
+      const rows = doc.getElementById('rows');
+      rows.innerHTML = todayRows.map(row => {
+        const status = String(row.status || 'captured');
+        const filter = [
+          row.shipment_id, row.reason, row.driver_id, row.driver_name,
+          row.agency, row.neighborhood, dashboardStatusLabel(status)
+        ].join(' ').toLowerCase();
+        return '<tr data-filter="' + escapeHtml(filter) + '">' +
+          '<td><strong>' + escapeHtml(row.shipment_id || '') + '</strong></td>' +
+          '<td>' + escapeHtml(row.reason || '') + '</td>' +
+          '<td>' + escapeHtml(row.driver_id || '') + '</td>' +
+          '<td>' + escapeHtml(row.driver_name || '') + '</td>' +
+          '<td>' + escapeHtml(row.agency || '') + '</td>' +
+          '<td>' + escapeHtml(row.neighborhood || '') + '</td>' +
+          '<td>' + escapeHtml(formatDate(row.occurrence_timestamp)) + '</td>' +
+          '<td><span class="status ' + escapeHtml(status) + '">' + escapeHtml(dashboardStatusLabel(status)) + '</span></td>' +
+          '</tr>';
+      }).join('');
+
+      doc.getElementById('empty').hidden = todayRows.length > 0;
+      filterRows();
+    };
+
+    doc.getElementById('refresh').onclick = render;
+    if (search) search.oninput = filterRows;
+    render();
+
+    const refreshTimer = window.setInterval(() => {
+      if (tab.closed) {
+        clearInterval(refreshTimer);
+        return;
+      }
+      render();
+    }, 1500);
   }
 
   function isTargetRoute() {
@@ -486,8 +665,8 @@
     style.id = STYLE_ID;
     style.textContent = `
       #${PANEL_ID}{position:fixed;z-index:2147483647;top:16px;left:16px;right:auto;width:min(520px,calc(100vw - 32px));max-height:82vh;overflow:hidden;border:1px solid #334155;border-radius:14px;background:#0f172a;color:#f8fafc;box-shadow:0 22px 62px #0008;font:15px Arial,sans-serif}
-      #${PANEL_ID}[hidden]{display:none!important}#${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} header{position:relative;padding:15px 92px 13px 15px;border-bottom:1px solid #fb923c;background:linear-gradient(135deg,#ff6a00,#e94b00 68%,#9a3412);cursor:grab;user-select:none;touch-action:none}
-      #${PANEL_ID}.dragging header{cursor:grabbing}#${PANEL_ID} h2{margin:0;font-size:19px;display:flex;align-items:baseline;gap:6px}#${PANEL_ID} .module-version{font-size:11px;font-weight:700;color:#fff;opacity:.78}#${PANEL_ID} header small{display:block;margin-top:7px;color:#fff;font-size:19px;font-weight:700}#${PANEL_ID} header small strong{font-size:inherit}#${PANEL_ID} .header-actions{position:absolute;top:9px;right:9px;display:flex;gap:6px}#${PANEL_ID} .icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #fed7aa;border-radius:8px;background:#111827;color:#fff;font-size:18px;cursor:pointer}
+      #${PANEL_ID}[hidden]{display:none!important}#${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} header{position:relative;padding:15px 172px 13px 15px;border-bottom:1px solid #fb923c;background:linear-gradient(135deg,#ff6a00,#e94b00 68%,#9a3412);cursor:grab;user-select:none;touch-action:none}
+      #${PANEL_ID}.dragging header{cursor:grabbing}#${PANEL_ID} h2{margin:0;font-size:19px;display:flex;align-items:baseline;gap:6px}#${PANEL_ID} .module-version{font-size:11px;font-weight:700;color:#fff;opacity:.78}#${PANEL_ID} header small{display:block;margin-top:7px;color:#fff;font-size:19px;font-weight:700}#${PANEL_ID} header small strong{font-size:inherit}#${PANEL_ID} .header-actions{position:absolute;top:9px;right:9px;display:flex;gap:6px}#${PANEL_ID} .icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #fed7aa;border-radius:8px;background:#111827;color:#fff;font-size:18px;cursor:pointer}#${PANEL_ID} .dashboard-button{width:auto;min-width:58px;padding:0 9px;font-size:11px;font-weight:800}
       #${PANEL_ID} .body{max-height:65vh;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;pointer-events:auto;padding:10px}#${PANEL_ID} .message{padding:22px;text-align:center;color:#cbd5e1}#${PANEL_ID} .error{color:#fca5a5}
       #${PANEL_ID} .attempt{display:grid;grid-template-columns:27px minmax(0,1fr) auto;gap:9px;margin-bottom:8px;padding:10px;border:1px solid #3f3f46;border-radius:10px;background:#050505}
       #${PANEL_ID} .index{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#334155;font-size:13px;font-weight:900}#${PANEL_ID} .reason{display:inline-block;padding:5px 10px;border-radius:999px;background:#16a34a33;color:#bbf7d0;font-size:19px;font-weight:800}#${PANEL_ID} .reason.reason-valid{background:#2563eb33;color:#bfdbfe}#${PANEL_ID} .reason.reason-final{background:#dc262633;color:#fecaca}#${PANEL_ID} .cancelled-badge{display:inline-block;margin-left:7px;padding:4px 8px;border-radius:999px;background:#64748b33;color:#e2e8f0;font-size:13px;font-weight:900;vertical-align:middle}
@@ -507,7 +686,7 @@
     if (!panel) {
       panel = document.createElement('section');
       panel.id = PANEL_ID;
-      panel.innerHTML = `<header><h2><span>Rastreio do pedido</span><span class="module-version">v${MODULE_VERSION}</span></h2><small>Shipment ID: <strong></strong></small><div class="header-actions"><button class="icon-button" data-diagnostic title="Diagnóstico">i</button><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>`;
+      panel.innerHTML = `<header><h2><span>Rastreio do pedido</span><span class="module-version">v${MODULE_VERSION}</span></h2><small>Shipment ID: <strong></strong></small><div class="header-actions"><button class="icon-button dashboard-button" data-dashboard title="Abrir Dashboard de Recebimento">Dash</button><button class="icon-button" data-diagnostic title="Diagnóstico">i</button><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>`;
       panel.addEventListener('click', handleAction);
       document.body.appendChild(panel);
       restorePanelPosition(panel);
@@ -1184,6 +1363,11 @@
 
       if (!payload.occurrence_timestamp || !payload.reason) return false;
 
+      // A mesma ficha preparada para a planilha alimenta o Dashboard.
+      // Chave = BR + timestamp, portanto uma nova ocorrência real do mesmo BR
+      // gera outro registro sem duplicar a mesma ocorrência.
+      saveDashboardRecord(payload);
+
       await fetch(ONHOLD_DATA_WEBAPP_URL, {
         method: 'POST',
         mode: 'no-cors',
@@ -1388,7 +1572,7 @@
     return '';
   }
 
-  function renderAttempts(attempts, address, shipmentId) {
+  function renderAttempts(attempts, address, shipmentId, neighborhood = '') {
     if (!attempts.length) return '<div class="message">Nenhuma tentativa On Hold encontrada.</div>';
     const ordered = [...attempts].sort((a, b) => Number(a.ctime) - Number(b.ctime));
     const cards = ordered.map((attempt, index) => {
@@ -1405,8 +1589,9 @@
         return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${attempt.return_operator ? '<b>Operador:</b> ' + escapeHtml(attempt.return_operator) : 'Ocorrência do retorno'}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
       }
       const agency = String(attempt?.assignment_agency || '').trim();
-      const agencyInline = agency ? ` — <span class="driver-code">${escapeHtml(agency)}</span>` : '';
-      return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span>${cancelledBadge}<div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}${agencyInline}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span></div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
+      const agencyInline = agency ? ` <span class="driver-code">${escapeHtml(agency)}</span>` : '';
+      const neighborhoodLine = `<br><span class="neighborhood"><b>Bairro:</b> ${escapeHtml(neighborhood || 'Não localizado')}</span>`;
+      return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span>${cancelledBadge}<div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}${agencyInline}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span>${neighborhoodLine}</div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
     }).join('');
     const decision = recommendation(ordered, address);
     return `${cards}<div class="decision ${decision.className}"><strong>${escapeHtml(decision.text)}</strong></div>`;
@@ -1567,6 +1752,13 @@
         })
         .sort((a, b) => Number(a?.ctime || 0) - Number(b?.ctime || 0));
 
+      let neighborhood = '';
+      if (visibleAttempts.length) {
+        try { neighborhood = await fetchOccurrenceNeighborhood(shipmentId, Boolean(cycleStart)); }
+        catch (error) { console.warn('[SPX-DV] Não foi possível obter o bairro para exibição', error); }
+        if (version !== currentRequest || shipmentId !== currentShipment) return;
+      }
+
       let address = { pending: false };
       const latestReason = translateReason([...currentAttempts]
         .sort((a, b) => Number(a.ctime) - Number(b.ctime))
@@ -1575,7 +1767,7 @@
         try { address = getAddressState(await postJson('https://spx.shopee.com.br/api/in-station/admin/common_site/eha/no_reason_inbound', { shipment_id: shipmentId })); }
         catch { address = { pending: false }; }
       }
-      if (!diagnosticView) showPanel(shipmentId, renderAttempts(visibleAttempts, address, shipmentId));
+      if (!diagnosticView) showPanel(shipmentId, renderAttempts(visibleAttempts, address, shipmentId, neighborhood));
 
       if (address.pending && normalize(latestReason) === 'endereco nao encontrado') {
         watchForAutoAddressCancel(shipmentId);
@@ -1586,6 +1778,10 @@
   }
 
   async function handleAction(event) {
+    if (event.target.closest('[data-dashboard]')) {
+      openReceivingDashboard();
+      return;
+    }
     if (event.target.closest('[data-diagnostic]')) {
       diagnosticView = !diagnosticView;
       if (diagnosticView) renderReturnDiagnostics();

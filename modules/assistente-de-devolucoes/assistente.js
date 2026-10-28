@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.28';
+  const MODULE_VERSION = '1.3.29';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -203,6 +203,26 @@
     }
   }
 
+  function clearConfirmedDashboardRecords(day = saoPauloDay()) {
+    const store = readDashboardQueue();
+    let removed = 0;
+
+    for (const [key, record] of Object.entries(store.records || {})) {
+      if (!record || typeof record !== 'object') continue;
+      if (record.status !== 'confirmed') continue;
+      if (String(record.received_day || '') !== String(day || '')) continue;
+      delete store.records[key];
+      removed += 1;
+    }
+
+    if (removed) {
+      try { localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(store)); }
+      catch (error) { console.warn('[SPX-DV] Não foi possível limpar os confirmados do Dashboard', error); }
+    }
+
+    return removed;
+  }
+
   function dashboardStatusLabel(status) {
     if (status === 'confirmed') return 'Confirmado';
     if (status === 'sending') return 'Enviando';
@@ -220,17 +240,17 @@
     const doc = tab.document;
     doc.open();
     doc.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SPX-DV · Dashboard</title><style>
-      *{box-sizing:border-box}body{margin:0;background:#0b1220;color:#f8fafc;font:13px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}main{max-width:1500px;margin:auto;padding:28px 22px}
-      header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}h1{font-size:27px;letter-spacing:-.6px;margin:0}h2{font-size:16px;margin:0}.muted{color:#94a3b8}.actions{display:flex;gap:9px;align-items:center}
-      button{background:#23344d;color:#fff;border:1px solid #3b4a60;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750}button:hover{background:#30445d}
-      .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#152238;border:1px solid #334155;border-radius:14px;padding:18px}.metric span{display:block;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
-      .panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}.search{width:min(420px,100%);padding:10px 12px;background:#0e1828;border:1px solid #40516a;color:#fff;border-radius:9px}
-      .table-wrap{max-height:65vh;overflow:auto;border:1px solid #334155;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1180px}th,td{padding:11px 12px;border-bottom:1px solid #334155;text-align:left;vertical-align:top}th{position:sticky;top:0;z-index:1;background:#17253a;color:#94a3b8;font-size:11px;text-transform:uppercase;letter-spacing:.35px}tbody tr:hover{background:#1b2c44}
+      *{box-sizing:border-box}body{margin:0;background:#020202;color:#f8fafc;font:13px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}main{max-width:1500px;margin:auto;padding:28px 22px}
+      header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;padding:16px 18px;border:1px solid #4a260f;border-radius:14px;background:#070707;box-shadow:0 0 22px rgba(249,115,22,.16),inset 0 -1px rgba(249,115,22,.3)}h1{font-size:27px;letter-spacing:-.6px;margin:0;text-shadow:0 0 16px rgba(249,115,22,.34)}h2{font-size:16px;margin:0;color:#fff7ed;text-shadow:0 0 11px rgba(249,115,22,.26)}.muted{color:#9ca3af}.actions{display:flex;gap:9px;align-items:center}
+      button{background:#111;color:#fff;border:1px solid #6b3415;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750;box-shadow:0 0 12px rgba(249,115,22,.1)}button:hover{background:#1a0d07;border-color:#f97316;box-shadow:0 0 16px rgba(249,115,22,.22)}button.danger{border-color:#7c2d12;color:#fed7aa}
+      .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415;box-shadow:0 -3px 16px rgba(249,115,22,.08),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
+      .panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}.search{width:min(420px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}
+      .table-wrap{max-height:65vh;overflow:auto;border:1px solid #262626;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1180px;background:#050505}th,td{padding:11px 12px;border-bottom:1px solid #262626;text-align:left;vertical-align:top}th{position:sticky;top:0;z-index:1;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.35px;box-shadow:inset 0 -1px #7c2d12,0 4px 14px rgba(249,115,22,.08)}tbody tr:hover{background:#100b08}
       .status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#2563eb2c;color:#bfdbfe;font-size:11px;font-weight:800}.status.confirmed{background:#16a34a2c;color:#bbf7d0}.status.failed{background:#f59e0b2c;color:#fde68a}.empty{padding:34px;text-align:center;color:#94a3b8}
       footer{margin-top:14px;color:#94a3b8;font-size:11px}.warning{margin:0 0 16px;padding:11px 14px;border:1px solid #f59e0b55;border-radius:10px;background:#78350f25;color:#fde68a}
       @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}main{padding:16px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
     </style></head><body><main>
-      <header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV v${MODULE_VERSION} · fila operacional deste navegador</div></div><div class="actions"><button id="refresh" type="button">Atualizar</button></div></header>
+      <header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV v${MODULE_VERSION} · fila operacional deste navegador</div></div><div class="actions"><button id="clearConfirmed" class="danger" type="button">Limpar confirmados</button><button id="refresh" type="button">Atualizar</button></div></header>
       <div id="oldWarning"></div>
       <section class="metrics">
         <div class="metric"><span>Capturados hoje</span><strong id="metricTotal">0</strong></div>
@@ -242,7 +262,7 @@
         <div class="panel-head"><div><h2>Remessa / recebimentos de hoje</h2><div class="muted">Mesma ordem de dados usada na aba Dados.</div></div><input id="search" class="search" type="search" placeholder="Pesquisar pedido, motorista, 3PL, bairro ou motivo"></div>
         <div class="table-wrap"><table><thead><tr><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>BAIRRO</th><th>Data da ocorrência</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>Nenhum recebimento capturado hoje.</div></div>
       </section>
-      <footer>v1.3.28 inicia a fila e o Dashboard. O envio automático da v1.3.27 continua preservado nesta etapa; o envio em lote com confirmação será ligado somente após validarmos a captura.</footer>
+      <footer>v1.3.29 mantém os registros do dia no Dashboard. Confirmados podem ser limpos manualmente; pendentes são preservados. O envio automático da v1.3.27 continua preservado nesta etapa.</footer>
     </main></body></html>`);
     doc.close();
 
@@ -295,6 +315,28 @@
 
       doc.getElementById('empty').hidden = todayRows.length > 0;
       filterRows();
+    };
+
+    doc.getElementById('clearConfirmed').onclick = () => {
+      const today = saoPauloDay();
+      const records = Object.values(readDashboardQueue().records || {}).filter(Boolean);
+      const confirmedToday = records.filter(row =>
+        row.status === 'confirmed' && row.received_day === today
+      ).length;
+
+      if (!confirmedToday) {
+        tab.alert('Não há registros confirmados para limpar hoje.');
+        return;
+      }
+
+      const approved = tab.confirm(
+        'Limpar ' + confirmedToday + ' registro(s) confirmado(s) de hoje?\n\n' +
+        'Registros pendentes não serão apagados.'
+      );
+      if (!approved) return;
+
+      clearConfirmedDashboardRecords(today);
+      render();
     };
 
     doc.getElementById('refresh').onclick = render;

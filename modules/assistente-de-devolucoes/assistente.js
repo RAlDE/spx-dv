@@ -1847,7 +1847,16 @@
   async function fetchOccurrenceNeighborhood(shipmentId, returnFlow) {
     if (!returnFlow) {
       const cached = await fetchNeighborhoodFromCentralCache(shipmentId).catch(() => '');
-      if (!cached) void ensureNeighborhoodExportRefresh(false);
+      if (!cached) {
+        void ensureNeighborhoodExportRefresh(false).then(updated => {
+          if (!updated) return;
+          window.setTimeout(() => {
+            if (currentShipment === String(shipmentId || '').trim().toUpperCase() && authorized) {
+              loadShipment(currentShipment);
+            }
+          }, 1400);
+        });
+      }
       return cached;
     }
 

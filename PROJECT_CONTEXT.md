@@ -973,3 +973,30 @@ Novo formato:
 - Total mostra a quantidade total de ocorrências do motorista no dia;
 - o cabeçalho do Top 10 ganhou uma seta para recolher/expandir toda a matriz;
 - a alteração é somente visual/analítica do Dashboard e não modifica captura, fila, deduplicação ou escrita na aba Dados.
+
+
+## Atualização 1.3.33 — diagnóstico da fonte de Bairro via Sort Code
+Objetivo exclusivo: identificar a fonte técnica do campo `Sort Code Name` usado pela página `#/exceptionOnholdList` e pela exportação. Essa página NÃO deve ser usada como fonte de recebimento, status de recebimento ou data de recebimento.
+
+Evidência fornecida:
+- exportação CSV da página com 1.643 registros e coluna `Sort Code Name`;
+- o BR aparece em `Order ID` e `SLS Tracking Number`;
+- a investigação busca descobrir a API/lista/exportação que fornece o Sort Code sem depender do endpoint sensível `show_sensitive_data`.
+
+A 1.3.33 adiciona diagnóstico passivo somente para essa investigação:
+- reconhece a rota `#/exceptionOnholdList`;
+- captura fetch/XHR da própria origem durante carga da lista e exportação;
+- procura sinais `Sort Code Name`, `sort_code_name`, `sortCodeName`, `sort_code`, bairro/district/neighborhood e BRs;
+- registra endpoint, método, body, Content-Type, Content-Disposition, trecho da resposta e campos relevantes;
+- mantém os registros apenas em localStorage técnico `spxdv:neighborhood-network-diag-v1`;
+- adiciona botão flutuante `Bairro diag` somente nessa rota, com opções Copiar/Limpar/Fechar;
+- nenhuma informação capturada nessa versão altera o Bairro operacional;
+- nenhuma lógica de recebimento, Dashboard, recomendação, planilha ou Return é alterada.
+
+Validação necessária:
+1. carregar a 1.3.33;
+2. abrir Tratativa de exceção > Detalhes de ocorrências (`#/exceptionOnholdList`);
+3. atualizar/pesquisar a lista;
+4. fazer uma exportação como no vídeo;
+5. abrir `Bairro diag`;
+6. copiar o diagnóstico e enviar para análise.

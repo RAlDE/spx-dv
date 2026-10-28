@@ -748,3 +748,26 @@ Próxima etapa planejada após validação real:
 - substituir o envio individual/automático pelo envio em lote iniciado pelo botão do Dashboard;
 - obter confirmação real do Apps Script antes de marcar registros como confirmados;
 - somente então remover registros confirmados na virada do dia.
+
+
+## Atualização 1.3.29 — limpeza manual segura e tema preto/laranja
+Em 27/10/2026, após validação real da v1.3.28 com captura rápida de BRs, bairro na caixa e registros aparecendo no Dashboard, foram feitos ajustes de operação e aparência sem alterar a lógica de captura.
+
+Regras de retenção confirmadas:
+- todos os registros do dia permanecem visíveis no Dashboard, inclusive depois de confirmados;
+- na virada do dia, registros confirmados do dia anterior podem ser removidos automaticamente;
+- registros ainda pendentes nunca são apagados apenas pela virada do dia;
+- adicionado botão `Limpar confirmados` para limpeza manual;
+- a limpeza manual remove somente registros confirmados do dia atual;
+- registros capturados/pendentes não são apagados pelo botão;
+- antes de limpar, o Dashboard pede confirmação e informa quantos registros serão removidos.
+
+Layout:
+- fundo geral alterado para preto;
+- cards e painel principal passaram para tons quase pretos;
+- cabeçalho principal recebeu borda e sombra laranja discreta;
+- cabeçalho da área de recebimentos e cabeçalhos da tabela receberam realces/sombras laranja;
+- botões receberam contorno laranja discreto;
+- funcionalidade, ordem das colunas e dados da v1.3.28 foram preservados.
+
+O envio automático legado continua preservado nesta etapa. O botão de envio em lote e a confirmação real do Apps Script continuam como próxima fase.

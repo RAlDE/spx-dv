@@ -499,10 +499,10 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415}.metric.clickable{cursor:pointer}.metric.clickable:hover,.metric.clickable.active{border-color:#f97316;box-shadow:0 0 20px rgba(249,115,22,.18),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
 .panel{margin-bottom:16px}.panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}
 .search{width:min(360px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}.operator-filter{padding:10px 12px;background:#030303;border:1px solid #6b3415;color:#fff;border-radius:9px;min-width:210px}
-.ranking{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.rank-item{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid #2b211b;border-radius:10px;background:#050505}.rank-pos{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#351a0b;color:#fdba74;font-weight:900}.rank-name{font-weight:800}.rank-meta{color:#9ca3af;font-size:11px}.rank-count{font-size:20px;font-weight:900;color:#fdba74}
+.ranking-wrap{overflow:auto;border:1px solid #2b211b;border-radius:10px;background:#050505}.ranking-table{border-collapse:collapse;width:max-content;min-width:100%;background:#050505}.ranking-table th,.ranking-table td{border:1px solid #2a2a2a;padding:8px 10px;text-align:center;white-space:nowrap}.ranking-table thead th{position:sticky;top:0;z-index:2;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.25px}.ranking-table .rank-col{width:54px;min-width:54px}.ranking-table .driver-col{min-width:270px;text-align:left}.ranking-table .agency-col{min-width:150px;text-align:left}.ranking-table .total-col{min-width:78px;font-size:15px;font-weight:900;color:#fb923c;background:#130a05}.ranking-table .reason-head{height:132px;min-width:58px;padding:0 6px;vertical-align:bottom}.ranking-table .reason-head>span{display:inline-block;transform:rotate(-52deg);transform-origin:left bottom;white-space:nowrap;margin-left:22px;margin-bottom:10px;color:#fdba74;font-size:10px;text-transform:none;letter-spacing:0}.ranking-table tbody tr:hover{background:#100b08}.ranking-table .reason-count{font-weight:900;color:#f97316}.ranking-table .reason-zero{color:#4b5563}.rank-number{display:inline-grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#351a0b;color:#fdba74;font-weight:900}.rank-driver-name{font-weight:800;color:#fff}.rank-driver-id{display:block;color:#9ca3af;font-size:10px;margin-top:2px}.rank-toggle{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;border:1px solid #6b3415;background:#0b0705;color:#fdba74;font-size:18px;font-weight:900;cursor:pointer;box-shadow:0 0 12px rgba(249,115,22,.1)}.rank-toggle:hover{border-color:#f97316;background:#1a0d07}.ranking-collapsed{display:none}
 .table-wrap{max-height:64vh;overflow:auto;border:1px solid #262626;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1450px;background:#050505}th,td{padding:11px 12px;border-bottom:1px solid #262626;text-align:left;vertical-align:top}th{position:sticky;top:0;z-index:1;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.35px;box-shadow:inset 0 -1px #7c2d12,0 4px 14px rgba(249,115,22,.08)}tbody tr:hover{background:#100b08}
 .status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#f59e0b2c;color:#fde68a;font-size:11px;font-weight:800}.status.confirmed{background:#16a34a2c;color:#bbf7d0}.warning{margin:0 0 16px;padding:11px 14px;border:1px solid #f59e0b55;border-radius:10px;background:#78350f25;color:#fde68a}.empty{padding:30px;text-align:center;color:#94a3b8}footer{color:#94a3b8;font-size:11px}
-@media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}.ranking{grid-template-columns:1fr}main{padding:14px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
+@media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}main{padding:14px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
 </style>
 </head>
 <body><main>
@@ -515,8 +515,8 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 <div class="metric"><span>Operadores hoje</span><strong id="mOperators">0</strong></div>
 </section>
 <section class="panel">
-<div class="panel-head"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted">Quantidade de ocorrências recebidas hoje por motorista.</div></div></div>
-<div id="topDrivers" class="ranking"></div>
+<div class="panel-head"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted">Matriz por motorista e ocorrência. Só aparecem motivos com quantidade no Top 10.</div></div><button id="toggleTopDrivers" class="rank-toggle" title="Abrir/fechar Top 10" aria-label="Abrir/fechar Top 10">▾</button></div>
+<div id="topDriversWrap" class="ranking-wrap"><div id="topDrivers"></div></div>
 </section>
 <section class="panel">
 <div class="panel-head"><div><h2 id="tableTitle">Recebimentos de hoje</h2><div id="tableSubtitle" class="muted">Todos os logins e computadores aparecem nesta mesma fila central.</div></div><div class="filters"><select id="operator" class="operator-filter"><option value="">Todos os operadores</option></select><input id="search" class="search" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"></div></div>
@@ -552,14 +552,74 @@ function render(){
 
   const drivers=new Map();
   today.forEach(r=>{
-    const id=String(r.driver_id||'').trim(),name=String(r.driver_name||'').trim();
+    const id=String(r.driver_id||'').trim();
+    const name=String(r.driver_name||'').trim();
     if(!id&&!name)return;
+
     const key=id||name.toLowerCase();
-    const item=drivers.get(key)||{id,name:name||'Motorista não identificado',count:0};
-    item.count++;drivers.set(key,item);
+    const agency=String(r.agency||'').trim();
+    const reason=String(r.reason||'Sem motivo informado').trim()||'Sem motivo informado';
+    const item=drivers.get(key)||{
+      id,
+      name:name||'Motorista não identificado',
+      agency,
+      count:0,
+      reasons:new Map()
+    };
+
+    item.count++;
+    if(!item.agency&&agency)item.agency=agency;
+    item.reasons.set(reason,(item.reasons.get(reason)||0)+1);
+    drivers.set(key,item);
   });
-  const top=[...drivers.values()].sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name,'pt-BR')).slice(0,10);
-  $('topDrivers').innerHTML=top.length?top.map((x,i)=>'<div class="rank-item"><span class="rank-pos">'+(i+1)+'</span><div><div class="rank-name">'+esc(x.name)+'</div><div class="rank-meta">ID: '+esc(x.id||'Não informado')+'</div></div><span class="rank-count">'+x.count+'</span></div>').join(''):'<div class="empty">Ainda não há motoristas para o ranking de hoje.</div>';
+
+  const top=[...drivers.values()]
+    .sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name,'pt-BR'))
+    .slice(0,10);
+
+  const reasonTotals=new Map();
+  top.forEach(driver=>{
+    driver.reasons.forEach((count,reason)=>{
+      if(count>0)reasonTotals.set(reason,(reasonTotals.get(reason)||0)+count);
+    });
+  });
+
+  const visibleReasons=[...reasonTotals.entries()]
+    .filter(([,count])=>count>0)
+    .sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'pt-BR'))
+    .map(([reason])=>reason);
+
+  if(!top.length){
+    $('topDrivers').innerHTML='<div class="empty">Ainda não há motoristas para o ranking de hoje.</div>';
+  }else{
+    const headReasons=visibleReasons.map(reason=>
+      '<th class="reason-head"><span>'+esc(reason)+'</span></th>'
+    ).join('');
+
+    const body=top.map((driver,index)=>{
+      const reasonCells=visibleReasons.map(reason=>{
+        const count=Number(driver.reasons.get(reason)||0);
+        return '<td class="'+(count>0?'reason-count':'reason-zero')+'">'+(count>0?count:'')+'</td>';
+      }).join('');
+
+      return '<tr>'+
+        '<td class="rank-col"><span class="rank-number">'+(index+1)+'</span></td>'+
+        '<td class="driver-col"><span class="rank-driver-name">'+esc(driver.name)+'</span><span class="rank-driver-id">ID: '+esc(driver.id||'Não informado')+'</span></td>'+
+        '<td class="agency-col">'+esc(driver.agency||'Não informado')+'</td>'+
+        '<td class="total-col">'+driver.count+'</td>'+
+        reasonCells+
+      '</tr>';
+    }).join('');
+
+    $('topDrivers').innerHTML=
+      '<table class="ranking-table"><thead><tr>'+
+      '<th class="rank-col">Ranking</th>'+
+      '<th class="driver-col">Driver</th>'+
+      '<th class="agency-col">3PL</th>'+
+      '<th class="total-col">Total</th>'+
+      headReasons+
+      '</tr></thead><tbody>'+body+'</tbody></table>';
+  }
 
   let list=today;
   if(state.view==='pending')list=pendingToday;
@@ -587,6 +647,16 @@ function render(){
   $('empty').hidden=filtered.length>0;
   $('empty').textContent=state.view==='old'?'Nenhum pendente antigo.':state.view==='pending'?'Nenhum pendente de hoje.':'Nenhum recebimento hoje.';
 }
+
+const topDriversWrap=$('topDriversWrap');
+const toggleTopDrivers=$('toggleTopDrivers');
+let topDriversOpen=true;
+toggleTopDrivers.onclick=()=>{
+  topDriversOpen=!topDriversOpen;
+  topDriversWrap.classList.toggle('ranking-collapsed',!topDriversOpen);
+  toggleTopDrivers.textContent=topDriversOpen?'▾':'▸';
+  toggleTopDrivers.title=topDriversOpen?'Fechar Top 10':'Abrir Top 10';
+};
 
 $('cardToday').onclick=()=>{state.view='today';render();};
 $('cardPending').onclick=()=>{state.view='pending';render();};

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.32';
+  const MODULE_VERSION = '1.3.33';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -18,6 +18,9 @@
   const SHEET_WEBAPP_URL = 'https://script.google.com/a/macros/shopee.com/s/AKfycbyYCiRSUK7r5kPeI19TFUkfgYr7WR2aCFCGMOJiZiY4rZPWu3j2eppuuMjK6pFAn_bS/exec';
   const ONHOLD_DATA_WEBAPP_URL = 'https://script.google.com/a/macros/shopee.com/s/AKfycbzVqz60x9ZBTt2dL83cxXaaHRMlqhEpU1r7AVlczQFmQSUdNGkyPUQcRsXzY17ImcbNOQ/exec';
   const RETURN_DIAG_KEY = 'spxdv:return-network-diag-v1';
+  const NEIGHBOR_DIAG_KEY = 'spxdv:neighborhood-network-diag-v1';
+  const NEIGHBOR_DIAG_BUTTON_ID = 'spxdv-neighborhood-diag-button';
+  const NEIGHBOR_DIAG_MODAL_ID = 'spxdv-neighborhood-diag-modal';
   const ASSIGNMENT_SEARCH_URL = 'https://spx.shopee.com.br/spx_delivery/admin/assignment/assignment_task/search/v2';
   const DASHBOARD_QUEUE_KEY = 'spxdv:dashboard-queue-v1';
   const DASHBOARD_WINDOW_NAME = 'spxdv-receiving-dashboard';
@@ -468,6 +471,220 @@
     return raw.slice(start, end);
   }
 
+  function isNeighborhoodSourceRoute() {
+    return location.origin === 'https://spx.shopee.com.br' &&
+      location.hash.startsWith('#/exceptionOnholdList');
+  }
+
+  function neighborhoodDiagnosticExcerpt(text) {
+    const raw = String(text || '');
+    const match = raw.match(/sort[ _-]*code(?:[ _-]*name)?|sortCodeName|bairro|district|neighborhood|BR[A-Z0-9]{8,}/i);
+    if (!match) return '';
+    const start = Math.max(0, Number(match.index || 0) - 260);
+    const end = Math.min(raw.length, Number(match.index || 0) + 900);
+    return raw.slice(start, end);
+  }
+
+  function collectNeighborhoodHints(value, path = '', out = [], depth = 0) {
+    if (!value || typeof value !== 'object' || depth > 12 || out.length >= 120) return out;
+    for (const [key, child] of Object.entries(value)) {
+      if (out.length >= 120) break;
+      const nextPath = path ? path + '.' + key : key;
+      if (child && typeof child === 'object') {
+        collectNeighborhoodHints(child, nextPath, out, depth + 1);
+        continue;
+      }
+      const nk = normalize(key);
+      const sv = String(child ?? '');
+      if (
+        /sort.*code|district|neighborhood|bairro|shipment|tracking|order.*id|order.*sn/.test(nk) ||
+        /^BR[A-Z0-9]{8,}$/i.test(sv)
+      ) {
+        out.push({ path: nextPath, value: sv.slice(0, 300) });
+      }
+    }
+    return out;
+  }
+
+  function saveNeighborhoodDiagnostic(meta, parsed, rawText, responseMeta = {}) {
+    try {
+      const urlText = String(meta?.url || '');
+      if (!urlText) return;
+      const url = new URL(urlText, location.href);
+      if (url.origin !== location.origin) return;
+
+      const routeActive = isNeighborhoodSourceRoute();
+      const pathSignal = /exception|onhold|export|download|record/i.test(url.pathname + url.search);
+      if (!routeActive && !pathSignal) return;
+
+      const text = String(rawText || '');
+      const normalizedText = normalize(text);
+      const body = String(meta?.body || '');
+      const contentType = String(responseMeta?.contentType || '');
+      const contentDisposition = String(responseMeta?.contentDisposition || '');
+
+      const hasSortCode =
+        /sort[ _-]*code(?:[ _-]*name)?/i.test(text) ||
+        /sortcodename/i.test(text) ||
+        /sort[ _-]*code(?:[ _-]*name)?/i.test(body);
+
+      const hasExportSignal =
+        /export|download/i.test(urlText) ||
+        /export|download/i.test(body) ||
+        /attachment|csv|spreadsheet|excel/i.test(contentType + ' ' + contentDisposition);
+
+      const brMatches = text.match(/BR[A-Z0-9]{8,}/gi) || [];
+      const uniqueBrs = [...new Set(brMatches.map(value => value.toUpperCase()))].slice(0, 20);
+
+      // Na rota de exceções guardamos as chamadas relevantes mesmo antes de
+      // encontrar o campo. Isso permite descobrir a API da lista e a API do Exportar.
+      if (!hasSortCode && !hasExportSignal && !pathSignal && !routeActive) return;
+
+      const candidate = {
+        capturedAt: new Date().toISOString(),
+        pageHash: location.hash,
+        method: String(meta?.method || 'GET').toUpperCase(),
+        url: urlText,
+        requestBody: body.slice(0, 5000),
+        size: text.length,
+        contentType,
+        contentDisposition,
+        hasSortCode,
+        hasExportSignal,
+        brs: uniqueBrs,
+        excerpt: neighborhoodDiagnosticExcerpt(text),
+        hints: parsed && typeof parsed === 'object'
+          ? collectNeighborhoodHints(parsed).slice(0, 80)
+          : []
+      };
+
+      let list = [];
+      try {
+        list = JSON.parse(localStorage.getItem(NEIGHBOR_DIAG_KEY) || '[]');
+        if (!Array.isArray(list)) list = [];
+      } catch {}
+
+      const signature = candidate.method + '|' + candidate.url + '|' + candidate.requestBody;
+      list = list.filter(item =>
+        (String(item.method || '') + '|' + String(item.url || '') + '|' + String(item.requestBody || '')) !== signature
+      );
+      list.unshift(candidate);
+      localStorage.setItem(NEIGHBOR_DIAG_KEY, JSON.stringify(list.slice(0, 60)));
+      updateNeighborhoodDiagButton();
+    } catch {}
+  }
+
+  function getNeighborhoodDiagnostics() {
+    try {
+      const list = JSON.parse(localStorage.getItem(NEIGHBOR_DIAG_KEY) || '[]');
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function updateNeighborhoodDiagButton() {
+    const button = document.getElementById(NEIGHBOR_DIAG_BUTTON_ID);
+    if (!button) return;
+    const list = getNeighborhoodDiagnostics();
+    const hits = list.filter(item => item.hasSortCode).length;
+    button.textContent = hits ? 'Bairro · ' + hits : 'Bairro diag';
+  }
+
+  function renderNeighborhoodDiagnosticModal() {
+    document.getElementById(NEIGHBOR_DIAG_MODAL_ID)?.remove();
+    const list = getNeighborhoodDiagnostics();
+    const rows = list.length ? list.slice(0, 30).map((item, index) => {
+      let path = item.url || '';
+      try {
+        const u = new URL(path, location.href);
+        path = u.pathname + u.search;
+      } catch {}
+
+      const flags = [
+        item.hasSortCode ? 'SORT CODE' : '',
+        item.hasExportSignal ? 'EXPORTAÇÃO' : '',
+        item.brs?.length ? item.brs.length + ' BR(s)' : ''
+      ].filter(Boolean).join(' · ') || 'chamada da página';
+
+      const hints = (item.hints || []).slice(0, 14).map(h =>
+        '<div style="padding:3px 0;border-top:1px solid #262626"><b>' +
+        escapeHtml(h.path) + '</b>: ' + escapeHtml(h.value) + '</div>'
+      ).join('');
+
+      return '<details ' + (item.hasSortCode || index === 0 ? 'open' : '') +
+        ' style="margin-bottom:8px;border:1px solid ' + (item.hasSortCode ? '#f97316' : '#333') +
+        ';border-radius:9px;background:#080808">' +
+        '<summary style="cursor:pointer;padding:9px 10px;font-weight:900;color:' +
+        (item.hasSortCode ? '#fdba74' : '#e5e7eb') + '">#' + (index + 1) + ' ' +
+        escapeHtml(item.method || 'GET') + ' · ' + escapeHtml(flags) + '</summary>' +
+        '<div style="padding:9px 10px;font-size:11px;line-height:1.5">' +
+        '<div style="word-break:break-all"><b>Endpoint:</b> ' + escapeHtml(path) + '</div>' +
+        (item.requestBody ? '<div style="margin-top:5px;word-break:break-all"><b>Body:</b> ' +
+          escapeHtml(item.requestBody) + '</div>' : '') +
+        (item.contentType ? '<div style="margin-top:5px"><b>Content-Type:</b> ' +
+          escapeHtml(item.contentType) + '</div>' : '') +
+        (item.excerpt ? '<pre style="white-space:pre-wrap;word-break:break-word;margin:7px 0 0;padding:7px;background:#111827;border-radius:7px;color:#cbd5e1">' +
+          escapeHtml(item.excerpt) + '</pre>' : '') +
+        (hints ? '<div style="margin-top:7px">' + hints + '</div>' : '') +
+        '</div></details>';
+    }).join('') : '<div style="padding:20px;color:#9ca3af;text-align:center">Ainda não capturei chamadas. Atualize a lista e faça uma exportação.</div>';
+
+    const overlay = document.createElement('div');
+    overlay.id = NEIGHBOR_DIAG_MODAL_ID;
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.78);display:grid;place-items:center;padding:20px';
+    overlay.innerHTML =
+      '<div style="width:min(1050px,96vw);max-height:88vh;overflow:hidden;background:#030303;border:1px solid #7c2d12;border-radius:14px;box-shadow:0 20px 70px #000;color:#f8fafc">' +
+      '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;border-bottom:1px solid #4a260f;background:#090603">' +
+      '<div><div style="font-size:17px;font-weight:900;color:#fff7ed">Diagnóstico do Bairro</div>' +
+      '<div style="font-size:11px;color:#9ca3af">Somente exceptionOnholdList / Sort Code. Não participa do recebimento.</div></div>' +
+      '<div style="display:flex;gap:7px"><button data-neighbor-copy style="padding:8px 10px;border:1px solid #6b3415;border-radius:8px;background:#111;color:#fff;cursor:pointer">Copiar</button>' +
+      '<button data-neighbor-clear style="padding:8px 10px;border:1px solid #6b3415;border-radius:8px;background:#111;color:#fff;cursor:pointer">Limpar</button>' +
+      '<button data-neighbor-close style="padding:8px 10px;border:1px solid #6b3415;border-radius:8px;background:#111;color:#fff;cursor:pointer">Fechar</button></div></div>' +
+      '<div style="padding:12px 14px;overflow:auto;max-height:72vh">' + rows + '</div></div>';
+
+    overlay.querySelector('[data-neighbor-close]')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) overlay.remove();
+    });
+    overlay.querySelector('[data-neighbor-clear]')?.addEventListener('click', () => {
+      localStorage.removeItem(NEIGHBOR_DIAG_KEY);
+      overlay.remove();
+      updateNeighborhoodDiagButton();
+    });
+    overlay.querySelector('[data-neighbor-copy]')?.addEventListener('click', async () => {
+      const text = JSON.stringify(getNeighborhoodDiagnostics(), null, 2);
+      try {
+        await navigator.clipboard.writeText(text);
+        alert('Diagnóstico copiado.');
+      } catch {
+        prompt('Copie o diagnóstico:', text);
+      }
+    });
+    document.body.appendChild(overlay);
+  }
+
+  function ensureNeighborhoodDiagnosticUi() {
+    const active = isNeighborhoodSourceRoute();
+    if (!active) {
+      document.getElementById(NEIGHBOR_DIAG_BUTTON_ID)?.remove();
+      document.getElementById(NEIGHBOR_DIAG_MODAL_ID)?.remove();
+      return;
+    }
+    if (document.getElementById(NEIGHBOR_DIAG_BUTTON_ID)) {
+      updateNeighborhoodDiagButton();
+      return;
+    }
+
+    const button = document.createElement('button');
+    button.id = NEIGHBOR_DIAG_BUTTON_ID;
+    button.type = 'button';
+    button.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483645;padding:10px 13px;border:1px solid #f97316;border-radius:10px;background:#090603;color:#fdba74;font:800 12px/1.2 Inter,system-ui,sans-serif;cursor:pointer;box-shadow:0 8px 30px rgba(0,0,0,.5),0 0 18px rgba(249,115,22,.18)';
+    button.addEventListener('click', renderNeighborhoodDiagnosticModal);
+    document.body.appendChild(button);
+    updateNeighborhoodDiagButton();
+  }
+
   function saveReturnDiagnostic(meta, parsed, rawText) {
     try {
       const urlText = String(meta?.url || '');
@@ -540,7 +757,7 @@
   async function inspectReturnFetchResponse(response, meta) {
     try {
       const url = new URL(String(meta?.url || ''), location.href);
-      if (url.origin !== location.origin || !/\/api\//i.test(url.pathname)) return;
+      if (url.origin !== location.origin) return;
 
       const clone = response.clone();
       const text = await clone.text();
@@ -548,7 +765,15 @@
 
       let parsed = null;
       try { parsed = JSON.parse(text); } catch {}
-      saveReturnDiagnostic(meta, parsed, text);
+
+      if (/\/api\//i.test(url.pathname)) {
+        saveReturnDiagnostic(meta, parsed, text);
+      }
+
+      saveNeighborhoodDiagnostic(meta, parsed, text, {
+        contentType: response.headers.get('content-type') || '',
+        contentDisposition: response.headers.get('content-disposition') || ''
+      });
     } catch {}
   }
 
@@ -587,7 +812,7 @@
         try {
           const meta = this.__spxDvReturnDiagMeta || {};
           const url = new URL(String(meta.url || ''), location.href);
-          if (url.origin !== location.origin || !/\/api\//i.test(url.pathname)) return;
+          if (url.origin !== location.origin) return;
 
           let text = '';
           let parsed = null;
@@ -600,7 +825,13 @@
             try { parsed = JSON.parse(text); } catch {}
           }
 
-          if (text) saveReturnDiagnostic(meta, parsed, text);
+          if (text) {
+            if (/\/api\//i.test(url.pathname)) saveReturnDiagnostic(meta, parsed, text);
+            saveNeighborhoodDiagnostic(meta, parsed, text, {
+              contentType: this.getResponseHeader('content-type') || '',
+              contentDisposition: this.getResponseHeader('content-disposition') || ''
+            });
+          }
         } catch {}
       });
 
@@ -2050,8 +2281,10 @@
   // Fallback para navegação interna do SPX (pushState/roteador próprio).
   // Garante abertura toda vez que o usuário entra em Recebimento unitário.
   window.setInterval(() => syncReceiveRoute(false), 250);
+  window.setInterval(ensureNeighborhoodDiagnosticUi, 500);
 
   installReturnNetworkDiagnostic();
+  ensureNeighborhoodDiagnosticUi();
   ensureShipmentKeyListener();
   if (isTargetRoute()) void start();
 })();

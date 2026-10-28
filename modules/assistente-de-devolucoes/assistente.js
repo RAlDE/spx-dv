@@ -187,6 +187,12 @@
     return await dashboardDbRequest(tx.objectStore(DASHBOARD_DB_STORE).getAll());
   }
 
+  async function dashboardDbGet(key) {
+    const db = await openDashboardDb();
+    const tx = db.transaction(DASHBOARD_DB_STORE, 'readonly');
+    return await dashboardDbRequest(tx.objectStore(DASHBOARD_DB_STORE).get(key));
+  }
+
   async function dashboardDbPut(record) {
     const db = await openDashboardDb();
     const tx = db.transaction(DASHBOARD_DB_STORE, 'readwrite');
@@ -273,11 +279,8 @@
 
     try {
       await ensureDashboardMigration();
-      const db = await openDashboardDb();
-      const tx = db.transaction(DASHBOARD_DB_STORE, 'readwrite');
-      const store = tx.objectStore(DASHBOARD_DB_STORE);
-      const previous = await dashboardDbRequest(store.get(key));
-      await dashboardDbRequest(store.put(mergeDashboardRecord(previous, incoming)));
+      const previous = await dashboardDbGet(key);
+      await dashboardDbPut(mergeDashboardRecord(previous, incoming));
       return true;
     } catch (error) {
       console.warn('[SPX-DV] Não foi possível salvar no IndexedDB; usando fallback local', error);

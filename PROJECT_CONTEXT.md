@@ -771,3 +771,22 @@ Layout:
 - funcionalidade, ordem das colunas e dados da v1.3.28 foram preservados.
 
 O envio automático legado continua preservado nesta etapa. O botão de envio em lote e a confirmação real do Apps Script continuam como próxima fase.
+
+
+## Atualização 1.3.30 — login SPX por recebimento na fila geral da máquina
+Em 27/10/2026 foi confirmada a regra operacional de que a Dashboard representa o recebimento geral do dia no mesmo computador/perfil do navegador, mesmo quando houver troca de conta SPX.
+
+Implementação:
+- a fila continua única por máquina/perfil; trocar de login SPX não cria outra fila;
+- o login vigente no momento do Enter é consultado pela fonte já usada para validação:
+  `/api/admin/basicserver/current_user/basic_info`;
+- o e-mail retornado em `data.email` passa a ser salvo na ficha como `operator_login`;
+- a consulta do login é refeita na submissão para que uma troca de conta no mesmo navegador seja refletida nos próximos recebimentos;
+- falha temporária nessa consulta usa o último login conhecido da sessão como fallback;
+- Dashboard ganhou coluna `Login SPX`;
+- Dashboard ganhou card `Operadores hoje`;
+- Dashboard ganhou filtro `Todos os operadores` / login específico;
+- pesquisa textual também considera o login;
+- registros criados antes da v1.3.30 permanecem preservados e aparecem como `Não identificado` por não possuírem o campo histórico.
+
+A identificação do login é informativa e não separa a fila. Outro computador/perfil continua tendo armazenamento local independente.

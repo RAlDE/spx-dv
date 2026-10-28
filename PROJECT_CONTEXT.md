@@ -930,3 +930,27 @@ Correção:
 - nenhuma ficha existente é apagada ou regravada por este hotfix.
 
 Este hotfix exige nova versão da mesma implantação do Apps Script. A URL `/exec` deve permanecer a mesma.
+
+
+## Hotfix visual/operacional 1.3.32 — fluxo simples e pendência real
+Em 28/10/2026 o Dashboard central foi validado com dados reais, mas a exibição de estados técnicos `captured` / `confirmed` deixou a operação confusa e visualmente instável.
+
+Diagnóstico ao vivo:
+- `_SPX_DV_DASHBOARD` continha 191 registros;
+- 15 estavam como `confirmed`;
+- 176 estavam como `captured`;
+- 28 dos 176 `captured` já existiam em `_SPX_DV_CONTROLE`, portanto já haviam sido gravados em Dados e estavam apenas com o status central desatualizado.
+
+Correções:
+- `getDashboardData()` agora reconcilia automaticamente a fila central com `_SPX_DV_CONTROLE`;
+- qualquer occurrence_key já registrada na planilha passa para `confirmed` no servidor;
+- a visão principal não mostra mais coluna Status;
+- removido o card Confirmados;
+- `Capturados hoje` foi renomeado para `Recebidos hoje`;
+- `Na fila` foi renomeado para `Pendências`;
+- um registro novo só aparece como pendência operacional após 30 segundos sem confirmação, evitando o efeito visual `Pendente -> Confirmado` durante o processamento normal;
+- `Pendentes antigos` continua preservado e clicável;
+- botão `Limpar confirmados` foi renomeado para `Limpar já enviados`, mantendo a mesma proteção: só remove registros confirmados;
+- o Top 10, data/hora de recebimento, login SPX, filtros e fila central permanecem inalterados.
+
+Objetivo: o fluxo normal deve ser visualmente simples — BR entra e aparece na lista. Status técnico só interessa quando existe uma exceção real.

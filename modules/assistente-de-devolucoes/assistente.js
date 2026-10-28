@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.30';
+  const MODULE_VERSION = '1.3.31';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -21,6 +21,10 @@
   const ASSIGNMENT_SEARCH_URL = 'https://spx.shopee.com.br/spx_delivery/admin/assignment/assignment_task/search/v2';
   const DASHBOARD_QUEUE_KEY = 'spxdv:dashboard-queue-v1';
   const DASHBOARD_WINDOW_NAME = 'spxdv-receiving-dashboard';
+  const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
+  const DASHBOARD_DB_STORE = 'records';
+  let dashboardDbPromise = null;
+  let dashboardMigrationPromise = null;
 
   if (document.documentElement.dataset[APP_MARKER] === 'true') return;
   document.documentElement.dataset[APP_MARKER] = 'true';
@@ -143,85 +147,177 @@
     }).format(new Date(Number(value) || Date.now()));
   }
 
-  function readDashboardQueue() {
+  function readLegacyDashboardQueue() {
     try {
       const parsed = JSON.parse(localStorage.getItem(DASHBOARD_QUEUE_KEY) || '{}');
       const store = parsed && typeof parsed === 'object' ? parsed : {};
-      if (!store.records || typeof store.records !== 'object' || Array.isArray(store.records)) {
-        store.records = {};
-      }
-      store.version = 1;
-
-      // Confirmados antigos poderão ser descartados automaticamente quando o
-      // envio em lote estiver ativo. Registros ainda não confirmados nunca somem
-      // apenas porque virou o dia.
-      const today = saoPauloDay();
-      let changed = false;
-      for (const [key, record] of Object.entries(store.records)) {
-        if (!record || typeof record !== 'object') {
-          delete store.records[key];
-          changed = true;
-          continue;
-        }
-        if (record.status === 'confirmed' && record.received_day && record.received_day !== today) {
-          delete store.records[key];
-          changed = true;
-        }
-      }
-      if (changed) localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(store));
+      if (!store.records || typeof store.records !== 'object' || Array.isArray(store.records)) store.records = {};
       return store;
     } catch {
-      return { version: 1, records: {} };
+      return { records: {} };
     }
   }
 
-  function saveDashboardRecord(payload) {
+  function openDashboardDb() {
+    if (dashboardDbPromise) return dashboardDbPromise;
+    dashboardDbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(DASHBOARD_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(DASHBOARD_DB_STORE)) {
+          db.createObjectStore(DASHBOARD_DB_STORE, { keyPath: 'key' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('Falha ao abrir o banco do Dashboard.'));
+    });
+    return dashboardDbPromise;
+  }
+
+  function dashboardDbRequest(request) {
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('Falha no banco do Dashboard.'));
+    });
+  }
+
+  async function dashboardDbGetAll() {
+    const db = await openDashboardDb();
+    const tx = db.transaction(DASHBOARD_DB_STORE, 'readonly');
+    return await dashboardDbRequest(tx.objectStore(DASHBOARD_DB_STORE).getAll());
+  }
+
+  async function dashboardDbPut(record) {
+    const db = await openDashboardDb();
+    const tx = db.transaction(DASHBOARD_DB_STORE, 'readwrite');
+    await dashboardDbRequest(tx.objectStore(DASHBOARD_DB_STORE).put(record));
+    return true;
+  }
+
+  async function dashboardDbDelete(key) {
+    const db = await openDashboardDb();
+    const tx = db.transaction(DASHBOARD_DB_STORE, 'readwrite');
+    await dashboardDbRequest(tx.objectStore(DASHBOARD_DB_STORE).delete(key));
+  }
+
+  function mergeDashboardRecord(previous, incoming) {
+    const now = Date.now();
+    const receivedAt = Number(previous?.received_at || incoming?.received_at || incoming?.captured_at || now);
+    return {
+      ...(previous || {}),
+      ...(incoming || {}),
+      key: String(incoming?.key || previous?.key || ''),
+      shipment_id: String(incoming?.shipment_id || previous?.shipment_id || '').trim().toUpperCase(),
+      operator_login: String(previous?.operator_login || incoming?.operator_login || '').trim().toLowerCase(),
+      received_at: receivedAt,
+      received_day: String(previous?.received_day || incoming?.received_day || saoPauloDay(receivedAt)),
+      captured_at: Number(previous?.captured_at || incoming?.captured_at || receivedAt),
+      updated_at: now,
+      status: String(previous?.status || incoming?.status || 'captured')
+    };
+  }
+
+  function ensureDashboardMigration() {
+    if (dashboardMigrationPromise) return dashboardMigrationPromise;
+    dashboardMigrationPromise = (async () => {
+      const legacy = Object.values(readLegacyDashboardQueue().records || {}).filter(Boolean);
+      if (!legacy.length) return;
+      const existing = await dashboardDbGetAll();
+      const byKey = new Map(existing.map(item => [String(item?.key || ''), item]));
+      for (const record of legacy) {
+        const key = String(record?.key || dataSheetOccurrenceKey(record?.shipment_id, record?.occurrence_timestamp)).trim();
+        if (!key) continue;
+        const merged = mergeDashboardRecord(byKey.get(key), { ...record, key });
+        await dashboardDbPut(merged);
+        byKey.set(key, merged);
+      }
+    })().catch(error => console.warn('[SPX-DV] Migração do Dashboard não concluída', error));
+    return dashboardMigrationPromise;
+  }
+
+  async function readDashboardQueue() {
+    try {
+      await ensureDashboardMigration();
+      const records = await dashboardDbGetAll();
+      const today = saoPauloDay();
+      const result = {};
+      for (const record of records) {
+        if (!record?.key) continue;
+        if (record.status === 'confirmed' && record.received_day && record.received_day !== today) {
+          await dashboardDbDelete(record.key);
+          continue;
+        }
+        result[record.key] = record;
+      }
+      return { version: 2, records: result };
+    } catch (error) {
+      console.warn('[SPX-DV] IndexedDB indisponível; usando fila local antiga', error);
+      return readLegacyDashboardQueue();
+    }
+  }
+
+  async function saveDashboardRecord(payload) {
     const key = dataSheetOccurrenceKey(payload?.shipment_id, payload?.occurrence_timestamp);
     if (!key) return false;
 
-    const store = readDashboardQueue();
-    const now = Date.now();
-    const previous = store.records[key] && typeof store.records[key] === 'object'
-      ? store.records[key]
-      : {};
-
-    store.records[key] = {
-      ...previous,
+    const receivedAt = Number(payload?.received_at || Date.now());
+    const incoming = {
       ...payload,
       key,
-      received_day: previous.received_day || saoPauloDay(now),
-      captured_at: Number(previous.captured_at || now),
-      updated_at: now,
-      status: previous.status || 'captured'
+      received_at: receivedAt,
+      received_day: saoPauloDay(receivedAt),
+      captured_at: receivedAt,
+      updated_at: Date.now(),
+      status: 'captured'
     };
 
     try {
-      localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(store));
+      await ensureDashboardMigration();
+      const db = await openDashboardDb();
+      const tx = db.transaction(DASHBOARD_DB_STORE, 'readwrite');
+      const store = tx.objectStore(DASHBOARD_DB_STORE);
+      const previous = await dashboardDbRequest(store.get(key));
+      await dashboardDbRequest(store.put(mergeDashboardRecord(previous, incoming)));
       return true;
     } catch (error) {
-      console.warn('[SPX-DV] Não foi possível salvar a ficha no Dashboard', error);
-      return false;
+      console.warn('[SPX-DV] Não foi possível salvar no IndexedDB; usando fallback local', error);
+      try {
+        const legacy = readLegacyDashboardQueue();
+        const previous = legacy.records[key] && typeof legacy.records[key] === 'object' ? legacy.records[key] : {};
+        legacy.records[key] = mergeDashboardRecord(previous, incoming);
+        localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(legacy));
+        return true;
+      } catch {
+        return false;
+      }
     }
   }
 
-  function clearConfirmedDashboardRecords(day = saoPauloDay()) {
-    const store = readDashboardQueue();
+  async function clearConfirmedDashboardRecords(day = saoPauloDay()) {
     let removed = 0;
-
-    for (const [key, record] of Object.entries(store.records || {})) {
-      if (!record || typeof record !== 'object') continue;
-      if (record.status !== 'confirmed') continue;
-      if (String(record.received_day || '') !== String(day || '')) continue;
-      delete store.records[key];
-      removed += 1;
+    try {
+      await ensureDashboardMigration();
+      const records = await dashboardDbGetAll();
+      for (const record of records) {
+        if (record?.status !== 'confirmed') continue;
+        if (String(record?.received_day || '') !== String(day || '')) continue;
+        await dashboardDbDelete(record.key);
+        removed += 1;
+      }
+      return removed;
+    } catch {
+      const legacy = readLegacyDashboardQueue();
+      for (const [key, record] of Object.entries(legacy.records || {})) {
+        if (record?.status !== 'confirmed') continue;
+        if (String(record?.received_day || '') !== String(day || '')) continue;
+        delete legacy.records[key];
+        removed += 1;
+      }
+      if (removed) {
+        try { localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(legacy)); } catch {}
+      }
+      return removed;
     }
-
-    if (removed) {
-      try { localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(store)); }
-      catch (error) { console.warn('[SPX-DV] Não foi possível limpar os confirmados do Dashboard', error); }
-    }
-
-    return removed;
   }
 
   function dashboardStatusLabel(status) {
@@ -244,32 +340,51 @@
       *{box-sizing:border-box}body{margin:0;background:#020202;color:#f8fafc;font:13px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}main{max-width:1500px;margin:auto;padding:28px 22px}
       header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;padding:16px 18px;border:1px solid #4a260f;border-radius:14px;background:#070707;box-shadow:0 0 22px rgba(249,115,22,.16),inset 0 -1px rgba(249,115,22,.3)}h1{font-size:27px;letter-spacing:-.6px;margin:0;text-shadow:0 0 16px rgba(249,115,22,.34)}h2{font-size:16px;margin:0;color:#fff7ed;text-shadow:0 0 11px rgba(249,115,22,.26)}.muted{color:#9ca3af}.actions{display:flex;gap:9px;align-items:center}
       button{background:#111;color:#fff;border:1px solid #6b3415;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750;box-shadow:0 0 12px rgba(249,115,22,.1)}button:hover{background:#1a0d07;border-color:#f97316;box-shadow:0 0 16px rgba(249,115,22,.22)}button.danger{border-color:#7c2d12;color:#fed7aa}
-      .metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415;box-shadow:0 -3px 16px rgba(249,115,22,.08),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
+      .metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415;box-shadow:0 -3px 16px rgba(249,115,22,.08),0 10px 28px rgba(0,0,0,.42)}.metric.clickable{cursor:pointer;transition:.15s ease}.metric.clickable:hover,.metric.clickable.active{border-color:#f97316;box-shadow:0 0 20px rgba(249,115,22,.18),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
       .panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}.filters{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.search{width:min(360px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}.operator-filter{padding:10px 12px;background:#030303;border:1px solid #6b3415;color:#fff;border-radius:9px;min-width:210px}
       .table-wrap{max-height:65vh;overflow:auto;border:1px solid #262626;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1180px;background:#050505}th,td{padding:11px 12px;border-bottom:1px solid #262626;text-align:left;vertical-align:top}th{position:sticky;top:0;z-index:1;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.35px;box-shadow:inset 0 -1px #7c2d12,0 4px 14px rgba(249,115,22,.08)}tbody tr:hover{background:#100b08}
-      .status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#2563eb2c;color:#bfdbfe;font-size:11px;font-weight:800}.status.confirmed{background:#16a34a2c;color:#bbf7d0}.status.failed{background:#f59e0b2c;color:#fde68a}.empty{padding:34px;text-align:center;color:#94a3b8}
+      .ranking{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.rank-item{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid #2b211b;border-radius:10px;background:#050505}.rank-pos{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#351a0b;color:#fdba74;font-weight:900}.rank-name{font-weight:800}.rank-meta{color:#9ca3af;font-size:11px}.rank-count{font-size:20px;font-weight:900;color:#fdba74}.status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#2563eb2c;color:#bfdbfe;font-size:11px;font-weight:800}.status.confirmed{background:#16a34a2c;color:#bbf7d0}.status.failed{background:#f59e0b2c;color:#fde68a}.empty{padding:34px;text-align:center;color:#94a3b8}
       footer{margin-top:14px;color:#94a3b8;font-size:11px}.warning{margin:0 0 16px;padding:11px 14px;border:1px solid #f59e0b55;border-radius:10px;background:#78350f25;color:#fde68a}
-      @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}main{padding:16px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
+      @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}.ranking{grid-template-columns:1fr}main{padding:16px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
     </style></head><body><main>
       <header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV v${MODULE_VERSION} · fila operacional deste navegador</div></div><div class="actions"><button id="clearConfirmed" class="danger" type="button">Limpar confirmados</button><button id="refresh" type="button">Atualizar</button></div></header>
       <div id="oldWarning"></div>
       <section class="metrics">
-        <div class="metric"><span>Capturados hoje</span><strong id="metricTotal">0</strong></div>
-        <div class="metric"><span>Na fila</span><strong id="metricQueue">0</strong></div>
+        <div class="metric clickable active" id="metricTodayCard" title="Mostrar todos os recebimentos de hoje"><span>Capturados hoje</span><strong id="metricTotal">0</strong></div>
+        <div class="metric clickable" id="metricQueueCard" title="Mostrar pendentes de hoje"><span>Na fila</span><strong id="metricQueue">0</strong></div>
         <div class="metric"><span>Confirmados</span><strong id="metricConfirmed">0</strong></div>
-        <div class="metric"><span>Pendentes antigos</span><strong id="metricOld">0</strong></div>
+        <div class="metric clickable" id="metricOldCard" title="Mostrar pendentes de dias anteriores"><span>Pendentes antigos</span><strong id="metricOld">0</strong></div>
         <div class="metric"><span>Operadores hoje</span><strong id="metricOperators">0</strong></div>
       </section>
-      <section class="panel">
-        <div class="panel-head"><div><h2>Remessa / recebimentos de hoje</h2><div class="muted">Fila geral desta máquina, com identificação do login SPX de cada recebimento.</div></div><div class="filters"><select id="operatorFilter" class="operator-filter"><option value="">Todos os operadores</option></select><input id="search" class="search" type="search" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>BAIRRO</th><th>Data da ocorrência</th><th>Login SPX</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>Nenhum recebimento capturado hoje.</div></div>
+      <section class="panel" style="margin-bottom:16px">
+        <div class="panel-head"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted">Ranking pela quantidade de ocorrências recebidas hoje.</div></div></div>
+        <div id="topDrivers" class="ranking"></div>
       </section>
-      <footer>v1.3.30 mantém a fila geral da máquina e registra o login SPX responsável por cada recebimento. Confirmados podem ser limpos manualmente; pendentes são preservados.</footer>
+      <section class="panel">
+        <div class="panel-head"><div><h2 id="tableTitle">Remessa / recebimentos de hoje</h2><div id="tableSubtitle" class="muted">Fila integrada do navegador, com identificação do login SPX.</div></div><div class="filters"><select id="operatorFilter" class="operator-filter"><option value="">Todos os operadores</option></select><input id="search" class="search" type="search" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>BAIRRO</th><th>Data da ocorrência</th><th>Login SPX</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>Nenhum recebimento capturado hoje.</div></div>
+      </section>
+      <footer>v1.3.31 usa uma fila persistente independente do localStorage da sessão SPX. Pendentes continuam preservados e podem ser abertos pelos cards.</footer>
     </main></body></html>`);
     doc.close();
 
     const search = doc.getElementById('search');
     const operatorFilter = doc.getElementById('operatorFilter');
+    const todayCard = doc.getElementById('metricTodayCard');
+    const queueCard = doc.getElementById('metricQueueCard');
+    const oldCard = doc.getElementById('metricOldCard');
+    let dashboardView = 'today';
+    let rendering = false;
+
+    const receivedDate = value => {
+      const timestamp = Number(value || 0);
+      if (!timestamp) return '-';
+      return new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        dateStyle: 'short',
+        timeStyle: 'medium'
+      }).format(new Date(timestamp));
+    };
 
     const filterRows = () => {
       const query = String(search?.value || '').trim().toLowerCase();
@@ -282,65 +397,129 @@
       });
     };
 
-    const render = () => {
-      if (tab.closed) return;
-      const today = saoPauloDay();
-      const records = Object.values(readDashboardQueue().records || {}).filter(Boolean);
-      const todayRows = records
-        .filter(row => row.received_day === today)
-        .sort((x, y) => Number(y.captured_at || 0) - Number(x.captured_at || 0));
-      const oldPending = records.filter(row =>
-        row.received_day && row.received_day !== today && row.status !== 'confirmed'
-      );
+    const render = async () => {
+      if (tab.closed || rendering) return;
+      rendering = true;
+      try {
+        const today = saoPauloDay();
+        const records = Object.values((await readDashboardQueue()).records || {}).filter(Boolean);
+        const todayRows = records
+          .filter(row => row.received_day === today)
+          .sort((x, y) => Number(y.received_at || y.captured_at || 0) - Number(x.received_at || x.captured_at || 0));
+        const pendingToday = todayRows.filter(row => row.status !== 'confirmed');
+        const oldPending = records
+          .filter(row => row.received_day && row.received_day !== today && row.status !== 'confirmed')
+          .sort((x, y) => Number(y.received_at || y.captured_at || 0) - Number(x.received_at || x.captured_at || 0));
 
-      doc.getElementById('metricTotal').textContent = String(todayRows.length);
-      doc.getElementById('metricQueue').textContent = String(todayRows.filter(row => row.status !== 'confirmed').length);
-      doc.getElementById('metricConfirmed').textContent = String(todayRows.filter(row => row.status === 'confirmed').length);
-      doc.getElementById('metricOld').textContent = String(oldPending.length);
-      const operatorLogins = [...new Set(todayRows
-        .map(row => String(row.operator_login || '').trim().toLowerCase())
-        .filter(Boolean))].sort((x, y) => x.localeCompare(y, 'pt-BR'));
-      doc.getElementById('metricOperators').textContent = String(operatorLogins.length);
+        doc.getElementById('metricTotal').textContent = String(todayRows.length);
+        doc.getElementById('metricQueue').textContent = String(pendingToday.length);
+        doc.getElementById('metricConfirmed').textContent = String(todayRows.filter(row => row.status === 'confirmed').length);
+        doc.getElementById('metricOld').textContent = String(oldPending.length);
 
-      const previousOperator = String(operatorFilter?.value || '');
-      operatorFilter.innerHTML = '<option value="">Todos os operadores</option>' +
-        operatorLogins.map(login =>
-          '<option value="' + escapeHtml(login) + '">' + escapeHtml(login) + '</option>'
-        ).join('');
-      if (operatorLogins.includes(previousOperator)) operatorFilter.value = previousOperator;
+        const operatorLoginsToday = [...new Set(todayRows
+          .map(row => String(row.operator_login || '').trim().toLowerCase())
+          .filter(Boolean))].sort((x, y) => x.localeCompare(y, 'pt-BR'));
+        doc.getElementById('metricOperators').textContent = String(operatorLoginsToday.length);
 
-      doc.getElementById('oldWarning').innerHTML = oldPending.length
-        ? '<div class="warning">⚠ ' + oldPending.length + ' registro(s) de dia anterior ainda não confirmado(s). Eles foram preservados por segurança.</div>'
-        : '';
+        doc.getElementById('oldWarning').innerHTML = oldPending.length
+          ? '<div class="warning">⚠ ' + oldPending.length + ' registro(s) de dia anterior ainda pendente(s). Clique em “Pendentes antigos” para visualizar.</div>'
+          : '';
 
-      const rows = doc.getElementById('rows');
-      rows.innerHTML = todayRows.map(row => {
-        const status = String(row.status || 'captured');
-        const filter = [
-          row.shipment_id, row.reason, row.driver_id, row.driver_name,
-          row.agency, row.neighborhood, row.operator_login, dashboardStatusLabel(status)
-        ].join(' ').toLowerCase();
-        const operatorLogin = String(row.operator_login || '').trim().toLowerCase();
-        return '<tr data-filter="' + escapeHtml(filter) + '" data-operator="' + escapeHtml(operatorLogin) + '">' +
-          '<td><strong>' + escapeHtml(row.shipment_id || '') + '</strong></td>' +
-          '<td>' + escapeHtml(row.reason || '') + '</td>' +
-          '<td>' + escapeHtml(row.driver_id || '') + '</td>' +
-          '<td>' + escapeHtml(row.driver_name || '') + '</td>' +
-          '<td>' + escapeHtml(row.agency || '') + '</td>' +
-          '<td>' + escapeHtml(row.neighborhood || '') + '</td>' +
-          '<td>' + escapeHtml(formatDate(row.occurrence_timestamp)) + '</td>' +
-          '<td>' + escapeHtml(operatorLogin || 'Não identificado') + '</td>' +
-          '<td><span class="status ' + escapeHtml(status) + '">' + escapeHtml(dashboardStatusLabel(status)) + '</span></td>' +
-          '</tr>';
-      }).join('');
+        const drivers = new Map();
+        for (const row of todayRows) {
+          const driverId = String(row.driver_id || '').trim();
+          const driverName = String(row.driver_name || '').trim();
+          if (!driverId && !driverName) continue;
+          const key = driverId || driverName.toLowerCase();
+          const item = drivers.get(key) || { driverId, driverName: driverName || 'Motorista não identificado', count: 0 };
+          item.count += 1;
+          drivers.set(key, item);
+        }
+        const topDrivers = [...drivers.values()]
+          .sort((x, y) => y.count - x.count || x.driverName.localeCompare(y.driverName, 'pt-BR'))
+          .slice(0, 10);
+        doc.getElementById('topDrivers').innerHTML = topDrivers.length
+          ? topDrivers.map((item, index) =>
+              '<div class="rank-item"><span class="rank-pos">' + (index + 1) + '</span>' +
+              '<div><div class="rank-name">' + escapeHtml(item.driverName) + '</div>' +
+              '<div class="rank-meta">ID: ' + escapeHtml(item.driverId || 'Não informado') + '</div></div>' +
+              '<span class="rank-count">' + item.count + '</span></div>'
+            ).join('')
+          : '<div class="empty">Ainda não há motoristas para o ranking de hoje.</div>';
 
-      doc.getElementById('empty').hidden = todayRows.length > 0;
-      filterRows();
+        let displayRows = todayRows;
+        if (dashboardView === 'pendingToday') displayRows = pendingToday;
+        if (dashboardView === 'oldPending') displayRows = oldPending;
+
+        todayCard.classList.toggle('active', dashboardView === 'today');
+        queueCard.classList.toggle('active', dashboardView === 'pendingToday');
+        oldCard.classList.toggle('active', dashboardView === 'oldPending');
+
+        if (dashboardView === 'pendingToday') {
+          doc.getElementById('tableTitle').textContent = 'Pendentes de hoje';
+          doc.getElementById('tableSubtitle').textContent = 'Registros de hoje que ainda não foram confirmados.';
+        } else if (dashboardView === 'oldPending') {
+          doc.getElementById('tableTitle').textContent = 'Pendentes de dias anteriores';
+          doc.getElementById('tableSubtitle').textContent = 'Registros preservados automaticamente até serem confirmados.';
+        } else {
+          doc.getElementById('tableTitle').textContent = 'Remessa / recebimentos de hoje';
+          doc.getElementById('tableSubtitle').textContent = 'Fila geral do dia, com identificação do login SPX de cada recebimento.';
+        }
+
+        const availableOperators = [...new Set(displayRows
+          .map(row => String(row.operator_login || '').trim().toLowerCase())
+          .filter(Boolean))].sort((x, y) => x.localeCompare(y, 'pt-BR'));
+        const previousOperator = String(operatorFilter?.value || '');
+        operatorFilter.innerHTML = '<option value="">Todos os operadores</option>' +
+          availableOperators.map(login =>
+            '<option value="' + escapeHtml(login) + '">' + escapeHtml(login) + '</option>'
+          ).join('');
+        if (availableOperators.includes(previousOperator)) operatorFilter.value = previousOperator;
+
+        const rows = doc.getElementById('rows');
+        rows.innerHTML = displayRows.map(row => {
+          const status = String(row.status || 'captured');
+          const operatorLogin = String(row.operator_login || '').trim().toLowerCase();
+          const filter = [
+            row.shipment_id, row.reason, row.driver_id, row.driver_name,
+            row.agency, row.neighborhood, operatorLogin, dashboardStatusLabel(status)
+          ].join(' ').toLowerCase();
+          return '<tr data-filter="' + escapeHtml(filter) + '" data-operator="' + escapeHtml(operatorLogin) + '">' +
+            '<td>' + escapeHtml(receivedDate(row.received_at || row.captured_at)) + '</td>' +
+            '<td><strong>' + escapeHtml(row.shipment_id || '') + '</strong></td>' +
+            '<td>' + escapeHtml(row.reason || '') + '</td>' +
+            '<td>' + escapeHtml(row.driver_id || '') + '</td>' +
+            '<td>' + escapeHtml(row.driver_name || '') + '</td>' +
+            '<td>' + escapeHtml(row.agency || '') + '</td>' +
+            '<td>' + escapeHtml(row.neighborhood || '') + '</td>' +
+            '<td>' + escapeHtml(formatDate(row.occurrence_timestamp)) + '</td>' +
+            '<td>' + escapeHtml(operatorLogin || 'Não identificado') + '</td>' +
+            '<td><span class="status ' + escapeHtml(status) + '">' + escapeHtml(dashboardStatusLabel(status)) + '</span></td>' +
+            '</tr>';
+        }).join('');
+
+        const empty = doc.getElementById('empty');
+        empty.hidden = displayRows.length > 0;
+        if (!displayRows.length) {
+          empty.textContent = dashboardView === 'oldPending'
+            ? 'Nenhum pendente antigo.'
+            : dashboardView === 'pendingToday'
+              ? 'Nenhum pendente de hoje.'
+              : 'Nenhum recebimento capturado hoje.';
+        }
+        filterRows();
+      } finally {
+        rendering = false;
+      }
     };
 
-    doc.getElementById('clearConfirmed').onclick = () => {
+    todayCard.onclick = () => { dashboardView = 'today'; void render(); };
+    queueCard.onclick = () => { dashboardView = 'pendingToday'; void render(); };
+    oldCard.onclick = () => { dashboardView = 'oldPending'; void render(); };
+
+    doc.getElementById('clearConfirmed').onclick = async () => {
       const today = saoPauloDay();
-      const records = Object.values(readDashboardQueue().records || {}).filter(Boolean);
+      const records = Object.values((await readDashboardQueue()).records || {}).filter(Boolean);
       const confirmedToday = records.filter(row =>
         row.status === 'confirmed' && row.received_day === today
       ).length;
@@ -356,21 +535,21 @@
       );
       if (!approved) return;
 
-      clearConfirmedDashboardRecords(today);
-      render();
+      await clearConfirmedDashboardRecords(today);
+      await render();
     };
 
-    doc.getElementById('refresh').onclick = render;
+    doc.getElementById('refresh').onclick = () => void render();
     if (search) search.oninput = filterRows;
     if (operatorFilter) operatorFilter.onchange = filterRows;
-    render();
+    void render();
 
     const refreshTimer = window.setInterval(() => {
       if (tab.closed) {
         clearInterval(refreshTimer);
         return;
       }
-      render();
+      void render();
     }, 1500);
   }
 
@@ -1393,7 +1572,7 @@
     return String(response?.data?.data_detail || '').trim();
   }
 
-  function currentOccurrenceSheetPayload(shipmentId, attempt, returnFlow, neighborhood, operatorLogin = '') {
+  function currentOccurrenceSheetPayload(shipmentId, attempt, returnFlow, neighborhood, operatorLogin = '', receivedAt = 0) {
     const reason = translateReason(attempt?.on_hold_reason__desc);
     const normalAttempt = !attempt?.return_occurrence;
     const rawDriverId = normalAttempt ? getDriverId(attempt) : '';
@@ -1408,11 +1587,12 @@
       neighborhood: String(neighborhood || '').trim(),
       occurrence_timestamp: Number(attempt?.ctime || 0),
       flow: returnFlow ? 'Return_LMHub' : 'LMHub',
-      operator_login: String(operatorLogin || '').trim().toLowerCase()
+      operator_login: String(operatorLogin || '').trim().toLowerCase(),
+      received_at: Number(receivedAt || Date.now())
     };
   }
 
-  async function sendCurrentOccurrenceToDataSheet(shipmentId, attempt, returnFlow, operatorLogin = '') {
+  async function sendCurrentOccurrenceToDataSheet(shipmentId, attempt, returnFlow, operatorLogin = '', receivedAt = 0) {
     if (!shipmentId || !attempt || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     const occurrenceKey = dataSheetOccurrenceKey(shipmentId, attempt?.ctime);
@@ -1435,7 +1615,7 @@
       }
 
       const payload = currentOccurrenceSheetPayload(
-        shipmentId, attempt, returnFlow, neighborhood, operatorLogin
+        shipmentId, attempt, returnFlow, neighborhood, operatorLogin, receivedAt
       );
 
       if (!payload.occurrence_timestamp || !payload.reason) return false;
@@ -1443,7 +1623,7 @@
       // A mesma ficha preparada para a planilha alimenta o Dashboard.
       // Chave = BR + timestamp, portanto uma nova ocorrência real do mesmo BR
       // gera outro registro sem duplicar a mesma ocorrência.
-      saveDashboardRecord(payload);
+      await saveDashboardRecord(payload);
 
       await fetch(ONHOLD_DATA_WEBAPP_URL, {
         method: 'POST',
@@ -1463,7 +1643,7 @@
     }
   }
 
-  async function processDataSheetScan(shipmentId, operatorLogin = '') {
+  async function processDataSheetScan(shipmentId, operatorLogin = '', receivedAt = 0) {
     if (!shipmentId || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     try {
@@ -1515,7 +1695,8 @@
         shipmentId,
         currentOccurrence,
         Boolean(cycleStart),
-        operatorLogin
+        operatorLogin,
+        receivedAt
       );
     } catch (error) {
       console.warn('[SPX-DV] Falha no processamento independente da planilha', shipmentId, error);
@@ -1523,9 +1704,10 @@
     }
   }
 
-  function queueDataSheetScan(shipmentId, operatorLogin = '') {
+  function queueDataSheetScan(shipmentId, operatorLogin = '', receivedAt = 0) {
     if (!shipmentId) return;
     const operatorSnapshot = String(operatorLogin || currentOperatorLogin || '').trim().toLowerCase();
+    const receivedAtSnapshot = Number(receivedAt || Date.now());
 
     // O painel costuma ter os dados rapidamente, mas o caminho da planilha
     // depende de várias consultas. Se uma delas falhar naquele instante,
@@ -1533,7 +1715,7 @@
     void (async () => {
       for (const delay of DATA_SHEET_RETRY_DELAYS) {
         await sleep(delay);
-        const sent = await processDataSheetScan(shipmentId, operatorSnapshot);
+        const sent = await processDataSheetScan(shipmentId, operatorSnapshot, receivedAtSnapshot);
         if (sent) return;
       }
 
@@ -1940,8 +2122,9 @@
     if (submitted) {
       // Captura o login vigente no momento do recebimento. A fila continua
       // geral desta máquina/perfil; o login é apenas um campo de auditoria/filtro.
+      const receivedAt = Date.now();
       void refreshCurrentOperatorLogin().then(operatorLogin => {
-        queueDataSheetScan(value, operatorLogin);
+        queueDataSheetScan(value, operatorLogin, receivedAt);
       });
     }
   }
@@ -1997,6 +2180,7 @@
 
     if (!authorized || !isTargetRoute()) return;
 
+    void ensureDashboardMigration();
     showPanel('', '<div class="message">Aguardando leitura do BR...</div>');
     checkShipment();
 

@@ -1,6 +1,5 @@
 const CATALOG_URL = 'https://raw.githubusercontent.com/RAlDE/spx-dv/main/catalog.json';
 const STATE_PREFIX = 'spxdv:module:';
-const DASHBOARD_QUEUE_KEY = 'spxdv:dashboard-queue-v2';
 
 chrome.runtime.onInstalled.addListener(() => syncEnabledModules().catch(console.error));
 chrome.runtime.onStartup.addListener(() => syncEnabledModules().catch(console.error));
@@ -16,12 +15,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === 'SET_MODULE_STATE') {
     setModuleState(String(message.moduleId || ''), message.enabled === true).then(sendResponse).catch(error => sendResponse({ ok: false, error: error.message }));
-    return true;
-  }
-  if (message?.type === 'SPX_DV_DASHBOARD_QUEUE') {
-    handleDashboardQueueMessage(String(message.action || ''), message.payload || {})
-      .then(sendResponse)
-      .catch(error => sendResponse({ ok: false, error: error.message }));
     return true;
   }
   return false;
@@ -102,109 +95,4 @@ async function syncEnabledModules() {
       await registerModule(module);
     }
   }
-}
-
-
-function dashboardSaoPauloDay(value = Date.now()) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(new Date(Number(value) || Date.now()));
-}
-
-function dashboardOccurrenceKey(record) {
-  const shipment = String(record?.shipment_id || '').trim().toUpperCase();
-  const timestamp = Math.floor(Number(record?.occurrence_timestamp || 0));
-  return shipment && timestamp ? shipment + '|' + timestamp : '';
-}
-
-async function readDashboardStore() {
-  const stored = await chrome.storage.local.get(DASHBOARD_QUEUE_KEY);
-  const raw = stored?.[DASHBOARD_QUEUE_KEY];
-  const store = raw && typeof raw === 'object' ? raw : {};
-  if (!store.records || typeof store.records !== 'object' || Array.isArray(store.records)) {
-    store.records = {};
-  }
-  store.version = 2;
-
-  const today = dashboardSaoPauloDay();
-  let changed = false;
-  for (const [key, record] of Object.entries(store.records)) {
-    if (!record || typeof record !== 'object') {
-      delete store.records[key];
-      changed = true;
-      continue;
-    }
-    if (record.status === 'confirmed' && record.received_day && record.received_day !== today) {
-      delete store.records[key];
-      changed = true;
-    }
-  }
-
-  if (changed) await chrome.storage.local.set({ [DASHBOARD_QUEUE_KEY]: store });
-  return store;
-}
-
-function mergeDashboardRecord(store, incoming) {
-  if (!incoming || typeof incoming !== 'object') return false;
-  const key = String(incoming.key || dashboardOccurrenceKey(incoming)).trim();
-  if (!key) return false;
-
-  const previous = store.records[key] && typeof store.records[key] === 'object'
-    ? store.records[key]
-    : {};
-  const receivedAt = Number(previous.received_at || incoming.received_at || incoming.captured_at || Date.now());
-
-  store.records[key] = {
-    ...previous,
-    ...incoming,
-    key,
-    shipment_id: String(incoming.shipment_id || previous.shipment_id || '').trim().toUpperCase(),
-    operator_login: String(previous.operator_login || incoming.operator_login || '').trim().toLowerCase(),
-    received_at: receivedAt,
-    received_day: String(previous.received_day || incoming.received_day || dashboardSaoPauloDay(receivedAt)),
-    captured_at: Number(previous.captured_at || incoming.captured_at || receivedAt),
-    updated_at: Date.now(),
-    status: String(previous.status || incoming.status || 'captured')
-  };
-  return true;
-}
-
-async function handleDashboardQueueMessage(action, payload) {
-  const store = await readDashboardStore();
-
-  if (action === 'get') return { ok: true, store };
-
-  if (action === 'upsert') {
-    if (!mergeDashboardRecord(store, payload?.record)) return { ok: false, error: 'Registro inválido.' };
-    await chrome.storage.local.set({ [DASHBOARD_QUEUE_KEY]: store });
-    return { ok: true };
-  }
-
-  if (action === 'merge') {
-    const records = Array.isArray(payload?.records) ? payload.records : [];
-    let merged = 0;
-    for (const record of records) {
-      if (mergeDashboardRecord(store, record)) merged += 1;
-    }
-    if (merged) await chrome.storage.local.set({ [DASHBOARD_QUEUE_KEY]: store });
-    return { ok: true, merged };
-  }
-
-  if (action === 'clearConfirmed') {
-    const day = String(payload?.day || dashboardSaoPauloDay());
-    let removed = 0;
-    for (const [key, record] of Object.entries(store.records || {})) {
-      if (record?.status !== 'confirmed') continue;
-      if (String(record?.received_day || '') !== day) continue;
-      delete store.records[key];
-      removed += 1;
-    }
-    if (removed) await chrome.storage.local.set({ [DASHBOARD_QUEUE_KEY]: store });
-    return { ok: true, removed };
-  }
-
-  return { ok: false, error: 'Ação de Dashboard desconhecida.' };
 }

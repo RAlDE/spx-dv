@@ -790,3 +790,41 @@ Implementação:
 - registros criados antes da v1.3.30 permanecem preservados e aparecem como `Não identificado` por não possuírem o campo histórico.
 
 A identificação do login é informativa e não separa a fila. Outro computador/perfil continua tendo armazenamento local independente.
+
+
+## Atualização 1.3.31 — Dashboard persistente, horário de recebimento, Top 10 e pendentes clicáveis
+Em 28/10/2026 o teste real mostrou que a fila baseada somente em `localStorage` podia aparecer separada após troca/abertura de login SPX. Para reduzir a dependência da sessão do portal, a fila principal do Dashboard foi movida para `IndexedDB`.
+
+### Fila e migração
+- banco local: `spxdv-dashboard-v1`;
+- store: `records`;
+- chave continua `BR + occurrence_timestamp`;
+- o banco é independente de `localStorage.clear()` do portal;
+- ao iniciar o módulo, registros antigos existentes em `spxdv:dashboard-queue-v1` são mesclados automaticamente;
+- em re-bip da mesma ocorrência, são preservados o primeiro login e o primeiro horário de recebimento;
+- fallback para localStorage permanece apenas se IndexedDB falhar;
+- registros confirmados antigos podem ser limpos na virada do dia;
+- pendentes continuam preservados.
+
+Observação: IndexedDB é compartilhado entre logins SPX dentro do mesmo perfil/origem do Chrome. Perfis diferentes do Chrome ou janelas anônimas continuam tendo armazenamento separado.
+
+### Data/hora do recebimento
+- o horário é capturado exatamente no Enter do campo SPX TN;
+- novo campo interno: `received_at`;
+- nova coluna `Recebido em` aparece antes de `Pedido`;
+- `Data da ocorrência` continua mostrando o timestamp real da ocorrência OnHold e não foi substituída.
+
+### Top 10 motoristas ofensores
+- novo painel `Top 10 motoristas ofensores do dia`;
+- ranking pela quantidade de ocorrências recebidas no dia;
+- mostra posição, nome, Driver ID e quantidade;
+- registros sem motorista identificável não entram no ranking.
+
+### Visualização de pendentes
+- card `Na fila` é clicável e mostra somente registros do dia ainda não confirmados;
+- card `Pendentes antigos` é clicável e mostra pendentes preservados de dias anteriores;
+- card `Capturados hoje` retorna para a visão completa;
+- aviso de pendentes antigos orienta clicar no card;
+- filtros de operador e pesquisa continuam ativos em cada visão.
+
+A lógica de captura de BR, bairro, motorista, 3PL, login SPX, Return, recomendação e envio automático legado não foi alterada.

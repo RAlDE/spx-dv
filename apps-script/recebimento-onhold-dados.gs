@@ -539,7 +539,7 @@ $('refresh').onclick=requestData;
 $('clearConfirmed').onclick=()=>{
   const count=state.data&&state.data.records?state.data.records.filter(r=>r.received_day===state.data.today&&r.status==='confirmed').length:0;
   if(!count){alert('Não há registros confirmados para limpar hoje.');return;}
-  if(!confirm('Limpar '+count+' registro(s) confirmado(s) de hoje?\n\nPendentes não serão apagados.'))return;
+  if(!confirm('Limpar '+count+' registro(s) confirmado(s) de hoje?\\n\\nPendentes não serão apagados.'))return;
   google.script.run.withSuccessHandler(()=>requestData()).withFailureHandler(err=>alert('Falha: '+(err&&err.message||err))).clearConfirmedDashboard();
 };
 requestData();

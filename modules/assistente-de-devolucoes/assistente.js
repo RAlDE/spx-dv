@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.35';
+  const MODULE_VERSION = '1.3.36';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -21,6 +21,9 @@
   const NEIGHBOR_DIAG_KEY = 'spxdv:neighborhood-network-diag-v1';
   const NEIGHBOR_DIAG_BUTTON_ID = 'spxdv-neighborhood-diag-button';
   const NEIGHBOR_DIAG_MODAL_ID = 'spxdv-neighborhood-diag-modal';
+  const NEIGHBOR_EXPORT_REFRESH_KEY = 'spxdv:neighborhood-export-refresh-v1';
+  const NEIGHBOR_EXPORT_REFRESH_MS = 10 * 60 * 1000;
+  const NEIGHBOR_EXPORT_ORDER_ACCOUNTS = '51,9,81,8,82,38,62,63,10,11,50,52,13,26,56,45,59,2,41,32,24,76,16,65,33,35,22,53,37,12,44,74,75,4,80,40,25,31,85,64,7,83,28,29,39,5,48,54,6,49,70,73,67,43,55,1,23,14,21,17,3,27,18,66,30,46,71,47,42,69,68,34,36';
   const ASSIGNMENT_SEARCH_URL = 'https://spx.shopee.com.br/spx_delivery/admin/assignment/assignment_task/search/v2';
   const DASHBOARD_QUEUE_KEY = 'spxdv:dashboard-queue-v1';
   const DASHBOARD_WINDOW_NAME = 'spxdv-receiving-dashboard';
@@ -102,11 +105,13 @@
   let lastObservedUrl = location.href;
   let shipmentKeyListenerInstalled = false;
   let currentOperatorLogin = '';
+  let neighborhoodExportRefreshPromise = null;
   const autoCancelledAddress = new Set();
   const assignmentAgencyCache = new Map();
+  const confirmedReceiveSeen = new Set();
   const CANCELLED_ADDRESS_KEY = 'spxdv:cancelled-address-v1';
-  const dataSheetOccurrenceInFlight = new Set();
-  const DATA_SHEET_RETRY_DELAYS = [1200, 2500, 5000];
+  const dashboardOccurrenceInFlight = new Set();
+  const RECEIVE_CAPTURE_RETRY_DELAYS = [600, 1400, 2800, 5000];
 
   function readCancelledAddressState() {
     try {
@@ -815,6 +820,8 @@
       let parsed = null;
       try { parsed = JSON.parse(text); } catch {}
 
+      handleRealReceiveResponse(meta, parsed);
+
       if (/\/api\//i.test(url.pathname)) {
         saveReturnDiagnostic(meta, parsed, text);
       }
@@ -875,6 +882,7 @@
           }
 
           if (text) {
+            handleRealReceiveResponse(meta, parsed);
             if (/\/api\//i.test(url.pathname)) saveReturnDiagnostic(meta, parsed, text);
             saveNeighborhoodDiagnostic(meta, parsed, text, {
               contentType: this.getResponseHeader('content-type') || '',
@@ -1684,11 +1692,171 @@
     return scannedAt > 0 && Math.abs(Number(firstLaterState.ctime) - scannedAt) <= 300;
   }
 
+  function fetchNeighborhoodFromCentralCache(shipmentId, timeoutMs = 2600) {
+    const shipment = String(shipmentId || '').trim().toUpperCase();
+    if (!shipment || !ONHOLD_DATA_WEBAPP_URL) return Promise.resolve('');
+
+    return new Promise(resolve => {
+      const suffix = String(Date.now()) + '_' + Math.random().toString(36).slice(2, 9);
+      const callbackName = '__spxDvNeighborhood_' + suffix;
+      const script = document.createElement('script');
+      let finished = false;
+
+      const finish = value => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        try { script.remove(); } catch {}
+        try { delete window[callbackName]; } catch {}
+        resolve(String(value || '').trim());
+      };
+
+      window[callbackName] = payload => {
+        finish(payload && payload.ok ? payload.neighborhood : '');
+      };
+
+      const timer = window.setTimeout(() => finish(''), Math.max(800, Number(timeoutMs) || 2600));
+      script.async = true;
+      script.src = ONHOLD_DATA_WEBAPP_URL +
+        '?view=neighborhood&shipment_id=' + encodeURIComponent(shipment) +
+        '&callback=' + encodeURIComponent(callbackName) +
+        '&_=' + Date.now();
+      script.onerror = () => finish('');
+      (document.head || document.documentElement).appendChild(script);
+    });
+  }
+
+  function neighborhoodExportRange() {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(new Date()).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+
+    const todayStart = Math.floor(Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      3, 0, 0
+    ) / 1000);
+
+    return {
+      start: todayStart - 35 * 86400,
+      end: todayStart + 86400
+    };
+  }
+
+  function neighborhoodExportPayload() {
+    const range = neighborhoodExportRange();
+    return {
+      status: '1,2',
+      tracking_status: '1,2',
+      bulky_type: '1,0,2',
+      order_account: NEIGHBOR_EXPORT_ORDER_ACCOUNTS,
+      ctime: range.start + ',' + range.end,
+      type: 1,
+      format_condition: 'SPX-DV · atualização automática da base de Bairro / Sort Code Name'
+    };
+  }
+
+  async function importNeighborhoodExportUrl(downloadUrl, taskId) {
+    if (!downloadUrl || !ONHOLD_DATA_WEBAPP_URL) return false;
+    try {
+      await fetch(ONHOLD_DATA_WEBAPP_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        credentials: 'include',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({
+          action: 'neighborhood_import_url',
+          download_url: String(downloadUrl),
+          task_id: Number(taskId || 0)
+        }),
+        keepalive: true
+      });
+      return true;
+    } catch (error) {
+      console.warn('[SPX-DV] Não foi possível enviar a base de Bairro para o Dashboard central', error);
+      return false;
+    }
+  }
+
+  async function ensureNeighborhoodExportRefresh(force = false) {
+    if (neighborhoodExportRefreshPromise) return neighborhoodExportRefreshPromise;
+
+    const now = Date.now();
+    let lastRefresh = 0;
+    try { lastRefresh = Number(localStorage.getItem(NEIGHBOR_EXPORT_REFRESH_KEY) || 0); } catch {}
+    if (!force && lastRefresh && now - lastRefresh < NEIGHBOR_EXPORT_REFRESH_MS) return false;
+
+    neighborhoodExportRefreshPromise = (async () => {
+      // Gravamos o início antes da chamada para impedir tempestade de exportações
+      // quando vários BRs são processados ao mesmo tempo.
+      try { localStorage.setItem(NEIGHBOR_EXPORT_REFRESH_KEY, String(Date.now())); } catch {}
+
+      const created = await postJson(
+        'https://spx.shopee.com.br/api/in-station/uni_receive/on_hold/list/export',
+        neighborhoodExportPayload()
+      );
+      const taskId = Number(created?.data?.task_id || created?.data?.fms_task_id || 0);
+      if (!taskId) throw new Error('Exportação de Bairro não retornou task_id.');
+
+      let completed = false;
+      const startedAt = Math.floor(Date.now() / 1000) - 7 * 86400;
+      for (const delay of [1200, 1800, 2600, 3600, 5000, 7000]) {
+        await sleep(delay);
+        const status = await fetchJson(
+          'https://spx.shopee.com.br/spxdata/api/export_platform/export_task/list_for_portal' +
+          '?start_time=' + encodeURIComponent(startedAt) +
+          '&task_ids=' + encodeURIComponent(taskId)
+        );
+        const task = Array.isArray(status?.data?.task_list)
+          ? status.data.task_list.find(item => Number(item?.task_id || 0) === taskId) || status.data.task_list[0]
+          : null;
+        const exportStatus = Number(task?.export_status || 0);
+        if (exportStatus === 2) {
+          completed = true;
+          break;
+        }
+        if (exportStatus > 2) throw new Error('Exportação de Bairro falhou (status ' + exportStatus + ').');
+      }
+
+      if (!completed) throw new Error('Exportação de Bairro ainda não concluiu.');
+
+      const signed = await fetchJson(
+        'https://spx.shopee.com.br/spxdata/api/export_platform/export_task/get_signed_download_url' +
+        '?source=fms&task_id=' + encodeURIComponent(taskId)
+      );
+      const downloadUrl = String(signed?.data?.download_url || '').trim();
+      if (!downloadUrl) throw new Error('Exportação de Bairro não retornou download_url.');
+
+      return await importNeighborhoodExportUrl(downloadUrl, taskId);
+    })().catch(error => {
+      console.warn('[SPX-DV] Atualização automática da base de Bairro não concluída', error);
+      // Permite nova tentativa mais cedo em caso de falha real.
+      try { localStorage.removeItem(NEIGHBOR_EXPORT_REFRESH_KEY); } catch {}
+      return false;
+    }).finally(() => {
+      neighborhoodExportRefreshPromise = null;
+    });
+
+    return neighborhoodExportRefreshPromise;
+  }
+
   async function fetchOccurrenceNeighborhood(shipmentId, returnFlow) {
-    const dataField = returnFlow ? 'seller_addr_district' : 'buyer_addr_district';
+    if (!returnFlow) {
+      const cached = await fetchNeighborhoodFromCentralCache(shipmentId).catch(() => '');
+      if (!cached) void ensureNeighborhoodExportRefresh(false);
+      return cached;
+    }
+
+    // O CSV de On Hold confirmou buyer_addr_district (Sort Code Name), mas não
+    // seller_addr_district. No ciclo de Return mantemos a fonte sensível apenas
+    // como fallback até existir uma fonte não sensível equivalente para o vendedor.
     const url = 'https://spx.shopee.com.br/api/fleet_order/order/detail/show_sensitive_data' +
       '?shipment_id=' + encodeURIComponent(shipmentId) +
-      '&data_field=' + encodeURIComponent(dataField);
+      '&data_field=seller_addr_district';
 
     const response = await fetchJson(url);
     return String(response?.data?.data_detail || '').trim();
@@ -1714,19 +1882,14 @@
     };
   }
 
-  async function sendCurrentOccurrenceToDataSheet(shipmentId, attempt, returnFlow, operatorLogin = '', receivedAt = 0) {
+  async function captureConfirmedOccurrenceToDashboard(shipmentId, attempt, returnFlow, operatorLogin = '', receivedAt = 0) {
     if (!shipmentId || !attempt || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     const occurrenceKey = dataSheetOccurrenceKey(shipmentId, attempt?.ctime);
     if (!occurrenceKey) return false;
+    if (dashboardOccurrenceInFlight.has(occurrenceKey)) return true;
 
-    // Mantemos apenas a trava de concorrência em memória.
-    // Não marcamos como "enviado" em sessionStorage porque o POST usa no-cors:
-    // o navegador não consegue confirmar se o Apps Script realmente gravou.
-    // A deduplicação definitiva fica no servidor por BR + timestamp.
-    if (dataSheetOccurrenceInFlight.has(occurrenceKey)) return true;
-
-    dataSheetOccurrenceInFlight.add(occurrenceKey);
+    dashboardOccurrenceInFlight.add(occurrenceKey);
 
     try {
       let neighborhood = '';
@@ -1742,30 +1905,24 @@
 
       if (!payload.occurrence_timestamp || !payload.reason) return false;
 
-      // A mesma ficha preparada para a planilha alimenta o Dashboard.
-      // Chave = BR + timestamp, portanto uma nova ocorrência real do mesmo BR
-      // gera outro registro sem duplicar a mesma ocorrência.
+      // IMPORTANTE: esta etapa alimenta SOMENTE o Dashboard/fila central.
+      // A aba Dados é gravada exclusivamente pelo botão de envio em lote do Dashboard.
       await saveDashboardRecord(payload);
 
-      await fetch(ONHOLD_DATA_WEBAPP_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        credentials: 'include',
-        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-        body: JSON.stringify(payload),
-        keepalive: true
-      });
+      // No fluxo normal, uma base de Sort Code atualizada pode preencher o Bairro
+      // depois do recebimento sem consumir show_sensitive_data.
+      if (!returnFlow) void ensureNeighborhoodExportRefresh(false);
 
       return true;
     } catch (error) {
-      console.warn('[SPX-DV] Falha ao enviar ocorrência atual para a aba Dados', error);
+      console.warn('[SPX-DV] Falha ao capturar recebimento confirmado no Dashboard', error);
       return false;
     } finally {
-      dataSheetOccurrenceInFlight.delete(occurrenceKey);
+      dashboardOccurrenceInFlight.delete(occurrenceKey);
     }
   }
 
-  async function processDataSheetScan(shipmentId, operatorLogin = '', receivedAt = 0) {
+  async function processConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0) {
     if (!shipmentId || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     try {
@@ -1787,8 +1944,6 @@
         ? attempts.filter(item => Number(item?.ctime || 0) >= cycleStart)
         : attempts;
 
-      // Esta execução é independente do painel. Um novo bip pode trocar
-      // currentShipment sem cancelar o BR anterior.
       const attemptsWithAgency = await enrichAttemptsWithAssignmentAgency(
         currentAttempts,
         tracking,
@@ -1813,7 +1968,7 @@
       const currentOccurrence = visibleAttempts.at(-1);
       if (!currentOccurrence) return false;
 
-      return await sendCurrentOccurrenceToDataSheet(
+      return await captureConfirmedOccurrenceToDashboard(
         shipmentId,
         currentOccurrence,
         Boolean(cycleStart),
@@ -1821,28 +1976,57 @@
         receivedAt
       );
     } catch (error) {
-      console.warn('[SPX-DV] Falha no processamento independente da planilha', shipmentId, error);
+      console.warn('[SPX-DV] Falha ao montar ficha do recebimento confirmado', shipmentId, error);
       return false;
     }
   }
 
-  function queueDataSheetScan(shipmentId, operatorLogin = '', receivedAt = 0) {
+  function queueConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0) {
     if (!shipmentId) return;
     const operatorSnapshot = String(operatorLogin || currentOperatorLogin || '').trim().toLowerCase();
     const receivedAtSnapshot = Number(receivedAt || Date.now());
 
-    // O painel costuma ter os dados rapidamente, mas o caminho da planilha
-    // depende de várias consultas. Se uma delas falhar naquele instante,
-    // repetimos automaticamente sem depender de novo bip do operador.
     void (async () => {
-      for (const delay of DATA_SHEET_RETRY_DELAYS) {
-        await sleep(delay);
-        const sent = await processDataSheetScan(shipmentId, operatorSnapshot, receivedAtSnapshot);
-        if (sent) return;
+      for (const delay of RECEIVE_CAPTURE_RETRY_DELAYS) {
+        if (delay) await sleep(delay);
+        const captured = await processConfirmedReceive(shipmentId, operatorSnapshot, receivedAtSnapshot);
+        if (captured) return;
       }
 
-      console.warn('[SPX-DV] Não foi possível concluir o envio para a planilha após novas tentativas', shipmentId);
+      console.warn('[SPX-DV] Não foi possível capturar no Dashboard após recebimento confirmado', shipmentId);
     })();
+  }
+
+  function handleRealReceiveResponse(meta, parsed) {
+    try {
+      const url = new URL(String(meta?.url || ''), location.href);
+      if (url.origin !== location.origin) return;
+      if (url.pathname !== '/api/in-station/uni_receive/order') return;
+      if (String(meta?.method || 'GET').toUpperCase() !== 'POST') return;
+      if (Number(parsed?.retcode) !== 0) return;
+
+      const operatorLogin = String(parsed?.data?.task_operator || currentOperatorLogin || '')
+        .trim()
+        .toLowerCase();
+      const orders = Array.isArray(parsed?.data?.order_list) ? parsed.data.order_list : [];
+
+      orders.forEach(order => {
+        const shipmentId = String(order?.shipment_id || order?.sls_tracking_number || '')
+          .trim()
+          .toUpperCase();
+        if (!shipmentId) return;
+
+        const receiveSeconds = Number(order?.receive_time || 0);
+        const receivedAt = receiveSeconds > 0 ? receiveSeconds * 1000 : Date.now();
+        const receiveKey = shipmentId + '|' + Math.floor(receiveSeconds || receivedAt / 1000);
+        if (confirmedReceiveSeen.has(receiveKey)) return;
+        confirmedReceiveSeen.add(receiveKey);
+
+        queueConfirmedReceive(shipmentId, operatorLogin, receivedAt);
+      });
+    } catch (error) {
+      console.warn('[SPX-DV] Falha ao reconhecer recebimento real do SPX', error);
+    }
   }
 
   function findRecentAutoAddTarget(tracking, scanUnix) {
@@ -2237,18 +2421,10 @@
       }, 1200);
     }
 
-    // IMPORTANTE:
-    // apenas aparecer/colar um BR na caixa serve para atualizar o painel.
-    // A planilha só entra na fila quando houve submissão real pelo Enter
-    // (scanner/bip ou Enter manual).
-    if (submitted) {
-      // Captura o login vigente no momento do recebimento. A fila continua
-      // geral desta máquina/perfil; o login é apenas um campo de auditoria/filtro.
-      const receivedAt = Date.now();
-      void refreshCurrentOperatorLogin().then(operatorLogin => {
-        queueDataSheetScan(value, operatorLogin, receivedAt);
-      });
-    }
+    // Colar, digitar ou pressionar Enter serve apenas para consultar/atualizar
+    // o painel. A entrada no Dashboard acontece somente quando a resposta real
+    // de POST /api/in-station/uni_receive/order retorna retcode=0.
+    void submitted;
   }
 
   function ensureShipmentKeyListener() {
@@ -2262,13 +2438,12 @@
       const input = findInput();
       if (!input) return;
 
-      // Só o Enter do próprio campo SPX TN conta como submissão para a planilha.
-      // Isso evita que um Enter em botão/modal com um BR ainda preenchido dispare envio.
+      // O Enter do campo SPX TN apenas acelera a consulta visual. Ele NÃO
+      // confirma recebimento para o Dashboard; a confirmação vem da API real do SPX.
       if (event.target !== input && document.activeElement !== input) return;
 
-      // No keydown do Enter o scanner já terminou de preencher o SPX TN.
-      // Não limpamos currentShipment: o painel pode continuar no mesmo BR.
-      // Apenas sinalizamos que este valor foi efetivamente submetido.
+      // No keydown o scanner já terminou de preencher o TN. Mantemos o painel
+      // fluido, mas sem registrar a ficha como recebida antes da resposta do SPX.
       checkShipment(true);
     }, true);
   }

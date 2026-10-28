@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.34';
+  const MODULE_VERSION = '1.3.35';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -573,6 +573,7 @@
 
       const isOnHoldExportCreate = /\/api\/in-station\/uni_receive\/on_hold\/list\/export(?:\?|$)/i.test(url.pathname + url.search);
       const isExportTask = /\/spxdata\/api\/export_platform\/export_task\/list_for_portal/i.test(url.pathname);
+      const isSignedDownload = /\/spxdata\/api\/export_platform\/export_task\/get_signed_download_url/i.test(url.pathname);
 
       const candidate = {
         capturedAt: new Date().toISOString(),
@@ -588,7 +589,8 @@
         brs: uniqueBrs,
         excerpt: neighborhoodDiagnosticExcerpt(text),
         exportCreateResponse: isOnHoldExportCreate ? text.slice(0, 1800) : '',
-        exportFields: (isOnHoldExportCreate || isExportTask) && parsed && typeof parsed === 'object'
+        signedDownloadResponse: isSignedDownload ? text.slice(0, 2600) : '',
+        exportFields: (isOnHoldExportCreate || isExportTask || isSignedDownload) && parsed && typeof parsed === 'object'
           ? collectExportTaskHints(parsed).slice(0, 160)
           : [],
         hints: parsed && typeof parsed === 'object'
@@ -670,6 +672,8 @@
           escapeHtml(item.excerpt) + '</pre>' : '') +
         (item.exportCreateResponse ? '<pre style="white-space:pre-wrap;word-break:break-word;margin:7px 0 0;padding:7px;background:#172554;border-radius:7px;color:#bfdbfe"><b>Resposta da criação:</b> ' +
           escapeHtml(item.exportCreateResponse) + '</pre>' : '') +
+        (item.signedDownloadResponse ? '<pre style="white-space:pre-wrap;word-break:break-word;margin:7px 0 0;padding:7px;background:#052e16;border-radius:7px;color:#bbf7d0"><b>Resposta do link assinado:</b> ' +
+          escapeHtml(item.signedDownloadResponse) + '</pre>' : '') +
         (exportFields ? '<div style="margin-top:7px;padding:6px;border:1px solid #7c2d12;border-radius:7px"><b style="color:#fdba74">Campos da tarefa/exportação</b>' + exportFields + '</div>' : '') +
         (hints ? '<div style="margin-top:7px">' + hints + '</div>' : '') +
         '</div></details>';

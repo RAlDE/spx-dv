@@ -1018,3 +1018,14 @@ A 1.3.34 continua exclusivamente diagnóstica e passa a registrar:
 Objetivo: descobrir a referência final do arquivo gerado para então implementar a leitura do `buyer_addr_district` por BR sem consumir `show_sensitive_data`.
 
 A página `exceptionOnholdList` continua proibida como fonte de recebimento/data/status do Dashboard.
+
+
+## Atualização 1.3.35 — captura do link assinado da exportação do Bairro
+O diagnóstico real da 1.3.34 confirmou:
+- criação da exportação retorna `task_id`;
+- quando concluída, a tarefa passa a `export_status=2` e recebe `file_name` no formato `mms://...`;
+- em seguida o portal chama `GET /spxdata/api/export_platform/export_task/get_signed_download_url?source=fms&task_id=<id>`.
+
+A 1.3.35 registra especificamente a resposta desse endpoint de link assinado e extrai seus campos técnicos (url/file/path/result/download etc.) para o `Bairro diag`.
+
+Objetivo: obter a URL temporária do CSV e validar a leitura automática de `buyer_addr_district` (Sort Code Name) por BR, sem download manual e sem usar `exceptionOnholdList` para recebimento.

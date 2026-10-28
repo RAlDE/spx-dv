@@ -911,3 +911,22 @@ A alteração do arquivo `apps-script/recebimento-onhold-dados.gs` no GitHub NÃ
 4. somente depois desativar/ativar o módulo para carregar a v1.3.32.
 
 A v1.3.32 ainda precisa de validação real no SPX e no Web App antes de ser considerada estável.
+
+
+## Hotfix 1.3.32 — normalização de data no Dashboard central
+Em 28/10/2026, após a primeira implantação real da fila central, a aba oculta `_SPX_DV_DASHBOARD` foi criada corretamente e passou a receber registros. A inspeção ao vivo confirmou 181 fichas gravadas, inclusive registros recentes e alguns já marcados como `confirmed`.
+
+Falha identificada:
+- a coluna `received_day` era gravada como texto `yyyy-MM-dd`;
+- o Google Sheets convertia automaticamente esse valor para uma célula real do tipo DATE;
+- `getValues()` devolvia um objeto `Date`;
+- o código usava `clean_(value)`, gerando uma representação textual diferente de `yyyy-MM-dd`;
+- com isso, o Dashboard não encontrava registros do dia atual e aparecia vazio, embora os BRs estivessem gravados.
+
+Correção:
+- adicionada `normalizeDashboardDay_()`;
+- objetos `Date`, serial numérico e texto de data são normalizados para `yyyy-MM-dd` em `America/Sao_Paulo`;
+- `dashboardRecordFromRow_`, limpeza automática de confirmados antigos e limpeza manual de confirmados passam a usar a normalização;
+- nenhuma ficha existente é apagada ou regravada por este hotfix.
+
+Este hotfix exige nova versão da mesma implantação do Apps Script. A URL `/exec` deve permanecer a mesma.

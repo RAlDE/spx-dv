@@ -1000,3 +1000,21 @@ Validação necessária:
 4. fazer uma exportação como no vídeo;
 5. abrir `Bairro diag`;
 6. copiar o diagnóstico e enviar para análise.
+
+
+## Atualização 1.3.34 — captura de metadados da tarefa de exportação do Bairro
+O diagnóstico 1.3.33 confirmou no ambiente real:
+- criação da exportação por `POST /api/in-station/uni_receive/on_hold/list/export`;
+- consulta da tarefa por `/spxdata/api/export_platform/export_task/list_for_portal`;
+- no schema da exportação, `buyer_addr_district` é mapeado exatamente para `Sort Code Name`;
+- a API normal `/api/in-station/uni_receive/on_hold/list` não expõe `buyer_addr_district`.
+
+A 1.3.34 continua exclusivamente diagnóstica e passa a registrar:
+- resposta completa (curta) da criação da exportação;
+- campos da tarefa relacionados a task/file/url/download/result/status/name/path/object/OSS/COS/bucket/export/link/key;
+- URLs e nomes de arquivos CSV/XLS/XLSX encontrados dentro da resposta;
+- exibição desses campos no modal `Bairro diag` e inclusão no conteúdo copiado.
+
+Objetivo: descobrir a referência final do arquivo gerado para então implementar a leitura do `buyer_addr_district` por BR sem consumir `show_sensitive_data`.
+
+A página `exceptionOnholdList` continua proibida como fonte de recebimento/data/status do Dashboard.

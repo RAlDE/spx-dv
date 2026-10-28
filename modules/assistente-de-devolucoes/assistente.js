@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.31';
+  const MODULE_VERSION = '1.3.32';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -281,6 +281,7 @@
       await ensureDashboardMigration();
       const previous = await dashboardDbGet(key);
       await dashboardDbPut(mergeDashboardRecord(previous, incoming));
+      void sendCentralDashboard(incoming);
       return true;
     } catch (error) {
       console.warn('[SPX-DV] Não foi possível salvar no IndexedDB; usando fallback local', error);
@@ -289,6 +290,7 @@
         const previous = legacy.records[key] && typeof legacy.records[key] === 'object' ? legacy.records[key] : {};
         legacy.records[key] = mergeDashboardRecord(previous, incoming);
         localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(legacy));
+        void sendCentralDashboard(incoming);
         return true;
       } catch {
         return false;
@@ -323,6 +325,59 @@
     }
   }
 
+  async function sendCentralDashboard(payload, action = 'dashboard_upsert') {
+    if (!payload) return false;
+
+    try {
+      await fetch(ONHOLD_DATA_WEBAPP_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        credentials: 'include',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({
+          ...payload,
+          action
+        }),
+        keepalive: true
+      });
+      return true;
+    } catch (error) {
+      console.warn('[SPX-DV] Falha ao sincronizar Dashboard central', error);
+      return false;
+    }
+  }
+
+  async function syncLocalDashboardToCentral() {
+    try {
+      const store = await readDashboardQueue();
+      const records = Object.values(store.records || {}).filter(record => {
+        if (!record || typeof record !== 'object') return false;
+        return record.received_day === saoPauloDay() || record.status !== 'confirmed';
+      });
+
+      if (!records.length) return true;
+
+      return await sendCentralDashboard({
+        records: records.map(record => ({
+          shipment_id: record.shipment_id,
+          reason: record.reason,
+          driver_id: record.driver_id,
+          driver_name: record.driver_name,
+          agency: record.agency,
+          neighborhood: record.neighborhood,
+          occurrence_timestamp: record.occurrence_timestamp,
+          flow: record.flow,
+          operator_login: record.operator_login,
+          received_at: record.received_at || record.captured_at,
+          status: record.status
+        }))
+      }, 'dashboard_merge');
+    } catch (error) {
+      console.warn('[SPX-DV] Não foi possível migrar a fila local para o Dashboard central', error);
+      return false;
+    }
+  }
+
   function dashboardStatusLabel(status) {
     if (status === 'confirmed') return 'Confirmado';
     if (status === 'sending') return 'Enviando';
@@ -331,229 +386,13 @@
   }
 
   function openReceivingDashboard() {
-    const tab = window.open('', DASHBOARD_WINDOW_NAME);
+    void syncLocalDashboardToCentral();
+
+    const url = ONHOLD_DATA_WEBAPP_URL + '?view=dashboard';
+    const tab = window.open(url, DASHBOARD_WINDOW_NAME);
     if (!tab) {
       alert('Permita pop-ups para abrir o Dashboard de Recebimento.');
-      return;
     }
-
-    const doc = tab.document;
-    doc.open();
-    doc.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SPX-DV · Dashboard</title><style>
-      *{box-sizing:border-box}body{margin:0;background:#020202;color:#f8fafc;font:13px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}main{max-width:1500px;margin:auto;padding:28px 22px}
-      header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;padding:16px 18px;border:1px solid #4a260f;border-radius:14px;background:#070707;box-shadow:0 0 22px rgba(249,115,22,.16),inset 0 -1px rgba(249,115,22,.3)}h1{font-size:27px;letter-spacing:-.6px;margin:0;text-shadow:0 0 16px rgba(249,115,22,.34)}h2{font-size:16px;margin:0;color:#fff7ed;text-shadow:0 0 11px rgba(249,115,22,.26)}.muted{color:#9ca3af}.actions{display:flex;gap:9px;align-items:center}
-      button{background:#111;color:#fff;border:1px solid #6b3415;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750;box-shadow:0 0 12px rgba(249,115,22,.1)}button:hover{background:#1a0d07;border-color:#f97316;box-shadow:0 0 16px rgba(249,115,22,.22)}button.danger{border-color:#7c2d12;color:#fed7aa}
-      .metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415;box-shadow:0 -3px 16px rgba(249,115,22,.08),0 10px 28px rgba(0,0,0,.42)}.metric.clickable{cursor:pointer;transition:.15s ease}.metric.clickable:hover,.metric.clickable.active{border-color:#f97316;box-shadow:0 0 20px rgba(249,115,22,.18),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
-      .panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}.filters{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.search{width:min(360px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}.operator-filter{padding:10px 12px;background:#030303;border:1px solid #6b3415;color:#fff;border-radius:9px;min-width:210px}
-      .table-wrap{max-height:65vh;overflow:auto;border:1px solid #262626;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1180px;background:#050505}th,td{padding:11px 12px;border-bottom:1px solid #262626;text-align:left;vertical-align:top}th{position:sticky;top:0;z-index:1;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.35px;box-shadow:inset 0 -1px #7c2d12,0 4px 14px rgba(249,115,22,.08)}tbody tr:hover{background:#100b08}
-      .ranking{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.rank-item{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid #2b211b;border-radius:10px;background:#050505}.rank-pos{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#351a0b;color:#fdba74;font-weight:900}.rank-name{font-weight:800}.rank-meta{color:#9ca3af;font-size:11px}.rank-count{font-size:20px;font-weight:900;color:#fdba74}.status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#2563eb2c;color:#bfdbfe;font-size:11px;font-weight:800}.status.confirmed{background:#16a34a2c;color:#bbf7d0}.status.failed{background:#f59e0b2c;color:#fde68a}.empty{padding:34px;text-align:center;color:#94a3b8}
-      footer{margin-top:14px;color:#94a3b8;font-size:11px}.warning{margin:0 0 16px;padding:11px 14px;border:1px solid #f59e0b55;border-radius:10px;background:#78350f25;color:#fde68a}
-      @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}.ranking{grid-template-columns:1fr}main{padding:16px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
-    </style></head><body><main>
-      <header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV v${MODULE_VERSION} · fila operacional deste navegador</div></div><div class="actions"><button id="clearConfirmed" class="danger" type="button">Limpar confirmados</button><button id="refresh" type="button">Atualizar</button></div></header>
-      <div id="oldWarning"></div>
-      <section class="metrics">
-        <div class="metric clickable active" id="metricTodayCard" title="Mostrar todos os recebimentos de hoje"><span>Capturados hoje</span><strong id="metricTotal">0</strong></div>
-        <div class="metric clickable" id="metricQueueCard" title="Mostrar pendentes de hoje"><span>Na fila</span><strong id="metricQueue">0</strong></div>
-        <div class="metric"><span>Confirmados</span><strong id="metricConfirmed">0</strong></div>
-        <div class="metric clickable" id="metricOldCard" title="Mostrar pendentes de dias anteriores"><span>Pendentes antigos</span><strong id="metricOld">0</strong></div>
-        <div class="metric"><span>Operadores hoje</span><strong id="metricOperators">0</strong></div>
-      </section>
-      <section class="panel" style="margin-bottom:16px">
-        <div class="panel-head"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted">Ranking pela quantidade de ocorrências recebidas hoje.</div></div></div>
-        <div id="topDrivers" class="ranking"></div>
-      </section>
-      <section class="panel">
-        <div class="panel-head"><div><h2 id="tableTitle">Remessa / recebimentos de hoje</h2><div id="tableSubtitle" class="muted">Fila integrada do navegador, com identificação do login SPX.</div></div><div class="filters"><select id="operatorFilter" class="operator-filter"><option value="">Todos os operadores</option></select><input id="search" class="search" type="search" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>BAIRRO</th><th>Data da ocorrência</th><th>Login SPX</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>Nenhum recebimento capturado hoje.</div></div>
-      </section>
-      <footer>v1.3.31 usa uma fila persistente independente do localStorage da sessão SPX. Pendentes continuam preservados e podem ser abertos pelos cards.</footer>
-    </main></body></html>`);
-    doc.close();
-
-    const search = doc.getElementById('search');
-    const operatorFilter = doc.getElementById('operatorFilter');
-    const todayCard = doc.getElementById('metricTodayCard');
-    const queueCard = doc.getElementById('metricQueueCard');
-    const oldCard = doc.getElementById('metricOldCard');
-    let dashboardView = 'today';
-    let rendering = false;
-
-    const receivedDate = value => {
-      const timestamp = Number(value || 0);
-      if (!timestamp) return '-';
-      return new Intl.DateTimeFormat('pt-BR', {
-        timeZone: 'America/Sao_Paulo',
-        dateStyle: 'short',
-        timeStyle: 'medium'
-      }).format(new Date(timestamp));
-    };
-
-    const filterRows = () => {
-      const query = String(search?.value || '').trim().toLowerCase();
-      const selectedOperator = String(operatorFilter?.value || '').trim().toLowerCase();
-      doc.querySelectorAll('tbody tr[data-filter]').forEach(row => {
-        const textMatches = !query || String(row.dataset.filter || '').includes(query);
-        const operatorMatches = !selectedOperator ||
-          String(row.dataset.operator || '').toLowerCase() === selectedOperator;
-        row.hidden = !(textMatches && operatorMatches);
-      });
-    };
-
-    const render = async () => {
-      if (tab.closed || rendering) return;
-      rendering = true;
-      try {
-        const today = saoPauloDay();
-        const records = Object.values((await readDashboardQueue()).records || {}).filter(Boolean);
-        const todayRows = records
-          .filter(row => row.received_day === today)
-          .sort((x, y) => Number(y.received_at || y.captured_at || 0) - Number(x.received_at || x.captured_at || 0));
-        const pendingToday = todayRows.filter(row => row.status !== 'confirmed');
-        const oldPending = records
-          .filter(row => row.received_day && row.received_day !== today && row.status !== 'confirmed')
-          .sort((x, y) => Number(y.received_at || y.captured_at || 0) - Number(x.received_at || x.captured_at || 0));
-
-        doc.getElementById('metricTotal').textContent = String(todayRows.length);
-        doc.getElementById('metricQueue').textContent = String(pendingToday.length);
-        doc.getElementById('metricConfirmed').textContent = String(todayRows.filter(row => row.status === 'confirmed').length);
-        doc.getElementById('metricOld').textContent = String(oldPending.length);
-
-        const operatorLoginsToday = [...new Set(todayRows
-          .map(row => String(row.operator_login || '').trim().toLowerCase())
-          .filter(Boolean))].sort((x, y) => x.localeCompare(y, 'pt-BR'));
-        doc.getElementById('metricOperators').textContent = String(operatorLoginsToday.length);
-
-        doc.getElementById('oldWarning').innerHTML = oldPending.length
-          ? '<div class="warning">⚠ ' + oldPending.length + ' registro(s) de dia anterior ainda pendente(s). Clique em “Pendentes antigos” para visualizar.</div>'
-          : '';
-
-        const drivers = new Map();
-        for (const row of todayRows) {
-          const driverId = String(row.driver_id || '').trim();
-          const driverName = String(row.driver_name || '').trim();
-          if (!driverId && !driverName) continue;
-          const key = driverId || driverName.toLowerCase();
-          const item = drivers.get(key) || { driverId, driverName: driverName || 'Motorista não identificado', count: 0 };
-          item.count += 1;
-          drivers.set(key, item);
-        }
-        const topDrivers = [...drivers.values()]
-          .sort((x, y) => y.count - x.count || x.driverName.localeCompare(y.driverName, 'pt-BR'))
-          .slice(0, 10);
-        doc.getElementById('topDrivers').innerHTML = topDrivers.length
-          ? topDrivers.map((item, index) =>
-              '<div class="rank-item"><span class="rank-pos">' + (index + 1) + '</span>' +
-              '<div><div class="rank-name">' + escapeHtml(item.driverName) + '</div>' +
-              '<div class="rank-meta">ID: ' + escapeHtml(item.driverId || 'Não informado') + '</div></div>' +
-              '<span class="rank-count">' + item.count + '</span></div>'
-            ).join('')
-          : '<div class="empty">Ainda não há motoristas para o ranking de hoje.</div>';
-
-        let displayRows = todayRows;
-        if (dashboardView === 'pendingToday') displayRows = pendingToday;
-        if (dashboardView === 'oldPending') displayRows = oldPending;
-
-        todayCard.classList.toggle('active', dashboardView === 'today');
-        queueCard.classList.toggle('active', dashboardView === 'pendingToday');
-        oldCard.classList.toggle('active', dashboardView === 'oldPending');
-
-        if (dashboardView === 'pendingToday') {
-          doc.getElementById('tableTitle').textContent = 'Pendentes de hoje';
-          doc.getElementById('tableSubtitle').textContent = 'Registros de hoje que ainda não foram confirmados.';
-        } else if (dashboardView === 'oldPending') {
-          doc.getElementById('tableTitle').textContent = 'Pendentes de dias anteriores';
-          doc.getElementById('tableSubtitle').textContent = 'Registros preservados automaticamente até serem confirmados.';
-        } else {
-          doc.getElementById('tableTitle').textContent = 'Remessa / recebimentos de hoje';
-          doc.getElementById('tableSubtitle').textContent = 'Fila geral do dia, com identificação do login SPX de cada recebimento.';
-        }
-
-        const availableOperators = [...new Set(displayRows
-          .map(row => String(row.operator_login || '').trim().toLowerCase())
-          .filter(Boolean))].sort((x, y) => x.localeCompare(y, 'pt-BR'));
-        const previousOperator = String(operatorFilter?.value || '');
-        operatorFilter.innerHTML = '<option value="">Todos os operadores</option>' +
-          availableOperators.map(login =>
-            '<option value="' + escapeHtml(login) + '">' + escapeHtml(login) + '</option>'
-          ).join('');
-        if (availableOperators.includes(previousOperator)) operatorFilter.value = previousOperator;
-
-        const rows = doc.getElementById('rows');
-        rows.innerHTML = displayRows.map(row => {
-          const status = String(row.status || 'captured');
-          const operatorLogin = String(row.operator_login || '').trim().toLowerCase();
-          const filter = [
-            row.shipment_id, row.reason, row.driver_id, row.driver_name,
-            row.agency, row.neighborhood, operatorLogin, dashboardStatusLabel(status)
-          ].join(' ').toLowerCase();
-          return '<tr data-filter="' + escapeHtml(filter) + '" data-operator="' + escapeHtml(operatorLogin) + '">' +
-            '<td>' + escapeHtml(receivedDate(row.received_at || row.captured_at)) + '</td>' +
-            '<td><strong>' + escapeHtml(row.shipment_id || '') + '</strong></td>' +
-            '<td>' + escapeHtml(row.reason || '') + '</td>' +
-            '<td>' + escapeHtml(row.driver_id || '') + '</td>' +
-            '<td>' + escapeHtml(row.driver_name || '') + '</td>' +
-            '<td>' + escapeHtml(row.agency || '') + '</td>' +
-            '<td>' + escapeHtml(row.neighborhood || '') + '</td>' +
-            '<td>' + escapeHtml(formatDate(row.occurrence_timestamp)) + '</td>' +
-            '<td>' + escapeHtml(operatorLogin || 'Não identificado') + '</td>' +
-            '<td><span class="status ' + escapeHtml(status) + '">' + escapeHtml(dashboardStatusLabel(status)) + '</span></td>' +
-            '</tr>';
-        }).join('');
-
-        const empty = doc.getElementById('empty');
-        empty.hidden = displayRows.length > 0;
-        if (!displayRows.length) {
-          empty.textContent = dashboardView === 'oldPending'
-            ? 'Nenhum pendente antigo.'
-            : dashboardView === 'pendingToday'
-              ? 'Nenhum pendente de hoje.'
-              : 'Nenhum recebimento capturado hoje.';
-        }
-        filterRows();
-      } finally {
-        rendering = false;
-      }
-    };
-
-    todayCard.onclick = () => { dashboardView = 'today'; void render(); };
-    queueCard.onclick = () => { dashboardView = 'pendingToday'; void render(); };
-    oldCard.onclick = () => { dashboardView = 'oldPending'; void render(); };
-
-    doc.getElementById('clearConfirmed').onclick = async () => {
-      const today = saoPauloDay();
-      const records = Object.values((await readDashboardQueue()).records || {}).filter(Boolean);
-      const confirmedToday = records.filter(row =>
-        row.status === 'confirmed' && row.received_day === today
-      ).length;
-
-      if (!confirmedToday) {
-        tab.alert('Não há registros confirmados para limpar hoje.');
-        return;
-      }
-
-      const approved = tab.confirm(
-        'Limpar ' + confirmedToday + ' registro(s) confirmado(s) de hoje?\n\n' +
-        'Registros pendentes não serão apagados.'
-      );
-      if (!approved) return;
-
-      await clearConfirmedDashboardRecords(today);
-      await render();
-    };
-
-    doc.getElementById('refresh').onclick = () => void render();
-    if (search) search.oninput = filterRows;
-    if (operatorFilter) operatorFilter.onchange = filterRows;
-    void render();
-
-    const refreshTimer = window.setInterval(() => {
-      if (tab.closed) {
-        clearInterval(refreshTimer);
-        return;
-      }
-      void render();
-    }, 1500);
   }
 
   function isTargetRoute() {
@@ -2183,7 +2022,7 @@
 
     if (!authorized || !isTargetRoute()) return;
 
-    void ensureDashboardMigration();
+    void ensureDashboardMigration().then(() => syncLocalDashboardToCentral());
     showPanel('', '<div class="message">Aguardando leitura do BR...</div>');
     checkShipment();
 

@@ -1029,3 +1029,57 @@ O diagnóstico real da 1.3.34 confirmou:
 A 1.3.35 registra especificamente a resposta desse endpoint de link assinado e extrai seus campos técnicos (url/file/path/result/download etc.) para o `Bairro diag`.
 
 Objetivo: obter a URL temporária do CSV e validar a leitura automática de `buyer_addr_district` (Sort Code Name) por BR, sem download manual e sem usar `exceptionOnholdList` para recebimento.
+
+
+## Atualização 1.3.36 — recebimento real como fonte da Dashboard + Bairro por Sort Code + envio explícito em lote
+Em 28/10/2026 um HAR real da tela `singleReceiveNew` identificou a chamada autoritativa de recebimento:
+`POST /api/in-station/uni_receive/order`.
+
+A resposta real observada retorna `retcode=0`, `data.task_operator` e `data.order_list[]` com `shipment_id` e `receive_time`. A partir da 1.3.36:
+- colar/digitar/pressionar Enter no campo TN continua sendo apenas consulta/preview;
+- Enter NÃO cria mais ficha no Dashboard;
+- a ficha só é criada quando a resposta real de `/api/in-station/uni_receive/order` retorna sucesso;
+- `received_at` usa o `receive_time` devolvido pelo próprio SPX;
+- `operator_login` prioriza `data.task_operator`;
+- a captura confirmada monta motivo, motorista, Driver ID, 3PL, fluxo e ocorrência e salva SOMENTE na fila central;
+- o POST legado sem `action` no Apps Script também deixou de gravar automaticamente na aba `Dados`.
+
+### Envio explícito para Dados
+O Dashboard passou a ser a fila de revisão:
+- registros com status `captured` significam aguardando envio, não erro temporário;
+- não existe mais grace period de 30 segundos para considerar pendência;
+- botão `Enviar X para a planilha` envia todos os registros ainda não confirmados, incluindo pendentes antigos;
+- somente após esse envio o Apps Script grava C:G e I:J em `Dados`, registra a chave BR+timestamp em `_SPX_DV_CONTROLE` e marca a ficha como `confirmed`;
+- duplicidades já presentes em `_SPX_DV_CONTROLE` são apenas reconciliadas como confirmadas;
+- pendências antigas continuam preservadas na virada do dia;
+- limpeza manual continua removendo somente registros já enviados/confirmados.
+
+### Bairro via Sort Code Name
+A investigação da exportação de `#/exceptionOnholdList` confirmou:
+- `buyer_addr_district` é exportado como `Sort Code Name`;
+- criação: `POST /api/in-station/uni_receive/on_hold/list/export`;
+- conclusão consultada em `/spxdata/api/export_platform/export_task/list_for_portal`;
+- URL temporária obtida em `/spxdata/api/export_platform/export_task/get_signed_download_url`;
+- a URL assinada vem em `data.download_url` e é temporária.
+
+Na 1.3.36:
+- o módulo pode disparar uma atualização da exportação em lote, com cooldown de 10 minutos;
+- quando a tarefa conclui, envia a URL assinada para o Apps Script;
+- o Apps Script baixa o CSV no servidor, mantém somente `BR + Sort Code Name` e descarta nome, telefone e endereço;
+- cache central em aba oculta `_SPX_DV_BAIRROS`;
+- fichas normais LMHub sem Bairro são enriquecidas automaticamente pela cache;
+- o módulo consulta a cache central por JSONP para exibir Bairro sem consumir `show_sensitive_data`;
+- para `Return_LMHub`, a exportação conhecida não fornece `seller_addr_district`; por isso o endpoint sensível permanece somente como fallback de Return.
+
+A página `exceptionOnholdList` e suas datas/status NÃO são usadas como fonte de recebimento. Ela serve exclusivamente como fonte técnica da base de Bairro.
+
+### Validação obrigatória da 1.3.36
+Esta versão passou apenas por validação estática/sintática. Antes de considerar estável:
+1. atualizar e reimplantar o Apps Script mantendo a mesma URL `/exec`;
+2. desativar/ativar o módulo para carregar a 1.3.36;
+3. colar um BR sem receber e confirmar que NÃO aparece no Dashboard;
+4. receber um BR de verdade e confirmar que aparece no Dashboard com horário do SPX;
+5. aguardar a atualização de Bairro e confirmar `Sort Code Name` no Dashboard/painel;
+6. confirmar que nada foi gravado em `Dados` automaticamente;
+7. clicar `Enviar X para a planilha` e validar a gravação correta em C,D,E,F,G,I,J;
+8. validar deduplicação e preservação de pendentes antigos.

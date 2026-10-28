@@ -20,6 +20,7 @@ const SPX_DV_CONFIG = Object.freeze({
   sheetName: 'Dados',
   controlSheetName: '_SPX_DV_CONTROLE',
   dashboardSheetName: '_SPX_DV_DASHBOARD',
+  neighborhoodSheetName: '_SPX_DV_BAIRROS',
   dashboardCleanupProperty: 'SPX_DV_DASHBOARD_CLEAN_DAY_V1',
   pointerProperty: 'SPX_DV_NEXT_ROW_V1',
   batchStartProperty: 'SPX_DV_BATCH_START_V1',
@@ -32,6 +33,10 @@ function doGet(e) {
     return HtmlService
       .createHtmlOutput(dashboardHtml_())
       .setTitle('SPX-DV · Dashboard de Recebimento');
+  }
+
+  if (view === 'neighborhood') {
+    return neighborhoodLookupResponse_(e);
   }
 
   return jsonResponse_({
@@ -55,7 +60,10 @@ function doPost(e) {
     cleanupOldConfirmedDashboard_(dashboardSheet);
 
     if (action === 'dashboard_upsert') {
-      const dashboardRecord = normalizeDashboardRecord_(payload);
+      const dashboardRecord = enrichDashboardNeighborhood_(
+        spreadsheet,
+        normalizeDashboardRecord_(payload)
+      );
       if (!dashboardRecord.occurrenceKey) {
         return jsonResponse_({ ok: false, error: 'occurrence_key inválida' });
       }
@@ -73,13 +81,30 @@ function doPost(e) {
       const records = Array.isArray(payload && payload.records) ? payload.records : [];
       let merged = 0;
       records.forEach(item => {
-        const record = normalizeDashboardRecord_(item);
+        const record = enrichDashboardNeighborhood_(
+          spreadsheet,
+          normalizeDashboardRecord_(item)
+        );
         if (!record.occurrenceKey) return;
         upsertDashboardRecord_(dashboardSheet, record);
         merged += 1;
       });
       SpreadsheetApp.flush();
       return jsonResponse_({ ok: true, dashboard: true, merged });
+    }
+
+    if (action === 'neighborhood_import_url') {
+      const result = importNeighborhoodCsvUrl_(
+        spreadsheet,
+        clean_(payload && payload.download_url)
+      );
+      SpreadsheetApp.flush();
+      return jsonResponse_({
+        ok: true,
+        neighborhood_import: true,
+        imported: result.imported,
+        dashboard_updated: result.dashboardUpdated
+      });
     }
 
     const record = normalizeRecord_(payload);
@@ -91,54 +116,23 @@ function doPost(e) {
       return jsonResponse_({ ok: false, error: 'occurrence_timestamp obrigatório' });
     }
 
-    // A ficha entra primeiro na fila central. Se qualquer etapa da gravação em
-    // Dados falhar, ela permanece pendente e continua visível no Dashboard.
-    const dashboardRecord = normalizeDashboardRecord_(payload);
+    // Compatibilidade com módulos antigos: POST sem action NÃO grava mais em Dados.
+    // Apenas mantém/atualiza a ficha na fila central. A gravação em Dados ocorre
+    // exclusivamente pelo botão "Enviar X para a planilha" do Dashboard.
+    const dashboardRecord = enrichDashboardNeighborhood_(
+      spreadsheet,
+      normalizeDashboardRecord_(payload)
+    );
     if (dashboardRecord.occurrenceKey) {
       upsertDashboardRecord_(dashboardSheet, dashboardRecord);
     }
-
-    const sheet = spreadsheet.getSheetByName(SPX_DV_CONFIG.sheetName);
-    if (!sheet) {
-      return jsonResponse_({ ok: false, error: 'Aba Dados não encontrada' });
-    }
-
     SpreadsheetApp.flush();
-
-    const occurrenceKey = record.shipmentId + '|' + record.occurrenceTimestamp;
-    const controlSheet = getControlSheet_(spreadsheet);
-
-    if (occurrenceAlreadyRecorded_(controlSheet, occurrenceKey)) {
-      markDashboardConfirmed_(dashboardSheet, occurrenceKey);
-      SpreadsheetApp.flush();
-      return jsonResponse_({
-        ok: true,
-        duplicate: true,
-        occurrence_key: occurrenceKey
-      });
-    }
-
-    const row = findWritableRow_(sheet);
-    writeRecord_(sheet, row, record);
-    SpreadsheetApp.flush();
-
-    const writtenShipment = clean_(sheet.getRange(row, 3).getDisplayValue()).toUpperCase();
-    if (writtenShipment !== record.shipmentId) {
-      throw new Error('Falha ao confirmar gravação do BR na linha ' + row);
-    }
-
-    rememberOccurrence_(controlSheet, occurrenceKey, row);
-    markDashboardConfirmed_(dashboardSheet, occurrenceKey);
-    SpreadsheetApp.flush();
-
-    PropertiesService.getScriptProperties()
-      .setProperty(SPX_DV_CONFIG.pointerProperty, String(row + 1));
 
     return jsonResponse_({
       ok: true,
-      inserted: true,
-      row,
-      occurrence_key: occurrenceKey
+      queued: true,
+      dashboard: true,
+      occurrence_key: dashboardRecord.occurrenceKey
     });
   } catch (error) {
     console.error('[SPX-DV] Falha no recebimento da planilha', error);
@@ -207,6 +201,177 @@ function normalizeDashboardRecord_(payload) {
     operatorLogin: clean_(payload && payload.operator_login).toLowerCase(),
     status: clean_(payload && payload.status).toLowerCase() === 'confirmed' ? 'confirmed' : 'captured',
     updatedAt: Date.now()
+  };
+}
+
+function getNeighborhoodSheet_(spreadsheet) {
+  let sheet = spreadsheet.getSheetByName(SPX_DV_CONFIG.neighborhoodSheetName);
+
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(SPX_DV_CONFIG.neighborhoodSheetName);
+    sheet.getRange(1, 1, 1, 3).setValues([[
+      'shipment_id',
+      'neighborhood',
+      'updated_at'
+    ]]);
+    sheet.setFrozenRows(1);
+  }
+
+  if (!sheet.isSheetHidden()) sheet.hideSheet();
+  return sheet;
+}
+
+function lookupNeighborhood_(spreadsheet, shipmentId) {
+  const shipment = clean_(shipmentId).toUpperCase();
+  if (!shipment) return '';
+
+  const sheet = getNeighborhoodSheet_(spreadsheet);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return '';
+
+  const match = sheet
+    .getRange(2, 1, lastRow - 1, 1)
+    .createTextFinder(shipment)
+    .matchEntireCell(true)
+    .matchCase(true)
+    .findNext();
+
+  if (!match) return '';
+  return clean_(sheet.getRange(match.getRow(), 2).getDisplayValue());
+}
+
+function enrichDashboardNeighborhood_(spreadsheet, record) {
+  if (!record || record.neighborhood) return record;
+  if (clean_(record.flow).toLowerCase().indexOf('return') === 0) return record;
+
+  const neighborhood = lookupNeighborhood_(spreadsheet, record.shipmentId);
+  if (!neighborhood) return record;
+
+  record.neighborhood = neighborhood;
+  return record;
+}
+
+function neighborhoodLookupResponse_(e) {
+  const shipmentId = clean_(e && e.parameter && e.parameter.shipment_id).toUpperCase();
+  const callback = clean_(e && e.parameter && e.parameter.callback);
+  const validCallback = /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(callback);
+
+  const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
+  const neighborhood = lookupNeighborhood_(spreadsheet, shipmentId);
+  const payload = JSON.stringify({
+    ok: true,
+    shipment_id: shipmentId,
+    neighborhood: neighborhood
+  });
+
+  if (validCallback) {
+    return ContentService
+      .createTextOutput(callback + '(' + payload + ');')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+
+  return ContentService
+    .createTextOutput(payload)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function importNeighborhoodCsvUrl_(spreadsheet, downloadUrl) {
+  const url = clean_(downloadUrl);
+  if (!/^https:\/\/[A-Za-z0-9.-]*\.susercontent\.com\//i.test(url)) {
+    throw new Error('URL de exportação de Bairro inválida');
+  }
+
+  const response = UrlFetchApp.fetch(url, {
+    muteHttpExceptions: true,
+    followRedirects: true
+  });
+  const status = Number(response.getResponseCode() || 0);
+  if (status < 200 || status >= 300) {
+    throw new Error('Falha ao baixar exportação de Bairro (HTTP ' + status + ')');
+  }
+
+  const csvText = response.getContentText('UTF-8');
+  const rows = Utilities.parseCsv(csvText);
+  if (!rows.length) throw new Error('Exportação de Bairro vazia');
+
+  const headers = rows[0].map(value =>
+    clean_(value).replace(/^\uFEFF/, '').toLowerCase()
+  );
+  const trackingIndex = headers.indexOf('sls tracking number');
+  const orderIndex = headers.indexOf('order id');
+  const neighborhoodIndex = headers.indexOf('sort code name');
+
+  if (neighborhoodIndex < 0 || (trackingIndex < 0 && orderIndex < 0)) {
+    throw new Error('Colunas Order ID/SLS Tracking Number/Sort Code Name não encontradas');
+  }
+
+  const importedMap = new Map();
+  for (let index = 1; index < rows.length; index += 1) {
+    const row = rows[index] || [];
+    const shipmentId = clean_(
+      trackingIndex >= 0 && row[trackingIndex]
+        ? row[trackingIndex]
+        : orderIndex >= 0 ? row[orderIndex] : ''
+    ).toUpperCase();
+    const neighborhood = clean_(row[neighborhoodIndex]);
+    if (!/^BR[A-Z0-9]{8,}$/i.test(shipmentId) || !neighborhood) continue;
+    importedMap.set(shipmentId, neighborhood);
+  }
+
+  if (!importedMap.size) throw new Error('Nenhum Bairro válido encontrado na exportação');
+
+  const sheet = getNeighborhoodSheet_(spreadsheet);
+  const existing = new Map();
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    sheet.getRange(2, 1, lastRow - 1, 3).getValues().forEach(row => {
+      const shipmentId = clean_(row[0]).toUpperCase();
+      const neighborhood = clean_(row[1]);
+      const updatedAt = Number(row[2] || 0);
+      if (shipmentId && neighborhood) existing.set(shipmentId, [neighborhood, updatedAt]);
+    });
+  }
+
+  const now = Date.now();
+  importedMap.forEach((neighborhood, shipmentId) => {
+    existing.set(shipmentId, [neighborhood, now]);
+  });
+
+  const values = [...existing.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([shipmentId, value]) => [shipmentId, value[0], value[1]]);
+
+  if (sheet.getLastRow() >= 2) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).clearContent();
+  }
+  if (values.length) {
+    sheet.getRange(2, 1, values.length, 3).setValues(values);
+  }
+
+  const dashboardSheet = getDashboardSheet_(spreadsheet);
+  const dashboardLastRow = dashboardSheet.getLastRow();
+  let dashboardUpdated = 0;
+
+  if (dashboardLastRow >= 2) {
+    const dashboardValues = dashboardSheet.getRange(2, 1, dashboardLastRow - 1, 14).getValues();
+    dashboardValues.forEach((row, index) => {
+      const shipmentId = clean_(row[3]).toUpperCase();
+      const currentNeighborhood = clean_(row[8]);
+      const flow = clean_(row[10]).toLowerCase();
+      if (!shipmentId || currentNeighborhood || flow.indexOf('return') === 0) return;
+
+      const neighborhood = importedMap.get(shipmentId) || lookupNeighborhood_(spreadsheet, shipmentId);
+      if (!neighborhood) return;
+
+      dashboardSheet.getRange(index + 2, 9).setValue(neighborhood);
+      dashboardSheet.getRange(index + 2, 14).setValue(Date.now());
+      dashboardUpdated += 1;
+    });
+  }
+
+  return {
+    imported: importedMap.size,
+    dashboardUpdated: dashboardUpdated
   };
 }
 
@@ -456,6 +621,118 @@ function getDashboardData() {
   }
 }
 
+function sendPendingDashboardToData() {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
+    const dashboardSheet = getDashboardSheet_(spreadsheet);
+    const dataSheet = spreadsheet.getSheetByName(SPX_DV_CONFIG.sheetName);
+    if (!dataSheet) throw new Error('Aba Dados não encontrada');
+
+    cleanupOldConfirmedDashboard_(dashboardSheet);
+    reconcileDashboardStatuses_(spreadsheet, dashboardSheet);
+
+    const lastRow = dashboardSheet.getLastRow();
+    if (lastRow < 2) {
+      return { ok: true, pending: 0, sent: 0, duplicates: 0, failed: 0 };
+    }
+
+    const rows = dashboardSheet.getRange(2, 1, lastRow - 1, 14).getValues();
+    const pending = rows
+      .map((values, index) => ({ index: index + 2, record: dashboardRecordFromRow_(values) }))
+      .filter(item => item.record.status !== 'confirmed')
+      .sort((a, b) => Number(a.record.receivedAt || 0) - Number(b.record.receivedAt || 0));
+
+    const controlSheet = getControlSheet_(spreadsheet);
+    let sent = 0;
+    let duplicates = 0;
+    let failed = 0;
+    const errors = [];
+
+    pending.forEach(item => {
+      try {
+        const dashboardRecord = item.record;
+        if (!dashboardRecord.shipmentId || !dashboardRecord.occurrenceTimestamp) {
+          throw new Error('Ficha incompleta');
+        }
+
+        if (!dashboardRecord.neighborhood &&
+            clean_(dashboardRecord.flow).toLowerCase().indexOf('return') !== 0) {
+          dashboardRecord.neighborhood = lookupNeighborhood_(spreadsheet, dashboardRecord.shipmentId);
+          if (dashboardRecord.neighborhood) {
+            dashboardSheet.getRange(item.index, 9).setValue(dashboardRecord.neighborhood);
+          }
+        }
+
+        const occurrenceKey = dashboardRecord.occurrenceKey ||
+          dashboardRecord.shipmentId + '|' + dashboardRecord.occurrenceTimestamp;
+
+        if (occurrenceAlreadyRecorded_(controlSheet, occurrenceKey)) {
+          dashboardSheet.getRange(item.index, 13, 1, 2).setValues([[
+            'confirmed',
+            Date.now()
+          ]]);
+          duplicates += 1;
+          return;
+        }
+
+        const record = normalizeRecord_({
+          shipment_id: dashboardRecord.shipmentId,
+          reason: dashboardRecord.reason,
+          driver_id: dashboardRecord.driverId,
+          driver_name: dashboardRecord.driverName,
+          agency: dashboardRecord.agency,
+          neighborhood: dashboardRecord.neighborhood,
+          occurrence_timestamp: dashboardRecord.occurrenceTimestamp,
+          flow: dashboardRecord.flow
+        });
+
+        const row = findWritableRow_(dataSheet);
+        writeRecord_(dataSheet, row, record);
+        SpreadsheetApp.flush();
+
+        const writtenShipment = clean_(dataSheet.getRange(row, 3).getDisplayValue()).toUpperCase();
+        if (writtenShipment !== record.shipmentId) {
+          throw new Error('Falha ao confirmar gravação na linha ' + row);
+        }
+
+        rememberOccurrence_(controlSheet, occurrenceKey, row);
+        dashboardSheet.getRange(item.index, 13, 1, 2).setValues([[
+          'confirmed',
+          Date.now()
+        ]]);
+
+        PropertiesService.getScriptProperties()
+          .setProperty(SPX_DV_CONFIG.pointerProperty, String(row + 1));
+
+        sent += 1;
+      } catch (error) {
+        failed += 1;
+        errors.push({
+          occurrence_key: item.record.occurrenceKey,
+          shipment_id: item.record.shipmentId,
+          error: String(error && error.message ? error.message : error)
+        });
+      }
+    });
+
+    SpreadsheetApp.flush();
+
+    return {
+      ok: failed === 0,
+      pending: pending.length,
+      sent: sent,
+      duplicates: duplicates,
+      failed: failed,
+      errors: errors.slice(0, 20)
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function clearConfirmedDashboard() {
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
@@ -495,7 +772,7 @@ function dashboardHtml_() {
 <style>
 *{box-sizing:border-box}body{margin:0;background:#020202;color:#f8fafc;font:13px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}main{max-width:1600px;margin:auto;padding:26px 20px}
 header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:16px 18px;border:1px solid #4a260f;border-radius:14px;background:#070707;box-shadow:0 0 22px rgba(249,115,22,.16),inset 0 -1px rgba(249,115,22,.3)}h1{font-size:27px;letter-spacing:-.5px;margin:0;text-shadow:0 0 16px rgba(249,115,22,.34)}h2{font-size:16px;margin:0;color:#fff7ed;text-shadow:0 0 11px rgba(249,115,22,.26)}.muted{color:#9ca3af}.actions,.filters{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
-button,select,input{font:inherit}button{background:#111;color:#fff;border:1px solid #6b3415;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750;box-shadow:0 0 12px rgba(249,115,22,.1)}button:hover{background:#1a0d07;border-color:#f97316}button.danger{color:#fed7aa}
+button,select,input{font:inherit}button{background:#111;color:#fff;border:1px solid #6b3415;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750;box-shadow:0 0 12px rgba(249,115,22,.1)}button:hover{background:#1a0d07;border-color:#f97316}button:disabled{opacity:.45;cursor:not-allowed}button.danger{color:#fed7aa}button.primary{background:#f97316;border-color:#fb923c;color:#140800;box-shadow:0 0 18px rgba(249,115,22,.24)}button.primary:hover{background:#fb923c}
 .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415}.metric.clickable{cursor:pointer}.metric.clickable:hover,.metric.clickable.active{border-color:#f97316;box-shadow:0 0 20px rgba(249,115,22,.18),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
 .panel{margin-bottom:16px}.panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}
 .search{width:min(360px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}.operator-filter{padding:10px 12px;background:#030303;border:1px solid #6b3415;color:#fff;border-radius:9px;min-width:210px}
@@ -506,7 +783,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </style>
 </head>
 <body><main>
-<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · fila central integrada de todos os recebimentos</div></div><div class="actions"><button id="clearConfirmed" class="danger">Limpar já enviados</button><button id="refresh">Atualizar</button></div></header>
+<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila</div></div><div class="actions"><button id="sendPending" class="primary">Enviar 0 para a planilha</button><button id="clearConfirmed" class="danger">Limpar já enviados</button><button id="refresh">Atualizar</button></div></header>
 <div id="warning"></div>
 <section class="metrics">
 <div class="metric clickable active" id="cardToday"><span>Recebidos hoje</span><strong id="mTotal">0</strong></div>
@@ -522,7 +799,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 <div class="panel-head"><div><h2 id="tableTitle">Recebimentos de hoje</h2><div id="tableSubtitle" class="muted">Todos os logins e computadores aparecem nesta mesma fila central.</div></div><div class="filters"><select id="operator" class="operator-filter"><option value="">Todos os operadores</option></select><input id="search" class="search" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"></div></div>
 <div class="table-wrap"><table><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>Nenhum recebimento.</div></div>
 </section>
-<footer>A visão principal mostra somente os recebimentos. Pendências aparecem separadamente quando uma ficha fica mais de 30 segundos sem confirmação na planilha.</footer>
+<footer>Recebimentos confirmados pelo SPX ficam na fila até o envio explícito para Dados. Pendências antigas nunca são apagadas automaticamente.</footer>
 </main>
 <script>
 const state={data:null,view:'today'};
@@ -530,7 +807,6 @@ const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
 const dt=ms=>ms?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(Number(ms))):'-';
 const occ=sec=>sec?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(Number(sec)*1000)):'-';
-const PENDING_GRACE_MS=30000;
 
 function requestData(){
   google.script.run.withSuccessHandler(data=>{state.data=data;render();}).withFailureHandler(err=>{$('warning').innerHTML='<div class="warning">Falha ao atualizar Dashboard: '+esc(err&&err.message||err)+'</div>';}).getDashboardData();
@@ -540,15 +816,17 @@ function render(){
   const data=state.data||{today:'',records:[]};
   const records=Array.isArray(data.records)?data.records:[];
   const today=records.filter(r=>r.received_day===data.today);
-  const now=Date.now();
-  const pendingToday=today.filter(r=>r.status!=='confirmed'&&(now-Number(r.received_at||0))>=PENDING_GRACE_MS);
+  const pendingToday=today.filter(r=>r.status!=='confirmed');
   const oldPending=records.filter(r=>r.received_day&&r.received_day!==data.today&&r.status!=='confirmed');
+  const allPending=records.filter(r=>r.status!=='confirmed');
 
   $('mTotal').textContent=today.length;
   $('mPending').textContent=pendingToday.length;
   $('mOld').textContent=oldPending.length;
   $('mOperators').textContent=new Set(today.map(r=>r.operator_login).filter(Boolean)).size;
-  $('warning').innerHTML=oldPending.length?'<div class="warning">⚠ '+oldPending.length+' pendência(s) de dias anteriores. Clique em “Pendentes antigos” para visualizar.</div>':'';
+  $('sendPending').textContent='Enviar '+allPending.length+' para a planilha';
+  $('sendPending').disabled=allPending.length===0;
+  $('warning').innerHTML=oldPending.length?'<div class="warning">⚠ '+oldPending.length+' pendência(s) de dias anteriores. Elas também entram no envio em lote.</div>':'';
 
   const drivers=new Map();
   today.forEach(r=>{
@@ -630,7 +908,7 @@ function render(){
   $('cardPending').classList.toggle('active',state.view==='pending');
   $('cardOld').classList.toggle('active',state.view==='old');
   $('tableTitle').textContent=state.view==='pending'?'Pendentes de hoje':state.view==='old'?'Pendentes de dias anteriores':'Recebimentos de hoje';
-  $('tableSubtitle').textContent=state.view==='pending'?'Somente registros sem confirmação na planilha há mais de 30 segundos.':state.view==='old'?'Registros de dias anteriores que continuam sem confirmação.':'Todos os recebimentos do dia, sem exibir estados técnicos de processamento.';
+  $('tableSubtitle').textContent=state.view==='pending'?'Recebimentos de hoje aguardando o envio explícito para Dados.':state.view==='old'?'Recebimentos de dias anteriores que continuam aguardando envio.':'Todos os recebimentos confirmados pelo SPX hoje.';
 
   const operators=[...new Set(list.map(r=>String(r.operator_login||'').trim().toLowerCase()).filter(Boolean))].sort();
   const previous=$('operator').value;
@@ -664,6 +942,27 @@ $('cardOld').onclick=()=>{state.view='old';render();};
 $('search').oninput=render;
 $('operator').onchange=render;
 $('refresh').onclick=requestData;
+$('sendPending').onclick=()=>{
+  const records=state.data&&Array.isArray(state.data.records)?state.data.records:[];
+  const count=records.filter(r=>r.status!=='confirmed').length;
+  if(!count){alert('Não há registros na fila para enviar.');return;}
+  if(!confirm('Enviar '+count+' registro(s) da fila para a aba Dados?'))return;
+  $('sendPending').disabled=true;
+  $('sendPending').textContent='Enviando...';
+  google.script.run
+    .withSuccessHandler(result=>{
+      const sent=Number(result&&result.sent||0);
+      const duplicates=Number(result&&result.duplicates||0);
+      const failed=Number(result&&result.failed||0);
+      alert('Envio concluído.\nGravados: '+sent+'\nJá existentes: '+duplicates+'\nFalhas: '+failed);
+      requestData();
+    })
+    .withFailureHandler(err=>{
+      alert('Falha no envio: '+(err&&err.message||err));
+      requestData();
+    })
+    .sendPendingDashboardToData();
+};
 $('clearConfirmed').onclick=()=>{
   const count=state.data&&state.data.records?state.data.records.filter(r=>r.received_day===state.data.today&&r.status==='confirmed').length:0;
   if(!count){alert('Não há registros já enviados para limpar hoje.');return;}

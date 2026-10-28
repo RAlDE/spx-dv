@@ -252,10 +252,33 @@ function findDashboardRow_(sheet, occurrenceKey) {
   return match ? match.getRow() : 0;
 }
 
+function normalizeDashboardDay_(value) {
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
+  }
+
+  if (typeof value === 'number' && isFinite(value) && value > 0) {
+    // Fallback para serial de data do Google Sheets/Excel.
+    const base = Date.UTC(1899, 11, 30);
+    const date = new Date(base + Math.round(value * 86400000));
+    return Utilities.formatDate(date, SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
+  }
+
+  const text = clean_(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+
+  const parsed = new Date(text);
+  if (!isNaN(parsed.getTime())) {
+    return Utilities.formatDate(parsed, SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
+  }
+
+  return text;
+}
+
 function dashboardRecordFromRow_(values) {
   return {
     occurrenceKey: clean_(values[0]),
-    receivedDay: clean_(values[1]),
+    receivedDay: normalizeDashboardDay_(values[1]),
     receivedAt: Number(values[2] || 0),
     shipmentId: clean_(values[3]).toUpperCase(),
     reason: clean_(values[4]),
@@ -347,7 +370,7 @@ function cleanupOldConfirmedDashboard_(sheet) {
   if (lastRow >= 2) {
     const values = sheet.getRange(2, 1, lastRow - 1, 14).getValues();
     for (let index = values.length - 1; index >= 0; index -= 1) {
-      const day = clean_(values[index][1]);
+      const day = normalizeDashboardDay_(values[index][1]);
       const status = clean_(values[index][12]).toLowerCase();
       if (day && day !== today && status === 'confirmed') {
         sheet.deleteRow(index + 2);
@@ -412,7 +435,7 @@ function clearConfirmedDashboard() {
     let removed = 0;
 
     for (let index = values.length - 1; index >= 0; index -= 1) {
-      const day = clean_(values[index][1]);
+      const day = normalizeDashboardDay_(values[index][1]);
       const status = clean_(values[index][12]).toLowerCase();
       if (day === today && status === 'confirmed') {
         sheet.deleteRow(index + 2);

@@ -954,3 +954,22 @@ Correções:
 - o Top 10, data/hora de recebimento, login SPX, filtros e fila central permanecem inalterados.
 
 Objetivo: o fluxo normal deve ser visualmente simples — BR entra e aparece na lista. Status técnico só interessa quando existe uma exceção real.
+
+
+## Ajuste visual do Top 10 — matriz por motivo e seção recolhível
+Em 28/10/2026 o Top 10 do Dashboard central foi redesenhado com base na referência visual enviada pelo usuário.
+
+Novo formato:
+- colunas fixas: Ranking, Driver, 3PL e Total;
+- após Total, cada motivo de ocorrência vira uma coluna;
+- somente motivos com quantidade maior que zero entre os Top 10 são exibidos;
+- motivos sem ocorrência no Top 10 não ocupam espaço;
+- cada linha mostra a quantidade daquele motivo para o motorista;
+- células sem quantidade ficam vazias;
+- motivos são ordenados pela quantidade total no Top 10;
+- cabeçalhos dos motivos são inclinados para aproximar a leitura da referência;
+- Driver exibe também o Driver ID;
+- 3PL permanece visível;
+- Total mostra a quantidade total de ocorrências do motorista no dia;
+- o cabeçalho do Top 10 ganhou uma seta para recolher/expandir toda a matriz;
+- a alteração é somente visual/analítica do Dashboard e não modifica captura, fila, deduplicação ou escrita na aba Dados.

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.29';
+  const MODULE_VERSION = '1.3.30';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -94,6 +94,7 @@
   let diagnosticView = false;
   let lastObservedUrl = location.href;
   let shipmentKeyListenerInstalled = false;
+  let currentOperatorLogin = '';
   const autoCancelledAddress = new Set();
   const assignmentAgencyCache = new Map();
   const CANCELLED_ADDRESS_KEY = 'spxdv:cancelled-address-v1';
@@ -243,8 +244,8 @@
       *{box-sizing:border-box}body{margin:0;background:#020202;color:#f8fafc;font:13px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}main{max-width:1500px;margin:auto;padding:28px 22px}
       header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;padding:16px 18px;border:1px solid #4a260f;border-radius:14px;background:#070707;box-shadow:0 0 22px rgba(249,115,22,.16),inset 0 -1px rgba(249,115,22,.3)}h1{font-size:27px;letter-spacing:-.6px;margin:0;text-shadow:0 0 16px rgba(249,115,22,.34)}h2{font-size:16px;margin:0;color:#fff7ed;text-shadow:0 0 11px rgba(249,115,22,.26)}.muted{color:#9ca3af}.actions{display:flex;gap:9px;align-items:center}
       button{background:#111;color:#fff;border:1px solid #6b3415;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750;box-shadow:0 0 12px rgba(249,115,22,.1)}button:hover{background:#1a0d07;border-color:#f97316;box-shadow:0 0 16px rgba(249,115,22,.22)}button.danger{border-color:#7c2d12;color:#fed7aa}
-      .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415;box-shadow:0 -3px 16px rgba(249,115,22,.08),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
-      .panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}.search{width:min(420px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}
+      .metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415;box-shadow:0 -3px 16px rgba(249,115,22,.08),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
+      .panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}.filters{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.search{width:min(360px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}.operator-filter{padding:10px 12px;background:#030303;border:1px solid #6b3415;color:#fff;border-radius:9px;min-width:210px}
       .table-wrap{max-height:65vh;overflow:auto;border:1px solid #262626;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1180px;background:#050505}th,td{padding:11px 12px;border-bottom:1px solid #262626;text-align:left;vertical-align:top}th{position:sticky;top:0;z-index:1;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.35px;box-shadow:inset 0 -1px #7c2d12,0 4px 14px rgba(249,115,22,.08)}tbody tr:hover{background:#100b08}
       .status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#2563eb2c;color:#bfdbfe;font-size:11px;font-weight:800}.status.confirmed{background:#16a34a2c;color:#bbf7d0}.status.failed{background:#f59e0b2c;color:#fde68a}.empty{padding:34px;text-align:center;color:#94a3b8}
       footer{margin-top:14px;color:#94a3b8;font-size:11px}.warning{margin:0 0 16px;padding:11px 14px;border:1px solid #f59e0b55;border-radius:10px;background:#78350f25;color:#fde68a}
@@ -257,21 +258,27 @@
         <div class="metric"><span>Na fila</span><strong id="metricQueue">0</strong></div>
         <div class="metric"><span>Confirmados</span><strong id="metricConfirmed">0</strong></div>
         <div class="metric"><span>Pendentes antigos</span><strong id="metricOld">0</strong></div>
+        <div class="metric"><span>Operadores hoje</span><strong id="metricOperators">0</strong></div>
       </section>
       <section class="panel">
-        <div class="panel-head"><div><h2>Remessa / recebimentos de hoje</h2><div class="muted">Mesma ordem de dados usada na aba Dados.</div></div><input id="search" class="search" type="search" placeholder="Pesquisar pedido, motorista, 3PL, bairro ou motivo"></div>
-        <div class="table-wrap"><table><thead><tr><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>BAIRRO</th><th>Data da ocorrência</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>Nenhum recebimento capturado hoje.</div></div>
+        <div class="panel-head"><div><h2>Remessa / recebimentos de hoje</h2><div class="muted">Fila geral desta máquina, com identificação do login SPX de cada recebimento.</div></div><div class="filters"><select id="operatorFilter" class="operator-filter"><option value="">Todos os operadores</option></select><input id="search" class="search" type="search" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>BAIRRO</th><th>Data da ocorrência</th><th>Login SPX</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>Nenhum recebimento capturado hoje.</div></div>
       </section>
-      <footer>v1.3.29 mantém os registros do dia no Dashboard. Confirmados podem ser limpos manualmente; pendentes são preservados. O envio automático da v1.3.27 continua preservado nesta etapa.</footer>
+      <footer>v1.3.30 mantém a fila geral da máquina e registra o login SPX responsável por cada recebimento. Confirmados podem ser limpos manualmente; pendentes são preservados.</footer>
     </main></body></html>`);
     doc.close();
 
     const search = doc.getElementById('search');
+    const operatorFilter = doc.getElementById('operatorFilter');
 
     const filterRows = () => {
       const query = String(search?.value || '').trim().toLowerCase();
+      const selectedOperator = String(operatorFilter?.value || '').trim().toLowerCase();
       doc.querySelectorAll('tbody tr[data-filter]').forEach(row => {
-        row.hidden = Boolean(query) && !String(row.dataset.filter || '').includes(query);
+        const textMatches = !query || String(row.dataset.filter || '').includes(query);
+        const operatorMatches = !selectedOperator ||
+          String(row.dataset.operator || '').toLowerCase() === selectedOperator;
+        row.hidden = !(textMatches && operatorMatches);
       });
     };
 
@@ -290,6 +297,18 @@
       doc.getElementById('metricQueue').textContent = String(todayRows.filter(row => row.status !== 'confirmed').length);
       doc.getElementById('metricConfirmed').textContent = String(todayRows.filter(row => row.status === 'confirmed').length);
       doc.getElementById('metricOld').textContent = String(oldPending.length);
+      const operatorLogins = [...new Set(todayRows
+        .map(row => String(row.operator_login || '').trim().toLowerCase())
+        .filter(Boolean))].sort((x, y) => x.localeCompare(y, 'pt-BR'));
+      doc.getElementById('metricOperators').textContent = String(operatorLogins.length);
+
+      const previousOperator = String(operatorFilter?.value || '');
+      operatorFilter.innerHTML = '<option value="">Todos os operadores</option>' +
+        operatorLogins.map(login =>
+          '<option value="' + escapeHtml(login) + '">' + escapeHtml(login) + '</option>'
+        ).join('');
+      if (operatorLogins.includes(previousOperator)) operatorFilter.value = previousOperator;
+
       doc.getElementById('oldWarning').innerHTML = oldPending.length
         ? '<div class="warning">⚠ ' + oldPending.length + ' registro(s) de dia anterior ainda não confirmado(s). Eles foram preservados por segurança.</div>'
         : '';
@@ -299,9 +318,10 @@
         const status = String(row.status || 'captured');
         const filter = [
           row.shipment_id, row.reason, row.driver_id, row.driver_name,
-          row.agency, row.neighborhood, dashboardStatusLabel(status)
+          row.agency, row.neighborhood, row.operator_login, dashboardStatusLabel(status)
         ].join(' ').toLowerCase();
-        return '<tr data-filter="' + escapeHtml(filter) + '">' +
+        const operatorLogin = String(row.operator_login || '').trim().toLowerCase();
+        return '<tr data-filter="' + escapeHtml(filter) + '" data-operator="' + escapeHtml(operatorLogin) + '">' +
           '<td><strong>' + escapeHtml(row.shipment_id || '') + '</strong></td>' +
           '<td>' + escapeHtml(row.reason || '') + '</td>' +
           '<td>' + escapeHtml(row.driver_id || '') + '</td>' +
@@ -309,6 +329,7 @@
           '<td>' + escapeHtml(row.agency || '') + '</td>' +
           '<td>' + escapeHtml(row.neighborhood || '') + '</td>' +
           '<td>' + escapeHtml(formatDate(row.occurrence_timestamp)) + '</td>' +
+          '<td>' + escapeHtml(operatorLogin || 'Não identificado') + '</td>' +
           '<td><span class="status ' + escapeHtml(status) + '">' + escapeHtml(dashboardStatusLabel(status)) + '</span></td>' +
           '</tr>';
       }).join('');
@@ -341,6 +362,7 @@
 
     doc.getElementById('refresh').onclick = render;
     if (search) search.oninput = filterRows;
+    if (operatorFilter) operatorFilter.onchange = filterRows;
     render();
 
     const refreshTimer = window.setInterval(() => {
@@ -654,6 +676,17 @@
     return fetchJson(url, { method: 'POST', headers, body: JSON.stringify(body) });
   }
 
+  async function refreshCurrentOperatorLogin() {
+    try {
+      const basic = await fetchJson('https://spx.shopee.com.br/api/admin/basicserver/current_user/basic_info');
+      const email = String(basic?.data?.email || '').trim().toLowerCase();
+      if (email) currentOperatorLogin = email;
+      return email || currentOperatorLogin || '';
+    } catch {
+      return currentOperatorLogin || '';
+    }
+  }
+
   async function validateAccess() {
     const root = 'https://spx.shopee.com.br/api/admin/basicserver/current_user/';
     try {
@@ -663,6 +696,7 @@
         fetchJson(`${root}basic_info`)
       ]);
       const email = String(basic?.data?.email || '').trim().toLowerCase();
+      currentOperatorLogin = email;
       const aliases = new Set((permissions?.data?.perm_list || []).flatMap(item => Array.isArray(item?.perm_alias) ? item.perm_alias : []));
       const sameUser = basic?.data?.id === confirmation?.data?.id && basic?.data?.email === confirmation?.data?.email;
       authorized = sameUser && email.endsWith('@shopee.com') && REQUIRED_ALIASES.every(alias => aliases.has(alias));
@@ -1359,7 +1393,7 @@
     return String(response?.data?.data_detail || '').trim();
   }
 
-  function currentOccurrenceSheetPayload(shipmentId, attempt, returnFlow, neighborhood) {
+  function currentOccurrenceSheetPayload(shipmentId, attempt, returnFlow, neighborhood, operatorLogin = '') {
     const reason = translateReason(attempt?.on_hold_reason__desc);
     const normalAttempt = !attempt?.return_occurrence;
     const rawDriverId = normalAttempt ? getDriverId(attempt) : '';
@@ -1373,11 +1407,12 @@
       agency: normalAttempt ? String(attempt?.assignment_agency || '').trim() : '',
       neighborhood: String(neighborhood || '').trim(),
       occurrence_timestamp: Number(attempt?.ctime || 0),
-      flow: returnFlow ? 'Return_LMHub' : 'LMHub'
+      flow: returnFlow ? 'Return_LMHub' : 'LMHub',
+      operator_login: String(operatorLogin || '').trim().toLowerCase()
     };
   }
 
-  async function sendCurrentOccurrenceToDataSheet(shipmentId, attempt, returnFlow) {
+  async function sendCurrentOccurrenceToDataSheet(shipmentId, attempt, returnFlow, operatorLogin = '') {
     if (!shipmentId || !attempt || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     const occurrenceKey = dataSheetOccurrenceKey(shipmentId, attempt?.ctime);
@@ -1400,7 +1435,7 @@
       }
 
       const payload = currentOccurrenceSheetPayload(
-        shipmentId, attempt, returnFlow, neighborhood
+        shipmentId, attempt, returnFlow, neighborhood, operatorLogin
       );
 
       if (!payload.occurrence_timestamp || !payload.reason) return false;
@@ -1428,7 +1463,7 @@
     }
   }
 
-  async function processDataSheetScan(shipmentId) {
+  async function processDataSheetScan(shipmentId, operatorLogin = '') {
     if (!shipmentId || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     try {
@@ -1479,7 +1514,8 @@
       return await sendCurrentOccurrenceToDataSheet(
         shipmentId,
         currentOccurrence,
-        Boolean(cycleStart)
+        Boolean(cycleStart),
+        operatorLogin
       );
     } catch (error) {
       console.warn('[SPX-DV] Falha no processamento independente da planilha', shipmentId, error);
@@ -1487,8 +1523,9 @@
     }
   }
 
-  function queueDataSheetScan(shipmentId) {
+  function queueDataSheetScan(shipmentId, operatorLogin = '') {
     if (!shipmentId) return;
+    const operatorSnapshot = String(operatorLogin || currentOperatorLogin || '').trim().toLowerCase();
 
     // O painel costuma ter os dados rapidamente, mas o caminho da planilha
     // depende de várias consultas. Se uma delas falhar naquele instante,
@@ -1496,7 +1533,7 @@
     void (async () => {
       for (const delay of DATA_SHEET_RETRY_DELAYS) {
         await sleep(delay);
-        const sent = await processDataSheetScan(shipmentId);
+        const sent = await processDataSheetScan(shipmentId, operatorSnapshot);
         if (sent) return;
       }
 
@@ -1901,7 +1938,11 @@
     // A planilha só entra na fila quando houve submissão real pelo Enter
     // (scanner/bip ou Enter manual).
     if (submitted) {
-      queueDataSheetScan(value);
+      // Captura o login vigente no momento do recebimento. A fila continua
+      // geral desta máquina/perfil; o login é apenas um campo de auditoria/filtro.
+      void refreshCurrentOperatorLogin().then(operatorLogin => {
+        queueDataSheetScan(value, operatorLogin);
+      });
     }
   }
 

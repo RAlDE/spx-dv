@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.33';
+  const MODULE_VERSION = '1.3.34';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -506,6 +506,37 @@
     return out;
   }
 
+  function collectExportTaskHints(value, path = '', out = [], depth = 0) {
+    if (value === null || value === undefined || depth > 14 || out.length >= 180) return out;
+
+    if (typeof value !== 'object') {
+      const key = normalize(path.split('.').pop() || '');
+      const textValue = String(value);
+      if (
+        /task|file|url|download|result|status|name|path|object|oss|cos|bucket|export|link|key/.test(key) ||
+        /^https?:\/\//i.test(textValue) ||
+        /\.csv(?:\?|$)|\.xlsx?(?:\?|$)/i.test(textValue)
+      ) {
+        out.push({ path, value: textValue.slice(0, 1200) });
+      }
+      return out;
+    }
+
+    if (Array.isArray(value)) {
+      value.slice(0, 30).forEach((child, index) =>
+        collectExportTaskHints(child, path + '[' + index + ']', out, depth + 1)
+      );
+      return out;
+    }
+
+    for (const [key, child] of Object.entries(value)) {
+      if (out.length >= 180) break;
+      const nextPath = path ? path + '.' + key : key;
+      collectExportTaskHints(child, nextPath, out, depth + 1);
+    }
+    return out;
+  }
+
   function saveNeighborhoodDiagnostic(meta, parsed, rawText, responseMeta = {}) {
     try {
       const urlText = String(meta?.url || '');
@@ -540,6 +571,9 @@
       // encontrar o campo. Isso permite descobrir a API da lista e a API do Exportar.
       if (!hasSortCode && !hasExportSignal && !pathSignal && !routeActive) return;
 
+      const isOnHoldExportCreate = /\/api\/in-station\/uni_receive\/on_hold\/list\/export(?:\?|$)/i.test(url.pathname + url.search);
+      const isExportTask = /\/spxdata\/api\/export_platform\/export_task\/list_for_portal/i.test(url.pathname);
+
       const candidate = {
         capturedAt: new Date().toISOString(),
         pageHash: location.hash,
@@ -553,6 +587,10 @@
         hasExportSignal,
         brs: uniqueBrs,
         excerpt: neighborhoodDiagnosticExcerpt(text),
+        exportCreateResponse: isOnHoldExportCreate ? text.slice(0, 1800) : '',
+        exportFields: (isOnHoldExportCreate || isExportTask) && parsed && typeof parsed === 'object'
+          ? collectExportTaskHints(parsed).slice(0, 160)
+          : [],
         hints: parsed && typeof parsed === 'object'
           ? collectNeighborhoodHints(parsed).slice(0, 80)
           : []
@@ -611,6 +649,10 @@
         '<div style="padding:3px 0;border-top:1px solid #262626"><b>' +
         escapeHtml(h.path) + '</b>: ' + escapeHtml(h.value) + '</div>'
       ).join('');
+      const exportFields = (item.exportFields || []).slice(0, 28).map(h =>
+        '<div style="padding:3px 0;border-top:1px solid #3b2a1d"><b>' +
+        escapeHtml(h.path) + '</b>: ' + escapeHtml(h.value) + '</div>'
+      ).join('');
 
       return '<details ' + (item.hasSortCode || index === 0 ? 'open' : '') +
         ' style="margin-bottom:8px;border:1px solid ' + (item.hasSortCode ? '#f97316' : '#333') +
@@ -626,6 +668,9 @@
           escapeHtml(item.contentType) + '</div>' : '') +
         (item.excerpt ? '<pre style="white-space:pre-wrap;word-break:break-word;margin:7px 0 0;padding:7px;background:#111827;border-radius:7px;color:#cbd5e1">' +
           escapeHtml(item.excerpt) + '</pre>' : '') +
+        (item.exportCreateResponse ? '<pre style="white-space:pre-wrap;word-break:break-word;margin:7px 0 0;padding:7px;background:#172554;border-radius:7px;color:#bfdbfe"><b>Resposta da criação:</b> ' +
+          escapeHtml(item.exportCreateResponse) + '</pre>' : '') +
+        (exportFields ? '<div style="margin-top:7px;padding:6px;border:1px solid #7c2d12;border-radius:7px"><b style="color:#fdba74">Campos da tarefa/exportação</b>' + exportFields + '</div>' : '') +
         (hints ? '<div style="margin-top:7px">' + hints + '</div>' : '') +
         '</div></details>';
     }).join('') : '<div style="padding:20px;color:#9ca3af;text-align:center">Ainda não capturei chamadas. Atualize a lista e faça uma exportação.</div>';

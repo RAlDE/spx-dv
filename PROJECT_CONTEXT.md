@@ -828,3 +828,86 @@ Observação: IndexedDB é compartilhado entre logins SPX dentro do mesmo perfil
 - filtros de operador e pesquisa continuam ativos em cada visão.
 
 A lógica de captura de BR, bairro, motorista, 3PL, login SPX, Return, recomendação e envio automático legado não foi alterada.
+
+
+## Atualização 1.3.32 — Dashboard central no Apps Script
+Em 28/10/2026 ficou confirmado em teste real que localStorage e IndexedDB não garantem uma fila única quando operadores usam ambientes/perfis de navegador separados. A arquitetura do Dashboard foi então movida para armazenamento central no mesmo Web App do Apps Script usado pela aba Dados.
+
+### Regra central
+- a fila do Dashboard deixa de depender do armazenamento do login/perfil SPX;
+- todos os módulos que usam a mesma URL do Web App passam a alimentar a mesma fila central;
+- isso integra logins diferentes e também computadores diferentes que usem esta mesma implantação;
+- a chave continua sendo `BR + occurrence_timestamp`;
+- reenvio da mesma ocorrência atualiza a mesma ficha e não cria duplicidade;
+- o primeiro `received_at` e o primeiro `operator_login` são preservados.
+
+### Aba técnica central
+Nova aba oculta:
+`_SPX_DV_DASHBOARD`
+
+Campos:
+- occurrence_key
+- received_day
+- received_at
+- shipment_id
+- reason
+- driver_id
+- driver_name
+- agency
+- neighborhood
+- occurrence_timestamp
+- flow
+- operator_login
+- status
+- updated_at
+
+### Status / confirmação
+- ao receber a ficha, ela entra como `captured` (pendente);
+- o fluxo legado de gravação na aba Dados continua ativo;
+- quando o próprio Apps Script confirma a gravação em Dados, a mesma occurrence_key é marcada como `confirmed`;
+- se a ocorrência já existia em Dados por deduplicação, também é marcada como confirmada no Dashboard;
+- se a gravação falhar, a ficha permanece pendente;
+- desta forma, o Dashboard passa a ter confirmação real no servidor sem depender da resposta legível pelo navegador.
+
+### Dashboard Web
+O próprio Web App agora atende:
+`?view=dashboard`
+
+A página mostra:
+- Recebido em (antes do BR);
+- Pedido;
+- Motivo do APP;
+- Driver ID;
+- Motorista;
+- Transportadora 3PL;
+- Bairro;
+- Data da ocorrência;
+- Login SPX;
+- Status.
+
+Também inclui:
+- Capturados hoje;
+- Na fila;
+- Confirmados;
+- Pendentes antigos;
+- Operadores hoje;
+- Top 10 motoristas ofensores do dia;
+- filtro por operador;
+- pesquisa;
+- card Na fila clicável;
+- card Pendentes antigos clicável;
+- card Capturados hoje para voltar à visão geral;
+- botão Limpar confirmados;
+- atualização automática a cada 5 segundos.
+
+### Migração
+Ao iniciar a v1.3.32, os registros ainda presentes na fila local são enviados em lote para a fila central. Isso permite reunir dados que estavam separados entre ambientes antigos assim que cada ambiente for aberto com a nova versão.
+
+### Implantação obrigatória
+A alteração do arquivo `apps-script/recebimento-onhold-dados.gs` no GitHub NÃO atualiza a implantação já publicada. Antes de ativar a v1.3.32 em produção, é obrigatório:
+1. copiar o código atualizado para o projeto Google Apps Script;
+2. criar uma nova versão da mesma implantação Web App;
+3. manter a mesma URL `/exec`;
+4. somente depois desativar/ativar o módulo para carregar a v1.3.32.
+
+A v1.3.32 ainda precisa de validação real no SPX e no Web App antes de ser considerada estável.

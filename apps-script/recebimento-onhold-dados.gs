@@ -381,6 +381,41 @@ function cleanupOldConfirmedDashboard_(sheet) {
   properties.setProperty(SPX_DV_CONFIG.dashboardCleanupProperty, today);
 }
 
+function reconcileDashboardStatuses_(spreadsheet, dashboardSheet) {
+  const controlSheet = getControlSheet_(spreadsheet);
+  const controlLastRow = controlSheet.getLastRow();
+  if (controlLastRow < 2) return 0;
+
+  const recordedKeys = new Set(
+    controlSheet.getRange(2, 1, controlLastRow - 1, 1)
+      .getDisplayValues()
+      .map(row => clean_(row[0]))
+      .filter(Boolean)
+  );
+
+  const dashboardLastRow = dashboardSheet.getLastRow();
+  if (dashboardLastRow < 2) return 0;
+
+  const values = dashboardSheet.getRange(2, 1, dashboardLastRow - 1, 14).getValues();
+  let changed = 0;
+
+  values.forEach((row, index) => {
+    const occurrenceKey = clean_(row[0]);
+    const status = clean_(row[12]).toLowerCase();
+    if (!occurrenceKey || status === 'confirmed') return;
+    if (!recordedKeys.has(occurrenceKey)) return;
+
+    dashboardSheet.getRange(index + 2, 13, 1, 2).setValues([[
+      'confirmed',
+      Date.now()
+    ]]);
+    changed += 1;
+  });
+
+  if (changed) SpreadsheetApp.flush();
+  return changed;
+}
+
 function getDashboardData() {
   const lock = LockService.getScriptLock();
   lock.waitLock(15000);
@@ -389,6 +424,7 @@ function getDashboardData() {
     const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
     const sheet = getDashboardSheet_(spreadsheet);
     cleanupOldConfirmedDashboard_(sheet);
+    reconcileDashboardStatuses_(spreadsheet, sheet);
 
     const today = Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
     const lastRow = sheet.getLastRow();
@@ -460,7 +496,7 @@ function dashboardHtml_() {
 *{box-sizing:border-box}body{margin:0;background:#020202;color:#f8fafc;font:13px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}main{max-width:1600px;margin:auto;padding:26px 20px}
 header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:16px 18px;border:1px solid #4a260f;border-radius:14px;background:#070707;box-shadow:0 0 22px rgba(249,115,22,.16),inset 0 -1px rgba(249,115,22,.3)}h1{font-size:27px;letter-spacing:-.5px;margin:0;text-shadow:0 0 16px rgba(249,115,22,.34)}h2{font-size:16px;margin:0;color:#fff7ed;text-shadow:0 0 11px rgba(249,115,22,.26)}.muted{color:#9ca3af}.actions,.filters{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
 button,select,input{font:inherit}button{background:#111;color:#fff;border:1px solid #6b3415;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750;box-shadow:0 0 12px rgba(249,115,22,.1)}button:hover{background:#1a0d07;border-color:#f97316}button.danger{color:#fed7aa}
-.metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415}.metric.clickable{cursor:pointer}.metric.clickable:hover,.metric.clickable.active{border-color:#f97316;box-shadow:0 0 20px rgba(249,115,22,.18),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415}.metric.clickable{cursor:pointer}.metric.clickable:hover,.metric.clickable.active{border-color:#f97316;box-shadow:0 0 20px rgba(249,115,22,.18),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
 .panel{margin-bottom:16px}.panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}
 .search{width:min(360px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}.operator-filter{padding:10px 12px;background:#030303;border:1px solid #6b3415;color:#fff;border-radius:9px;min-width:210px}
 .ranking{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.rank-item{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid #2b211b;border-radius:10px;background:#050505}.rank-pos{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#351a0b;color:#fdba74;font-weight:900}.rank-name{font-weight:800}.rank-meta{color:#9ca3af;font-size:11px}.rank-count{font-size:20px;font-weight:900;color:#fdba74}
@@ -470,12 +506,11 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </style>
 </head>
 <body><main>
-<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · fila central integrada de todos os recebimentos</div></div><div class="actions"><button id="clearConfirmed" class="danger">Limpar confirmados</button><button id="refresh">Atualizar</button></div></header>
+<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · fila central integrada de todos os recebimentos</div></div><div class="actions"><button id="clearConfirmed" class="danger">Limpar já enviados</button><button id="refresh">Atualizar</button></div></header>
 <div id="warning"></div>
 <section class="metrics">
-<div class="metric clickable active" id="cardToday"><span>Capturados hoje</span><strong id="mTotal">0</strong></div>
-<div class="metric clickable" id="cardPending"><span>Na fila</span><strong id="mPending">0</strong></div>
-<div class="metric"><span>Confirmados</span><strong id="mConfirmed">0</strong></div>
+<div class="metric clickable active" id="cardToday"><span>Recebidos hoje</span><strong id="mTotal">0</strong></div>
+<div class="metric clickable" id="cardPending"><span>Pendências</span><strong id="mPending">0</strong></div>
 <div class="metric clickable" id="cardOld"><span>Pendentes antigos</span><strong id="mOld">0</strong></div>
 <div class="metric"><span>Operadores hoje</span><strong id="mOperators">0</strong></div>
 </section>
@@ -485,9 +520,9 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </section>
 <section class="panel">
 <div class="panel-head"><div><h2 id="tableTitle">Recebimentos de hoje</h2><div id="tableSubtitle" class="muted">Todos os logins e computadores aparecem nesta mesma fila central.</div></div><div class="filters"><select id="operator" class="operator-filter"><option value="">Todos os operadores</option></select><input id="search" class="search" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"></div></div>
-<div class="table-wrap"><table><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>Nenhum recebimento.</div></div>
+<div class="table-wrap"><table><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>Nenhum recebimento.</div></div>
 </section>
-<footer>Registros confirmados permanecem durante o dia. Pendentes nunca são removidos automaticamente na virada do dia.</footer>
+<footer>A visão principal mostra somente os recebimentos. Pendências aparecem separadamente quando uma ficha fica mais de 30 segundos sem confirmação na planilha.</footer>
 </main>
 <script>
 const state={data:null,view:'today'};
@@ -495,7 +530,7 @@ const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
 const dt=ms=>ms?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(Number(ms))):'-';
 const occ=sec=>sec?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(Number(sec)*1000)):'-';
-const statusLabel=s=>s==='confirmed'?'Confirmado':'Pendente';
+const PENDING_GRACE_MS=30000;
 
 function requestData(){
   google.script.run.withSuccessHandler(data=>{state.data=data;render();}).withFailureHandler(err=>{$('warning').innerHTML='<div class="warning">Falha ao atualizar Dashboard: '+esc(err&&err.message||err)+'</div>';}).getDashboardData();
@@ -505,15 +540,15 @@ function render(){
   const data=state.data||{today:'',records:[]};
   const records=Array.isArray(data.records)?data.records:[];
   const today=records.filter(r=>r.received_day===data.today);
-  const pendingToday=today.filter(r=>r.status!=='confirmed');
+  const now=Date.now();
+  const pendingToday=today.filter(r=>r.status!=='confirmed'&&(now-Number(r.received_at||0))>=PENDING_GRACE_MS);
   const oldPending=records.filter(r=>r.received_day&&r.received_day!==data.today&&r.status!=='confirmed');
 
   $('mTotal').textContent=today.length;
   $('mPending').textContent=pendingToday.length;
-  $('mConfirmed').textContent=today.filter(r=>r.status==='confirmed').length;
   $('mOld').textContent=oldPending.length;
   $('mOperators').textContent=new Set(today.map(r=>r.operator_login).filter(Boolean)).size;
-  $('warning').innerHTML=oldPending.length?'<div class="warning">⚠ '+oldPending.length+' pendente(s) de dias anteriores. Clique em “Pendentes antigos” para visualizar.</div>':'';
+  $('warning').innerHTML=oldPending.length?'<div class="warning">⚠ '+oldPending.length+' pendência(s) de dias anteriores. Clique em “Pendentes antigos” para visualizar.</div>':'';
 
   const drivers=new Map();
   today.forEach(r=>{
@@ -535,7 +570,7 @@ function render(){
   $('cardPending').classList.toggle('active',state.view==='pending');
   $('cardOld').classList.toggle('active',state.view==='old');
   $('tableTitle').textContent=state.view==='pending'?'Pendentes de hoje':state.view==='old'?'Pendentes de dias anteriores':'Recebimentos de hoje';
-  $('tableSubtitle').textContent=state.view==='pending'?'Registros de hoje que ainda não tiveram confirmação da gravação em Dados.':state.view==='old'?'Registros preservados automaticamente até serem confirmados.':'Todos os logins e computadores aparecem nesta mesma fila central.';
+  $('tableSubtitle').textContent=state.view==='pending'?'Somente registros sem confirmação na planilha há mais de 30 segundos.':state.view==='old'?'Registros de dias anteriores que continuam sem confirmação.':'Todos os recebimentos do dia, sem exibir estados técnicos de processamento.';
 
   const operators=[...new Set(list.map(r=>String(r.operator_login||'').trim().toLowerCase()).filter(Boolean))].sort();
   const previous=$('operator').value;
@@ -544,11 +579,11 @@ function render(){
 
   const q=String($('search').value||'').trim().toLowerCase(),opFilter=String($('operator').value||'').toLowerCase();
   const filtered=list.filter(r=>{
-    const text=[r.shipment_id,r.reason,r.driver_id,r.driver_name,r.agency,r.neighborhood,r.operator_login,statusLabel(r.status)].join(' ').toLowerCase();
+    const text=[r.shipment_id,r.reason,r.driver_id,r.driver_name,r.agency,r.neighborhood,r.operator_login].join(' ').toLowerCase();
     return (!q||text.includes(q))&&(!opFilter||String(r.operator_login||'').toLowerCase()===opFilter);
   });
 
-  $('rows').innerHTML=filtered.map(r=>'<tr><td>'+esc(dt(r.received_at))+'</td><td><strong>'+esc(r.shipment_id)+'</strong></td><td>'+esc(r.reason)+'</td><td>'+esc(r.driver_id)+'</td><td>'+esc(r.driver_name)+'</td><td>'+esc(r.agency)+'</td><td>'+esc(r.neighborhood)+'</td><td>'+esc(occ(r.occurrence_timestamp))+'</td><td>'+esc(r.operator_login||'Não identificado')+'</td><td><span class="status '+(r.status==='confirmed'?'confirmed':'')+'">'+esc(statusLabel(r.status))+'</span></td></tr>').join('');
+  $('rows').innerHTML=filtered.map(r=>'<tr><td>'+esc(dt(r.received_at))+'</td><td><strong>'+esc(r.shipment_id)+'</strong></td><td>'+esc(r.reason)+'</td><td>'+esc(r.driver_id)+'</td><td>'+esc(r.driver_name)+'</td><td>'+esc(r.agency)+'</td><td>'+esc(r.neighborhood)+'</td><td>'+esc(occ(r.occurrence_timestamp))+'</td><td>'+esc(r.operator_login||'Não identificado')+'</td></tr>').join('');
   $('empty').hidden=filtered.length>0;
   $('empty').textContent=state.view==='old'?'Nenhum pendente antigo.':state.view==='pending'?'Nenhum pendente de hoje.':'Nenhum recebimento hoje.';
 }
@@ -561,8 +596,8 @@ $('operator').onchange=render;
 $('refresh').onclick=requestData;
 $('clearConfirmed').onclick=()=>{
   const count=state.data&&state.data.records?state.data.records.filter(r=>r.received_day===state.data.today&&r.status==='confirmed').length:0;
-  if(!count){alert('Não há registros confirmados para limpar hoje.');return;}
-  if(!confirm('Limpar '+count+' registro(s) confirmado(s) de hoje?\\n\\nPendentes não serão apagados.'))return;
+  if(!count){alert('Não há registros já enviados para limpar hoje.');return;}
+  if(!confirm('Limpar '+count+' registro(s) já enviado(s) de hoje?\\n\\nPendências não serão apagadas.'))return;
   google.script.run.withSuccessHandler(()=>requestData()).withFailureHandler(err=>alert('Falha: '+(err&&err.message||err))).clearConfirmedDashboard();
 };
 requestData();

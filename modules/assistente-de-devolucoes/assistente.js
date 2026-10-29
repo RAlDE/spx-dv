@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.39';
+  const MODULE_VERSION = '1.3.40';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -2340,7 +2340,7 @@
     };
   }
 
-  async function captureConfirmedOccurrenceToDashboard(shipmentId, attempt, returnFlow, operatorLogin = '', receivedAt = 0, tradeInfo = null) {
+  async function captureConfirmedOccurrenceToDashboard(shipmentId, attempt, returnFlow, operatorLogin = '', receivedAt = 0, tradeInfo = null, preloadedNeighborhood = '') {
     if (!shipmentId || !attempt || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     const occurrenceKey = dataSheetOccurrenceKey(shipmentId, attempt?.ctime);
@@ -2350,11 +2350,13 @@
     dashboardOccurrenceInFlight.add(occurrenceKey);
 
     try {
-      let neighborhood = '';
-      try {
-        neighborhood = await fetchOccurrenceNeighborhood(shipmentId, returnFlow, tradeInfo);
-      } catch (error) {
-        console.warn('[SPX-DV] Não foi possível obter o bairro da ocorrência', error);
+      let neighborhood = String(preloadedNeighborhood || '').trim();
+      if (!neighborhood) {
+        try {
+          neighborhood = await fetchOccurrenceNeighborhood(shipmentId, returnFlow, tradeInfo);
+        } catch (error) {
+          console.warn('[SPX-DV] Não foi possível obter o bairro da ocorrência', error);
+        }
       }
 
       const payload = currentOccurrenceSheetPayload(
@@ -2382,20 +2384,34 @@
     if (!shipmentId || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     try {
-      const [history, tracking, tradeInfo] = await Promise.all([
-        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`),
-        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null),
-        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/trade_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null)
-      ]);
+      const historyPromise = fetchJson(
+        `https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`
+      );
+      const trackingPromise = fetchJson(
+        `https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`
+      ).catch(() => null);
+      const tradeInfoPromise = fetchJson(
+        `https://spx.shopee.com.br/api/fleet_order/order/detail/trade_info?shipment_id=${encodeURIComponent(shipmentId)}`
+      ).catch(() => null);
 
-      const attempts = Array.isArray(history?.data?.recipient?.On_Hold)
-        ? history.data.recipient.On_Hold.filter(Boolean)
-        : [];
-
+      // Não esperamos o histórico/AT para iniciar o Bairro. Assim que tracking
+      // define o fluxo e trade_info entrega as coordenadas, o geocoder já trabalha
+      // em paralelo com o restante da montagem da ficha.
+      const [tracking, tradeInfo] = await Promise.all([trackingPromise, tradeInfoPromise]);
       const returnOccurrences = extractReturnOccurrences(tracking);
       const cycleStart = returnOccurrences.length
         ? Number(returnOccurrences[0].ctime || 0)
         : 0;
+      const neighborhoodPromise = fetchOccurrenceNeighborhood(
+        shipmentId,
+        Boolean(cycleStart),
+        tradeInfo
+      ).catch(() => '');
+
+      const history = await historyPromise;
+      const attempts = Array.isArray(history?.data?.recipient?.On_Hold)
+        ? history.data.recipient.On_Hold.filter(Boolean)
+        : [];
 
       const currentAttempts = cycleStart
         ? attempts.filter(item => Number(item?.ctime || 0) >= cycleStart)
@@ -2425,13 +2441,15 @@
       const currentOccurrence = visibleAttempts.at(-1);
       if (!currentOccurrence) return false;
 
+      const neighborhood = await neighborhoodPromise;
       return await captureConfirmedOccurrenceToDashboard(
         shipmentId,
         currentOccurrence,
         Boolean(cycleStart),
         operatorLogin,
         receivedAt,
-        tradeInfo
+        tradeInfo,
+        neighborhood
       );
     } catch (error) {
       console.warn('[SPX-DV] Falha ao montar ficha do recebimento confirmado', shipmentId, error);
@@ -2751,13 +2769,18 @@
       if (version === currentRequest && shipmentId === currentShipment) showAutoAdd(info);
     });
     try {
-      const [history, tracking, tradeInfo] = await Promise.all([
-        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`),
-        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null),
-        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/trade_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null)
-      ]);
+      const historyPromise = fetchJson(
+        `https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`
+      );
+      const trackingPromise = fetchJson(
+        `https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`
+      ).catch(() => null);
+      const tradeInfoPromise = fetchJson(
+        `https://spx.shopee.com.br/api/fleet_order/order/detail/trade_info?shipment_id=${encodeURIComponent(shipmentId)}`
+      ).catch(() => null);
+
+      const [tracking, tradeInfo] = await Promise.all([trackingPromise, tradeInfoPromise]);
       if (version !== currentRequest || shipmentId !== currentShipment) return;
-      const attempts = Array.isArray(history?.data?.recipient?.On_Hold) ? history.data.recipient.On_Hold.filter(Boolean) : [];
 
       // BR NORMAL (LMHub_Onhold / Delivering): sem Return_LMHub_Onhold,
       // preserva exatamente o histórico normal já usado pelo módulo.
@@ -2767,6 +2790,23 @@
       // Return_LMHub_Returning e novos Return_LMHub_Onhold seguem no MESMO ciclo.
       const returnOccurrences = extractReturnOccurrences(tracking);
       const cycleStart = returnOccurrences.length ? Number(returnOccurrences[0].ctime || 0) : 0;
+
+      // Começa o geocoding imediatamente. Enquanto ele resolve o Bairro,
+      // o histórico e os dados da AT continuam sendo montados abaixo.
+      const neighborhoodPromise = fetchOccurrenceNeighborhood(
+        shipmentId,
+        Boolean(cycleStart),
+        tradeInfo
+      ).catch(error => {
+        console.warn('[SPX-DV] Não foi possível obter o bairro para exibição', error);
+        return '';
+      });
+
+      const history = await historyPromise;
+      if (version !== currentRequest || shipmentId !== currentShipment) return;
+      const attempts = Array.isArray(history?.data?.recipient?.On_Hold)
+        ? history.data.recipient.On_Hold.filter(Boolean)
+        : [];
       const currentAttempts = cycleStart
         ? attempts.filter(item => Number(item?.ctime || 0) >= Number(cycleStart))
         : attempts;
@@ -2789,14 +2829,6 @@
           ) === index;
         })
         .sort((a, b) => Number(a?.ctime || 0) - Number(b?.ctime || 0));
-
-      const neighborhoodPromise = visibleAttempts.length
-        ? fetchOccurrenceNeighborhood(shipmentId, Boolean(cycleStart), tradeInfo)
-            .catch(error => {
-              console.warn('[SPX-DV] Não foi possível obter o bairro para exibição', error);
-              return '';
-            })
-        : Promise.resolve('');
 
       let address = { pending: false };
       const latestReason = translateReason([...currentAttempts]

@@ -1747,3 +1747,39 @@ O usuário definiu uma nova regra futura para o Dashboard, mas pediu primeiro va
 - exportação automática de Bairro continua desligada;
 - validação real no SPX ainda pendente;
 - não chamar v1.3.47 de estável.
+
+
+## Validação real 1.3.47 — entrada central confirmada ponta a ponta
+Em 29/10/2026 a v1.3.47 foi validada no SPX real para a cadeia de entrada no Dashboard.
+
+Evidência observada no diagnóstico:
+- hook carregado com `fetch patch=true`, `XHR patch=true` e PerformanceObserver ativo;
+- 2 chamadas ao endpoint real `POST /api/in-station/uni_receive/order` foram vistas;
+- uma chamada retornou `retcode=120508006` para `BR265006408196I`, com mensagem de pedido interceptado/Tratativas; o módulo registrou `receive_response_not_success` e **não criou ficha**, como esperado;
+- a chamada seguinte retornou `retcode=0` com 1 order;
+- BR recebido: `BR265987435609F`;
+- operador capturado: `italo.soares@shopee.com`;
+- `received_at=1793303552000` veio da resposta real de recebimento;
+- ocorrência usada: `occurrence_timestamp=1793295589`;
+- Bairro resolvido: `Centro`;
+- etapas confirmadas: `bridge_event -> receive_response_seen -> receive_success_recognized -> receive_queued -> process_start -> process_occurrence_ready -> local_saved -> central_send_start -> central_health_ok(build 1.3.47) -> central_send_confirmed`;
+- `central_send_confirmed` retornou `occurrence_key=BR265987435609F|1793295589`, `status=captured` e `build=1.3.47`;
+- portanto o POST central ocorreu e o read-back posterior encontrou a ocorrência no servidor.
+
+Conclusão:
+- captura real pelo endpoint SPX: **validada**;
+- rejeição de `retcode != 0`: **validada**;
+- montagem da ficha/Bairro: **validada neste caso**;
+- gravação central + read-back: **validada**;
+- build ativo do Web App 1.3.47: **validado**.
+
+Ainda pendente antes de chamar a versão inteira de estável:
+- confirmar visualmente o mesmo BR no HTML do Dashboard;
+- testar vários recebimentos rápidos em sequência;
+- testar simultaneamente outro login/perfil alimentando o mesmo Dashboard;
+- validar ordem cronológica sob concorrência;
+- só depois testar o envio em lote para `Dados`;
+- regras futuras de histórico mensal e prioridade por dia ainda não foram implementadas.
+
+Observação sobre logs antigos:
+- entradas `local_resync_done`/reenvios com horário anterior ao carregamento do hook atual pertencem a testes/versões anteriores persistidos no diagnóstico e não fazem parte deste fluxo real das 19:52.

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.47';
+  const MODULE_VERSION = '1.3.48';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -34,7 +34,7 @@
   const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.47';
+  const DASHBOARD_SYNC_GENERATION = '1.3.48';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
@@ -509,6 +509,7 @@
     const result = await requestCentralJsonp('health', {}, 5000);
     const ok = Boolean(
       result?.ok &&
+      String(result?.build || '') === DASHBOARD_SYNC_GENERATION &&
       result?.capabilities?.dashboard_post === true &&
       result?.capabilities?.dashboard_check === true
     );
@@ -719,7 +720,9 @@
   function openReceivingDashboard() {
     // Não fazemos ressincronização automática ao abrir o Dashboard.
     // Isso evita dezenas/centenas de JSONPs pendentes mantendo a aba em carregamento.
-    const url = ONHOLD_DATA_WEBAPP_URL + '?view=dashboard';
+    const url = ONHOLD_DATA_WEBAPP_URL +
+      '?view=dashboard&build=' + encodeURIComponent(MODULE_VERSION) +
+      '&_=' + Date.now();
     const tab = window.open(url, DASHBOARD_WINDOW_NAME);
     if (!tab) {
       alert('Permita pop-ups para abrir o Dashboard de Recebimento.');

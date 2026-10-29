@@ -324,18 +324,10 @@ function geoLookupResponse_(e) {
 
 function reverseGeocodeNeighborhood_(latitude, longitude) {
   // Para Bairro, precisão de ~1 metro é mais do que suficiente e evita
-  // trabalhar com coordenadas excessivamente precisas.
+  // trabalhar com coordenadas excessivamente precisas. O resultado do geocoder
+  // não é persistido/cacheado pelo SPX-DV.
   const lat = Math.round(Number(latitude) * 100000) / 100000;
   const lng = Math.round(Number(longitude) * 100000) / 100000;
-  const cache = CacheService.getScriptCache();
-  const cacheKey = 'SPX_DV_GEO_V1_' + lat.toFixed(5) + '_' + lng.toFixed(5);
-  const cached = cache.get(cacheKey);
-  if (cached) {
-    try {
-      const parsed = JSON.parse(cached);
-      if (parsed && parsed.ok) return parsed;
-    } catch (error) {}
-  }
 
   const response = Maps
     .newGeocoder()
@@ -400,18 +392,12 @@ function reverseGeocodeNeighborhood_(latitude, longitude) {
     ? clean_(cleanedCandidates[0].name)
     : '';
 
-  const result = {
+  return {
     ok: true,
     neighborhood: neighborhood,
     candidates: cleanedCandidates,
     source: 'apps_script_maps'
   };
-
-  try {
-    cache.put(cacheKey, JSON.stringify(result), 21600);
-  } catch (error) {}
-
-  return result;
 }
 
 function importNeighborhoodCsvUrl_(spreadsheet, downloadUrl) {

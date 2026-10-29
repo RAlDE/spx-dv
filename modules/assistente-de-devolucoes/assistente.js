@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.40';
+  const MODULE_VERSION = '1.3.41';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -2299,25 +2299,17 @@
         if (neighborhood) return neighborhood;
       }
     } catch (error) {
-      console.warn('[SPX-DV] Geolocalização não resolveu o bairro; usando fallback', error);
+      console.warn('[SPX-DV] Geolocalização não resolveu o bairro', error);
     }
 
-    // Fallback temporário da primeira versão operacional:
-    // normal tenta a cache já existente; Return usa a fonte sensível somente
-    // se trade_info/geocoder falharem. A exportação automática continua desativada.
+    // Sem consulta a campo sensível. No fluxo normal ainda podemos aproveitar
+    // a cache central já existente. No Return, se o geocoder não resolver,
+    // deixamos Bairro vazio; a interface mostra "Atualizar base".
     if (!returnFlow) {
       return await fetchNeighborhoodFromCentralCache(shipment).catch(() => '');
     }
 
-    try {
-      const url = 'https://spx.shopee.com.br/api/fleet_order/order/detail/show_sensitive_data' +
-        '?shipment_id=' + encodeURIComponent(shipment) +
-        '&data_field=seller_addr_district';
-      const response = await fetchJson(url);
-      return String(response?.data?.data_detail || '').trim();
-    } catch {
-      return '';
-    }
+    return '';
   }
 
   function currentOccurrenceSheetPayload(shipmentId, attempt, returnFlow, neighborhood, operatorLogin = '', receivedAt = 0) {
@@ -2627,7 +2619,7 @@
       const addressActions = isLatestAddress && !wasCancelled && address.pending
         ? `<div class="actions" data-reason-id="${escapeHtml(address.reasonId)}" data-local-lang="${escapeHtml(address.localLang)}"><button class="confirm" data-action="confirm">Confirmar</button><button class="cancel" data-action="cancel">Cancelar</button><div class="result"></div></div>`
         : '';
-      const neighborhoodText = String(neighborhood || '').trim() || 'Não localizado';
+      const neighborhoodText = String(neighborhood || '').trim() || 'Atualizar base';
       const neighborhoodLine = `<br><span class="neighborhood"><b>Bairro:</b> <span class="neighborhood-value">${escapeHtml(neighborhoodText)}</span></span>`;
 
       if (attempt?.return_occurrence) {
@@ -2646,7 +2638,7 @@
     const panel = document.getElementById(PANEL_ID);
     if (!panel || String(panel.dataset.shipmentId || '').toUpperCase() !== String(shipmentId || '').toUpperCase()) return;
 
-    const text = String(neighborhood || '').trim() || 'Não localizado';
+    const text = String(neighborhood || '').trim() || 'Atualizar base';
     panel.querySelectorAll('.neighborhood-value').forEach(node => {
       node.textContent = text;
     });

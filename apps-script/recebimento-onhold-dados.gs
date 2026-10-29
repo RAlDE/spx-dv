@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.50';
+const SPX_DV_BUILD = '1.3.51';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -49,7 +49,7 @@ function doGet(e) {
 
     return HtmlService
       .createHtmlOutput(
-        dashboardHtml_(initialData, ScriptApp.getService().getUrl())
+        dashboardHtml_(initialData, ScriptApp.getService().getUrl(), e && e.parameter ? e.parameter : {})
       )
       .setTitle('SPX-DV · Dashboard de Recebimento');
   }
@@ -1155,7 +1155,96 @@ function dashboardFormatSeconds_(value) {
   );
 }
 
-function dashboardHtml_(initialData, serviceUrl) {
+function dashboardTopDriversHtml_(records) {
+  const drivers = new Map();
+
+  (Array.isArray(records) ? records : []).forEach(function(record) {
+    const id = clean_(record && record.driver_id);
+    const name = clean_(record && record.driver_name);
+    if (!id && !name) return;
+
+    const key = id || name.toLowerCase();
+    const agency = clean_(record && record.agency);
+    const reason = clean_(record && record.reason) || 'Sem motivo informado';
+    const item = drivers.get(key) || {
+      id: id,
+      name: name || 'Motorista não identificado',
+      agency: agency,
+      count: 0,
+      reasons: new Map()
+    };
+
+    item.count += 1;
+    if (!item.agency && agency) item.agency = agency;
+    item.reasons.set(reason, Number(item.reasons.get(reason) || 0) + 1);
+    drivers.set(key, item);
+  });
+
+  const top = Array.from(drivers.values())
+    .sort(function(a, b) {
+      return b.count - a.count || a.name.localeCompare(b.name, 'pt-BR');
+    })
+    .slice(0, 10);
+
+  if (!top.length) {
+    return '<div class="empty">Ainda não há motoristas para o ranking de hoje.</div>';
+  }
+
+  const reasonTotals = new Map();
+  top.forEach(function(driver) {
+    driver.reasons.forEach(function(count, reason) {
+      if (count > 0) {
+        reasonTotals.set(reason, Number(reasonTotals.get(reason) || 0) + count);
+      }
+    });
+  });
+
+  const visibleReasons = Array.from(reasonTotals.entries())
+    .filter(function(entry) { return entry[1] > 0; })
+    .sort(function(a, b) {
+      return b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR');
+    })
+    .map(function(entry) { return entry[0]; });
+
+  const headReasons = visibleReasons.map(function(reason) {
+    return '<th class="reason-head"><span>' +
+      dashboardHtmlEscape_(reason) +
+      '</span></th>';
+  }).join('');
+
+  const body = top.map(function(driver, index) {
+    const reasonCells = visibleReasons.map(function(reason) {
+      const count = Number(driver.reasons.get(reason) || 0);
+      return '<td class="' + (count > 0 ? 'reason-count' : 'reason-zero') + '">' +
+        (count > 0 ? count : '') +
+        '</td>';
+    }).join('');
+
+    return '<tr>' +
+      '<td class="rank-col"><span class="rank-number">' + (index + 1) + '</span></td>' +
+      '<td class="driver-col"><span class="rank-driver-name">' +
+        dashboardHtmlEscape_(driver.name) +
+        '</span><span class="rank-driver-id">ID: ' +
+        dashboardHtmlEscape_(driver.id || 'Não informado') +
+        '</span></td>' +
+      '<td class="agency-col">' +
+        dashboardHtmlEscape_(driver.agency || 'Não informado') +
+        '</td>' +
+      '<td class="total-col">' + driver.count + '</td>' +
+      reasonCells +
+      '</tr>';
+  }).join('');
+
+  return '<table class="ranking-table"><thead><tr>' +
+    '<th class="rank-col">Ranking</th>' +
+    '<th class="driver-col">Driver</th>' +
+    '<th class="agency-col">3PL</th>' +
+    '<th class="total-col">Total</th>' +
+    headReasons +
+    '</tr></thead><tbody>' + body + '</tbody></table>';
+}
+
+function dashboardHtml_(initialData, serviceUrl, params) {
   const data = initialData && typeof initialData === 'object'
     ? initialData
     : {
@@ -1196,7 +1285,29 @@ function dashboardHtml_(initialData, serviceUrl) {
     return Number(b && b.received_at || 0) - Number(a && a.received_at || 0);
   });
 
-  const serverRowsHtml = sortedToday.map(function(record) {
+  const serverOperator = clean_(params && params.operator).toLowerCase();
+  const serverSearchText = clean_(params && params.q);
+  const serverSearch = serverSearchText.toLowerCase();
+  const serverFilteredToday = sortedToday.filter(function(record) {
+    const login = clean_(record && record.operator_login).toLowerCase();
+    if (serverOperator && login !== serverOperator) return false;
+    if (!serverSearch) return true;
+
+    const haystack = [
+      record && record.shipment_id,
+      record && record.reason,
+      record && record.driver_id,
+      record && record.driver_name,
+      record && record.agency,
+      record && record.neighborhood,
+      record && record.operator_login
+    ].map(clean_).join(' ').toLowerCase();
+
+    return haystack.indexOf(serverSearch) >= 0;
+  });
+  const serverTopDriversHtml = dashboardTopDriversHtml_(todayRecords);
+
+  const serverRowsHtml = serverFilteredToday.map(function(record) {
     return '<tr>' +
       '<td>' + dashboardHtmlEscape_(dashboardFormatMillis_(record.received_at)) + '</td>' +
       '<td><strong>' + dashboardHtmlEscape_(record.shipment_id) + '</strong></td>' +
@@ -1213,14 +1324,22 @@ function dashboardHtml_(initialData, serviceUrl) {
   const serverOperatorOptions = Object.keys(operatorsToday)
     .sort()
     .map(function(login) {
-      return '<option value="' + dashboardHtmlEscape_(login) + '">' +
-        dashboardHtmlEscape_(login) +
-        '</option>';
+      return '<option value="' + dashboardHtmlEscape_(login) + '"' +
+        (login === serverOperator ? ' selected' : '') +
+        '>' + dashboardHtmlEscape_(login) + '</option>';
     })
     .join('');
 
   const baseUrl = clean_(serviceUrl || '');
-  const refreshUrl = baseUrl +
+  const refreshQuery = [
+    'view=dashboard',
+    'build=' + encodeURIComponent(SPX_DV_BUILD),
+    '_=' + Date.now()
+  ];
+  if (serverOperator) refreshQuery.push('operator=' + encodeURIComponent(serverOperator));
+  if (serverSearchText) refreshQuery.push('q=' + encodeURIComponent(serverSearchText));
+  const refreshUrl = baseUrl + '?' + refreshQuery.join('&');
+  const clearFilterUrl = baseUrl +
     '?view=dashboard&build=' + encodeURIComponent(SPX_DV_BUILD) +
     '&_=' + Date.now();
 
@@ -1246,9 +1365,13 @@ function dashboardHtml_(initialData, serviceUrl) {
           ' pendência(s) de dias anteriores.</div>'
         : '');
 
-  const serverEmptyText = sortedToday.length
+  const serverEmptyText = serverFilteredToday.length
     ? ''
-    : '<div class="empty">Nenhum recebimento hoje.</div>';
+    : '<div class="empty">' +
+        (sortedToday.length
+          ? 'Nenhum recebimento corresponde ao filtro.'
+          : 'Nenhum recebimento hoje.') +
+      '</div>';
 
   return `<!doctype html>
 <html lang="pt-BR">
@@ -1263,7 +1386,7 @@ button,select,input{font:inherit}button,.button-link{background:#111;color:#fff;
 .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415}.metric.clickable{cursor:pointer}.metric.clickable:hover,.metric.clickable.active{border-color:#f97316;box-shadow:0 0 20px rgba(249,115,22,.18),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
 .panel{margin-bottom:16px}.panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}
 .search{width:min(360px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}.operator-filter{padding:10px 12px;background:#030303;border:1px solid #6b3415;color:#fff;border-radius:9px;min-width:210px}
-.ranking-wrap{overflow:auto;border:1px solid #2b211b;border-radius:10px;background:#050505}.ranking-table{border-collapse:collapse;width:max-content;min-width:100%;background:#050505}.ranking-table th,.ranking-table td{border:1px solid #2a2a2a;padding:8px 10px;text-align:center;white-space:nowrap}.ranking-table thead th{position:sticky;top:0;z-index:2;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.25px}.ranking-table .rank-col{width:54px;min-width:54px}.ranking-table .driver-col{min-width:270px;text-align:left}.ranking-table .agency-col{min-width:150px;text-align:left}.ranking-table .total-col{min-width:78px;font-size:15px;font-weight:900;color:#fb923c;background:#130a05}.ranking-table .reason-head{height:132px;min-width:58px;padding:0 6px;vertical-align:bottom}.ranking-table .reason-head>span{display:inline-block;transform:rotate(-52deg);transform-origin:left bottom;white-space:nowrap;margin-left:22px;margin-bottom:10px;color:#fdba74;font-size:10px;text-transform:none;letter-spacing:0}.ranking-table tbody tr:hover{background:#100b08}.ranking-table .reason-count{font-weight:900;color:#f97316}.ranking-table .reason-zero{color:#4b5563}.rank-number{display:inline-grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#351a0b;color:#fdba74;font-weight:900}.rank-driver-name{font-weight:800;color:#fff}.rank-driver-id{display:block;color:#9ca3af;font-size:10px;margin-top:2px}.rank-toggle{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;border:1px solid #6b3415;background:#0b0705;color:#fdba74;font-size:18px;font-weight:900;cursor:pointer;box-shadow:0 0 12px rgba(249,115,22,.1)}.rank-toggle:hover{border-color:#f97316;background:#1a0d07}.ranking-collapsed{display:none}
+.ranking-wrap{overflow:auto;border:1px solid #2b211b;border-radius:10px;background:#050505}.ranking-table{border-collapse:collapse;width:max-content;min-width:100%;background:#050505}.ranking-table th,.ranking-table td{border:1px solid #2a2a2a;padding:8px 10px;text-align:center;white-space:nowrap}.ranking-table thead th{position:sticky;top:0;z-index:2;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.25px}.ranking-table .rank-col{width:54px;min-width:54px}.ranking-table .driver-col{min-width:270px;text-align:left}.ranking-table .agency-col{min-width:150px;text-align:left}.ranking-table .total-col{min-width:78px;font-size:15px;font-weight:900;color:#fb923c;background:#130a05}.ranking-table .reason-head{height:132px;min-width:58px;padding:0 6px;vertical-align:bottom}.ranking-table .reason-head>span{display:inline-block;transform:rotate(-52deg);transform-origin:left bottom;white-space:nowrap;margin-left:22px;margin-bottom:10px;color:#fdba74;font-size:10px;text-transform:none;letter-spacing:0}.ranking-table tbody tr:hover{background:#100b08}.ranking-table .reason-count{font-weight:900;color:#f97316}.ranking-table .reason-zero{color:#4b5563}.rank-number{display:inline-grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#351a0b;color:#fdba74;font-weight:900}.rank-driver-name{font-weight:800;color:#fff}.rank-driver-id{display:block;color:#9ca3af;font-size:10px;margin-top:2px}.rank-toggle{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;border:1px solid #6b3415;background:#0b0705;color:#fdba74;font-size:18px;font-weight:900;cursor:pointer;box-shadow:0 0 12px rgba(249,115,22,.1)}.rank-toggle:hover{border-color:#f97316;background:#1a0d07}.ranking-collapsed{display:none}.top-summary{cursor:pointer;list-style:none}.top-summary::-webkit-details-marker{display:none}.top-summary::after{content:'▸';display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;border:1px solid #6b3415;background:#0b0705;color:#fdba74;font-size:18px;font-weight:900;box-shadow:0 0 12px rgba(249,115,22,.1)}details[open]>.top-summary::after{content:'▾'}.filter-info{font-size:11px;color:#a3a3a3;white-space:nowrap}
 .table-wrap{max-height:64vh;overflow:auto;border:1px solid #262626;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1450px;background:#050505}th,td{padding:11px 12px;border-bottom:1px solid #262626;text-align:left;vertical-align:top}th{position:sticky;top:0;z-index:1;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.35px;box-shadow:inset 0 -1px #7c2d12,0 4px 14px rgba(249,115,22,.08)}tbody tr:hover{background:#100b08}
 .status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#f59e0b2c;color:#fde68a;font-size:11px;font-weight:800}.status.confirmed{background:#16a34a2c;color:#bbf7d0}.warning{margin:0 0 16px;padding:11px 14px;border:1px solid #f59e0b55;border-radius:10px;background:#78350f25;color:#fde68a}.empty{padding:30px;text-align:center;color:#94a3b8}footer{color:#94a3b8;font-size:11px}
 @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}main{padding:14px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
@@ -1279,12 +1402,14 @@ button,select,input{font:inherit}button,.button-link{background:#111;color:#fff;
 <div class="metric"><span>Operadores hoje</span><strong id="mOperators">${Object.keys(operatorsToday).length}</strong></div>
 </section>
 <section class="panel">
-<div class="panel-head"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted">Matriz por motorista e ocorrência. Só aparecem motivos com quantidade no Top 10.</div></div><button id="toggleTopDrivers" class="rank-toggle" title="Abrir/fechar Top 10" aria-label="Abrir/fechar Top 10">▾</button></div>
-<div id="topDriversWrap" class="ranking-wrap"><div id="topDrivers"></div></div>
+<details open>
+<summary class="panel-head top-summary"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted">Matriz por motorista e ocorrência. Só aparecem motivos com quantidade no Top 10.</div></div></summary>
+<div class="ranking-wrap"><div id="topDrivers">${serverTopDriversHtml}</div></div>
+</details>
 </section>
 <section class="panel">
-<div class="panel-head"><div><h2 id="tableTitle">Recebimentos de hoje</h2><div id="tableSubtitle" class="muted">Todos os logins e computadores aparecem nesta mesma fila central.</div></div><div class="filters"><select id="operator" class="operator-filter"><option value="">Todos os operadores</option>${serverOperatorOptions}</select><input id="search" class="search" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"></div></div>
-<div class="table-wrap"><table><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th></tr></thead><tbody id="rows">${serverRowsHtml}</tbody></table><div id="empty" class="empty"${sortedToday.length ? ' hidden' : ''}>${serverEmptyText}</div></div>
+<div class="panel-head"><div><h2 id="tableTitle">Recebimentos de hoje</h2><div id="tableSubtitle" class="muted">Todos os logins e computadores aparecem nesta mesma fila central.</div></div><form class="filters" method="get" action="${dashboardHtmlEscape_(baseUrl)}"><input type="hidden" name="view" value="dashboard"><input type="hidden" name="build" value="${dashboardHtmlEscape_(SPX_DV_BUILD)}"><select id="operator" name="operator" class="operator-filter"><option value="">Todos os operadores</option>${serverOperatorOptions}</select><input id="search" name="q" class="search" value="${dashboardHtmlEscape_(serverSearchText)}" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"><button type="submit">Filtrar</button><a class="button-link" href="${dashboardHtmlEscape_(clearFilterUrl)}">Limpar filtro</a><span class="filter-info">${serverFilteredToday.length} de ${sortedToday.length}</span></form></div>
+<div class="table-wrap"><table><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th></tr></thead><tbody id="rows">${serverRowsHtml}</tbody></table><div id="empty" class="empty"${serverFilteredToday.length ? ' hidden' : ''}>${serverEmptyText}</div></div>
 </section>
 <footer>Recebimentos confirmados pelo SPX ficam na fila até o envio explícito para Dados. Pendências antigas nunca são apagadas automaticamente.</footer>
 </main>
@@ -1459,16 +1584,6 @@ function render(){
   $('empty').hidden=filtered.length>0;
   $('empty').textContent=state.view==='old'?'Nenhum pendente antigo.':state.view==='pending'?'Nenhum pendente de hoje.':'Nenhum recebimento hoje.';
 }
-
-const topDriversWrap=$('topDriversWrap');
-const toggleTopDrivers=$('toggleTopDrivers');
-let topDriversOpen=true;
-toggleTopDrivers.onclick=()=>{
-  topDriversOpen=!topDriversOpen;
-  topDriversWrap.classList.toggle('ranking-collapsed',!topDriversOpen);
-  toggleTopDrivers.textContent=topDriversOpen?'▾':'▸';
-  toggleTopDrivers.title=topDriversOpen?'Fechar Top 10':'Abrir Top 10';
-};
 
 $('cardToday').onclick=()=>{state.view='today';render();};
 $('cardPending').onclick=()=>{state.view='pending';render();};

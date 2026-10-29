@@ -3,7 +3,7 @@
 Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
 Versão atual do módulo: 1.3.52
-Estado: desenvolvimento incremental; 1.3.50 preserva a captura/gravação central validada e passa a renderizar métricas e linhas do Dashboard diretamente no servidor; requer validação visual real.
+Estado: desenvolvimento incremental; 1.3.52 preserva a captura/gravação central validada, mantém Top 10 no próprio Dash e adiciona filtros locais por login, busca geral e por coluna; requer validação real da interface.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 

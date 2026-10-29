@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.45';
+  const MODULE_VERSION = '1.3.46';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -559,8 +559,8 @@
   }
 
   function openReceivingDashboard() {
-    void syncLocalDashboardToCentral();
-
+    // Não fazemos ressincronização automática ao abrir o Dashboard.
+    // Isso evita dezenas/centenas de JSONPs pendentes mantendo a aba em carregamento.
     const url = ONHOLD_DATA_WEBAPP_URL + '?view=dashboard';
     const tab = window.open(url, DASHBOARD_WINDOW_NAME);
     if (!tab) {
@@ -3336,7 +3336,9 @@
 
     if (!authorized || !isTargetRoute()) return;
 
-    void ensureDashboardMigration().then(() => syncLocalDashboardToCentral());
+    // Migração local continua válida, mas não dispara replay automático da fila.
+    // Recebimentos novos são enviados individualmente assim que confirmados pelo SPX.
+    void ensureDashboardMigration();
     showPanel('', '<div class="message">Aguardando leitura do BR...</div>');
     checkShipment();
 

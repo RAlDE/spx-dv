@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.51
+Versão atual do módulo: 1.3.52
 Estado: desenvolvimento incremental; 1.3.50 preserva a captura/gravação central validada e passa a renderizar métricas e linhas do Dashboard diretamente no servidor; requer validação visual real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
@@ -1933,3 +1933,53 @@ Validação técnica:
 - JavaScript embutido extraído e validado separadamente;
 - validação real da interface 1.3.51 ainda pendente;
 - não chamar 1.3.51 de estável antes do teste real.
+
+
+## Atualização 1.3.52 — filtros locais completos dentro do Dash e correção da regressão 1.3.51
+Evidência real da v1.3.51 em 29/10/2026:
+- os dados continuaram chegando corretamente ao Dashboard;
+- porém os controles da página não responderam como esperado;
+- ao acionar alguns controles, o navegador exibiu `A conexão com script.google.com foi recusada`;
+- a causa foi a tentativa da v1.3.51 de usar navegação/formulário do próprio Web App para aplicar filtros;
+- essa abordagem foi descartada.
+
+Decisão da v1.3.52:
+- manter Top 10 e todos os filtros exclusivamente dentro do próprio Dashboard;
+- não alterar captura `/uni_receive/order`, upsert central, read-back, fila local ou lógica validada do recebimento;
+- remover a navegação de filtros para `script.google.com`;
+- remover `<base target="_top">` introduzido na 1.3.51;
+- o Top 10 continua calculado/renderizado no servidor e abre/fecha por `<details>/<summary>` nativo;
+- o filtro de login passa a atuar localmente nas linhas já renderizadas;
+- cada opção de login mostra sua quantidade de recebimentos, por exemplo `login@shopee.com (123)`;
+- ao lado do seletor existe contador do login selecionado;
+- adicionado filtro geral para pesquisar simultaneamente Pedido, Motivo, Driver ID, Motorista, 3PL, Bairro, Data e Login;
+- adicionada segunda linha no cabeçalho da tabela com filtro individual para cada uma das 9 colunas;
+- filtros podem ser combinados e a tela mostra `Mostrando X de Y`;
+- botão `Limpar filtros` apenas limpa os controles locais e nunca navega para outra URL;
+- botão Atualizar usa `window.location.reload()`, sem construir URL externa;
+- JavaScript do Dashboard foi reduzido: não recebe mais uma cópia inteira dos registros em `INITIAL_DATA`, não reconstrói Top 10 nem tabela e não faz polling de 5 segundos;
+- isso reduz a superfície de falha que nas versões anteriores podia derrubar todos os controles da interface.
+
+Ações operacionais:
+- `Enviar para a planilha` e `Limpar já enviados` continuam usando as funções server-side já existentes via `google.script.run`;
+- a v1.3.52 apenas adiciona proteção para mostrar erro na própria tela caso o bridge do HtmlService não esteja disponível;
+- a lógica de escrita em Dados não foi alterada nesta versão.
+
+Validação técnica:
+- sintaxe completa do Apps Script validada antes do commit;
+- JavaScript embutido do Dashboard extraído e validado separadamente antes do commit;
+- sintaxe do módulo principal validada;
+- validação real do Dashboard 1.3.52 ainda pendente;
+- não chamar 1.3.52 de estável antes do teste real.
+
+Teste recomendado:
+1. copiar/reimplantar o Apps Script 1.3.52 mantendo a mesma implantação e URL `/exec`;
+2. desativar/ativar o módulo e confirmar 1.3.52;
+3. abrir o Dash sem bipar novo BR;
+4. confirmar que o Top 10 aparece e abre/fecha;
+5. confirmar as quantidades ao lado de cada login no seletor;
+6. escolher um login e verificar filtro instantâneo, sem recarregar a página;
+7. testar o filtro geral;
+8. testar filtros individuais de Pedido, Motivo, Driver ID, Motorista, 3PL, Bairro, datas e Login;
+9. combinar dois ou mais filtros e conferir `Mostrando X de Y`;
+10. usar `Limpar filtros` e confirmar retorno de todas as linhas do dia.

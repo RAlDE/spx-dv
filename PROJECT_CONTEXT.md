@@ -1,8 +1,272 @@
 # PROJECT_CONTEXT — SPX-DV
 
-Atualizado em: 2026-10-06
+Atualizado em: 2026-10-28
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.27
+Versão atual do módulo: 1.3.40
+Estado: desenvolvimento incremental; 1.3.40 requer validação real antes de ser chamada de estável.
+
+## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
+
+Esta seção é a fonte principal para retomar o projeto em uma conversa nova. O restante deste arquivo mantém o histórico cronológico das versões e decisões anteriores. Quando houver divergência entre uma seção antiga e este resumo, **prevalece o estado atual descrito aqui**, salvo se uma versão posterior documentar explicitamente uma nova mudança.
+
+### Regra obrigatória antes de qualquer alteração
+Antes de editar qualquer arquivo do SPX-DV:
+1. reler este `PROJECT_CONTEXT.md` diretamente do GitHub;
+2. buscar a versão atual de `modules/assistente-de-devolucoes/assistente.js`, `catalog.json` e, quando aplicável, `apps-script/recebimento-onhold-dados.gs`, `extension/manifest.json` e `extension/background.js`;
+3. obter os SHAs atuais imediatamente antes de qualquer escrita;
+4. preservar o comportamento já validado e fazer mudanças incrementais;
+5. manter a versão do módulo e o `catalog.json` sincronizados;
+6. registrar neste contexto o que foi alterado, o que foi apenas validado estaticamente e o que foi validado no SPX real;
+7. **nunca chamar uma versão de estável sem validação real no SPX**.
+
+Não misturar este repositório com **SPX OnHold**. SPX OnHold é outro projeto/repositório e possui regras próprias.
+
+### Princípio central do recebimento
+A arquitetura correta é:
+
+`consulta/preview do BR -> recebimento real confirmado pelo SPX -> Dashboard/fila central -> revisão -> botão explícito Enviar X para a planilha -> aba Dados`
+
+Regras que não podem ser quebradas:
+- colar, digitar ou pressionar Enter no campo TN serve **somente para consulta/preview**;
+- Enter/paste **não significa recebimento** e não pode criar ficha no Dashboard;
+- o recebimento real é confirmado exclusivamente pela resposta de:
+  `POST /api/in-station/uni_receive/order`
+- somente considerar recebido quando `retcode = 0`;
+- a resposta real fornece `data.task_operator` e `data.order_list[]` com `shipment_id` e `receive_time`;
+- `received_at` deve vir do `receive_time` do próprio SPX;
+- o Dashboard recebe somente ocorrências realmente recebidas;
+- a aba `Dados` não recebe automaticamente por bip/Enter; a gravação é feita pelo botão explícito do Dashboard.
+
+### Dashboard central e Apps Script
+Web App atual:
+`https://script.google.com/a/macros/shopee.com/s/AKfycbzVqz60x9ZBTt2dL83cxXaaHRMlqhEpU1r7AVlczQFmQSUdNGkyPUQcRsXzY17ImcbNOQ/exec`
+
+Spreadsheet:
+`14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY`
+
+Aba oculta central:
+`_SPX_DV_DASHBOARD`
+
+Campos principais da fila:
+- occurrence_key
+- received_day
+- received_at
+- shipment_id
+- reason
+- driver_id
+- driver_name
+- agency
+- neighborhood
+- occurrence_timestamp
+- flow
+- operator_login
+- status
+- updated_at
+
+O Dashboard deve manter:
+- `Recebido em` antes do BR;
+- Pedido/BR;
+- Motivo do APP;
+- Driver ID;
+- Motorista;
+- Transportadora 3PL;
+- Bairro;
+- Data da ocorrência;
+- Login SPX;
+- sem coluna técnica de Status na lista principal;
+- Top 10 motoristas ofensores do dia;
+- filtros/pesquisa por operador;
+- pendências antigas visíveis e acionáveis;
+- botão `Enviar X para a planilha`.
+
+Retenção:
+- recebidos do dia permanecem visíveis durante o dia, inclusive já enviados;
+- na virada do dia, somente registros `confirmed` antigos podem ser removidos;
+- pendentes/falhos/não confirmados **nunca** devem desaparecer automaticamente à meia-noite;
+- limpeza manual remove somente já enviados/confirmados.
+
+A aba `Dados` usa:
+- C = Pedido/BR
+- D = Motivo do APP
+- E = Driver ID
+- F = Motorista
+- G = Transportadora 3PL
+- I = Bairro
+- J = Data da ocorrência
+- A, B e H não devem ser alteradas;
+- C controla ocupação da linha;
+- linha verde é separador de lote e nunca recebe BR;
+- entradas manuais devem ser preservadas;
+- deduplicação autoritativa é BR + timestamp em `_SPX_DV_CONTROLE`.
+
+Importante: editar `apps-script/recebimento-onhold-dados.gs` no GitHub **não publica o Web App**. Após qualquer alteração no Apps Script é necessário atualizar/reimplantar manualmente a mesma implantação, preservando a URL `/exec`.
+
+### Histórico e regras de recomendação
+Histórico base:
+`GET /api/fleet_order/order/detail/recipient_info?shipment_id=<BR>&station_type=3`
+
+Ocorrências:
+`data.recipient.On_Hold`
+
+Motivos válidos:
+- endereço não encontrado
+- palavra-chave incorreta ou não informada
+- comércio fechado
+- recusado por terceiros
+- ausente
+
+Motivos finais:
+- não entregar
+- mudança de endereço
+- rejeitado pelo comprador
+
+Recomendação:
+- última ocorrência Fora de Rota -> `REALOCAR / FLEET`;
+- qualquer motivo final -> `RETORNAR AO SOC`;
+- 3 **dias distintos** com motivos válidos -> `RETORNAR AO SOC`;
+- endereço pendente -> `TRATATIVA DE ENDEREÇO`;
+- caso contrário -> `PROCESSAR PARA ENTREGA`.
+
+Nunca transformar a regra de 3 dias distintos em 3 ocorrências.
+
+### Fluxo normal x fluxo Return
+Não misturar os ciclos.
+
+Normal:
+- `LMHub_Onhold`
+- `Delivering`
+
+Return:
+- `Return_LMHub_Onhold` / UI `Retorno_LMHub_Em_Espera`
+- `Return_LMHub_Returning` / UI `Retorno_LMHub_Retornando`
+
+A primeira entrada real no Return marca a fronteira entre o ciclo normal antigo e o ciclo Return atual. Eventos posteriores de Return pertencem ao mesmo ciclo. Não usar códigos numéricos 128/124 como classificação global; eles já produziram falso positivo. A classificação Return deve continuar semântica/textual, usando os sinais reais do tracking.
+
+A separação de ciclos foi validada no ambiente real na linha da v1.3.17.
+
+Ocorrências legítimas no mesmo dia e com o mesmo motivo podem ser eventos distintos; não deduplicar por proximidade temporal.
+
+### Motorista / Driver ID / Transportadora por ocorrência
+A ocorrência normal é associada ao `Delivering`/Assignment Task imediatamente anterior.
+
+O tracking contém mensagens como:
+`Pedido adicionado à Assignment Task [AT...]`
+
+A AT é consultada por:
+`POST /spx_delivery/admin/assignment/assignment_task/search/v2`
+
+Payload:
+`{ assignment_task_id, pageno: 1, count: 20, search_type: 0 }`
+
+A resposta fornece AT, motorista/Driver ID e agência/3PL. O módulo usa cache de AT e valida Driver ID. Em ocorrência sintética de Return, mostrar Operador quando disponível; não inventar motorista/3PL.
+
+### Bairro — arquitetura atual
+A solução por exportação CSV foi uma etapa intermediária e **não é mais a fonte principal**.
+
+Descoberta confirmada em ambiente real:
+`GET /api/fleet_order/order/detail/trade_info?shipment_id=<BR>`
+
+Para BR normal:
+- usar `data.buyer_info.buyer_geo_lat`
+- usar `data.buyer_info.buyer_geo_lng`
+- corresponde ao localizador superior da tela de detalhe, destinatário/comprador.
+
+Para BR Return:
+- usar `data.seller_info.seller_geo_lat`
+- usar `data.seller_info.seller_geo_lng`
+- corresponde ao localizador inferior, remetente/vendedor.
+
+Não usar:
+- `data.return_info.return_dest_geo_lat/lng` quando vier `0,0`.
+
+A validação da v1.3.38 confirmou em casos reais que o reverse geocoding retornou o bairro correto tanto no normal quanto no Return.
+
+Conversão atual:
+`trade_info -> latitude/longitude -> Web App ?view=geo -> Apps Script Maps.newGeocoder().reverseGeocode -> Bairro`
+
+O geocoder recebe somente latitude/longitude arredondadas; não recebe BR, nome, telefone ou endereço. O SPX-DV não persiste/cacheia o resultado do Google Maps no Apps Script.
+
+Fallback temporário da v1.3.39/1.3.40:
+- normal: pode tentar a cache central antiga `_SPX_DV_BAIRROS` se geolocalização/geocoder falhar;
+- Return: pode usar `show_sensitive_data?data_field=seller_addr_district` somente como fallback;
+- a exportação automática de Bairro está **DESLIGADA** (`NEIGHBOR_EXPORT_AUTO_ENABLED = false`);
+- não criar tarefas de exportação de Bairro automaticamente.
+
+A página `#/exceptionOnholdList`/exportação foi usada somente para investigar Bairro/Sort Code. Ela **nunca** deve ser usada como fonte de recebimento, `received_at`, status de recebimento ou Dashboard.
+
+### Velocidade do Bairro — requisito operacional
+O recebimento trabalha com muitos pacotes em sequência. O operador não pode ficar esperando Bairro.
+
+Comportamento desejado:
+- painel abre imediatamente;
+- se o Bairro ainda não chegou, pode mostrar `Bairro: Consultando...`;
+- o bip e o recebimento do SPX jamais podem ficar bloqueados pelo geocoder;
+- o Bairro deve aparecer o mais próximo possível da abertura do painel.
+
+Na v1.3.39 um vídeo real mostrou aproximadamente:
+- novo BR em ~6,6 s do vídeo;
+- painel com `Consultando...` em ~7,6 s;
+- Bairro preenchido em ~9,4 s;
+- cerca de 1,8 s entre painel visível e Bairro.
+
+A v1.3.40 foi criada especificamente para reduzir esse atraso:
+- `tracking_info` e `trade_info` começam imediatamente;
+- assim que ambos chegam, o geocoding já começa;
+- `recipient_info`, AT/3PL e demais cálculos continuam em paralelo;
+- no recebimento real, o Bairro também começa antes do enriquecimento da AT;
+- o resultado pré-carregado é reutilizado ao salvar no Dashboard para evitar uma segunda chamada na mesma captura.
+
+**Situação atual:** v1.3.40 passou por validação estática/sintática, mas a melhora de velocidade ainda precisa ser validada em novo teste real/vídeo. Não chamar v1.3.40 de estável ainda.
+
+### Fonte autoritativa por responsabilidade
+Para evitar regressões, cada fonte tem um papel específico:
+
+- `POST /api/in-station/uni_receive/order` -> **recebimento real**.
+- `recipient_info` -> histórico `On_Hold`.
+- `tracking_info` -> ciclo normal/Return, eventos, ATs e contexto operacional.
+- `assignment_task/search/v2` -> motorista/Driver ID/agência da ocorrência.
+- `trade_info` -> coordenadas buyer/seller para Bairro.
+- Apps Script `?view=geo` -> reverse geocoding das coordenadas para nome do Bairro.
+- Dashboard + botão explícito -> única passagem operacional da fila para `Dados`.
+- `exceptionOnholdList`/export -> somente investigação histórica de Sort Code/Bairro; **não usar para recebimento**.
+
+### Endereço não encontrado
+O cancelamento automático do modal `Interceptado no Meio do Caminho` continua:
+`POST /api/in-station/admin/common_site/eha/cancel_eo_reason`
+
+Parâmetros:
+- `reason_id = ER40`
+- `reason_desc = Onhold with Delivery Address Issue`
+
+A integração antiga de planilha relacionada ao cancelamento deve ocorrer apenas após cancelamento real bem-sucedido. Não usar esse fluxo para representar recebimento.
+
+### Estado das versões mais recentes
+- v1.3.17: separação Return validada em ambiente real.
+- v1.3.18: abertura/reentrada nas rotas SPA de recebimento validada.
+- v1.3.19+: enriquecimento por AT/3PL por ocorrência.
+- v1.3.27: confiabilidade do envio antigo/Apps Script melhorada.
+- v1.3.32: Dashboard central e reconciliação com `_SPX_DV_CONTROLE`.
+- v1.3.36: recebimento real por `/uni_receive/order`, Dashboard como fila e envio explícito em lote para Dados.
+- v1.3.37: diagnóstico das coordenadas buyer/seller.
+- v1.3.38: reverse geocoding testado manualmente e retornou bairro correto em normal e Return.
+- v1.3.39: Bairro geográfico passou a ser fonte operacional; vídeo real confirmou funcionamento, mas mostrou atraso visual perceptível.
+- v1.3.40: geocoding antecipado/paralelo para reduzir esse atraso; **validação real de velocidade pendente**.
+
+### Próximo teste recomendado
+Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.40:
+
+1. carregar v1.3.40;
+2. bipar/colar BR normal e observar se o Bairro já aparece junto do painel ou quanto tempo fica em `Consultando...`;
+3. repetir com Return;
+4. confirmar que o operador consegue continuar bipando sem qualquer bloqueio;
+5. fazer recebimento real e verificar que somente a resposta `/uni_receive/order retcode=0` cria a ficha no Dashboard;
+6. confirmar Bairro correto no Dashboard;
+7. confirmar que nenhuma tarefa automática de exportação de Bairro foi criada;
+8. testar `Enviar X para a planilha` e confirmar o mesmo Bairro em `Dados`;
+9. somente após esses testes decidir se v1.3.40 pode ser marcada como validada ou se ainda é necessário reduzir latência.
+
+### Disciplina de continuidade
+Em uma conversa nova, não pedir ao usuário para reexplicar tudo acima. Leia este arquivo e continue do estado atual. Se algo parecer contraditório em seções antigas, procure primeiro a versão mais recente documentada e o código atual antes de propor mudanças.
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".

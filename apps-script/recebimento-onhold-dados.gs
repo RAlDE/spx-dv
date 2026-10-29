@@ -119,6 +119,8 @@ function dashboardCheckResponse_(e) {
     const record = dashboardRecordFromRow_(
       sheet.getRange(row, 1, 1, 14).getValues()[0]
     );
+    const today = Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
+    const effectiveDay = dashboardEffectiveDay_(record);
 
     return jsonpResponse_(e, {
       ok: true,
@@ -126,7 +128,10 @@ function dashboardCheckResponse_(e) {
       build: SPX_DV_BUILD,
       occurrence_key: record.occurrenceKey,
       shipment_id: record.shipmentId,
-      received_day: record.receivedDay,
+      received_day: effectiveDay,
+      source_received_day: record.receivedDay,
+      today: today,
+      visible_today: effectiveDay === today,
       received_at: record.receivedAt,
       status: record.status
     });

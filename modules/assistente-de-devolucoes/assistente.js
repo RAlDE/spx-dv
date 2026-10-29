@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.42';
+  const MODULE_VERSION = '1.3.43';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -2498,6 +2498,30 @@
     }
   }
 
+  function installRealReceiveBridge() {
+    const readyKey = '__SPX_DV_REAL_RECEIVE_BRIDGE_READY_V1__';
+    const bufferKey = '__SPX_DV_REAL_RECEIVE_BUFFER_V1__';
+    const eventName = 'spx-dv:real-receive-v1';
+
+    if (window[readyKey]) return;
+
+    const consume = detail => {
+      if (!detail || typeof detail !== 'object') return;
+      handleRealReceiveResponse(detail.meta || {}, detail.payload || null);
+    };
+
+    window.addEventListener(eventName, event => {
+      consume(event?.detail);
+    });
+
+    const buffered = Array.isArray(window[bufferKey])
+      ? window[bufferKey].splice(0)
+      : [];
+
+    window[readyKey] = true;
+    buffered.forEach(consume);
+  }
+
   function findRecentAutoAddTarget(tracking, scanUnix) {
     const lowerBound = Number(scanUnix) - 30;
     const upperBound = Number(scanUnix) + 14400;
@@ -3020,6 +3044,7 @@
   window.setInterval(ensureNeighborhoodDiagnosticUi, 500);
   window.setInterval(ensureGeoDiagnosticUi, 500);
 
+  installRealReceiveBridge();
   installReturnNetworkDiagnostic();
   ensureNeighborhoodDiagnosticUi();
   ensureGeoDiagnosticUi();

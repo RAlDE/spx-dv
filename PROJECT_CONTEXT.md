@@ -1173,3 +1173,23 @@ Ainda requer validação real antes de considerar estável:
 3. bip/recebimento deve continuar fluido mesmo se o geocoder demorar;
 4. recebimento real deve criar Dashboard com bairro;
 5. envio em lote do Dashboard deve levar o mesmo bairro para Dados.
+
+
+## Atualização 1.3.40 — geocoding antecipado para reduzir tempo visual do Bairro
+Após vídeo real da 1.3.39, o painel apareceu com `Bairro: Consultando...` e o bairro chegou depois. A análise mostrou que o reverse geocoding só começava após parte da montagem de histórico/AT/3PL.
+
+A 1.3.40 reorganiza somente a ordem das chamadas:
+- `tracking_info` e `trade_info` são iniciados imediatamente;
+- assim que ambos chegam, o fluxo normal/Return já é conhecido e o reverse geocoding começa;
+- `recipient_info`, enriquecimento de AT/3PL e demais cálculos seguem em paralelo;
+- a prévia do painel não precisa aguardar o Bairro;
+- o recebimento real também inicia o Bairro antes do enriquecimento de AT e reaproveita esse resultado na captura do Dashboard, evitando uma segunda chamada de geocoding dentro da mesma captura;
+- fonte permanece `trade_info`: buyer_geo para LMHub normal e seller_geo para Return;
+- Apps Script não foi alterado nesta versão;
+- exportação automática continua desligada.
+
+Objetivo de validação real:
+- reduzir ou eliminar o tempo visível em `Bairro: Consultando...`;
+- manter o bip/recebimento sem qualquer espera adicional;
+- confirmar que normal e Return continuam retornando o bairro correto;
+- confirmar que Dashboard/Dados continuam recebendo o mesmo bairro após recebimento real.

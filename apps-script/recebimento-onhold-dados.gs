@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.51';
+const SPX_DV_BUILD = '1.3.52';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -49,7 +49,7 @@ function doGet(e) {
 
     return HtmlService
       .createHtmlOutput(
-        dashboardHtml_(initialData, ScriptApp.getService().getUrl(), e && e.parameter ? e.parameter : {})
+        dashboardHtml_(initialData)
       )
       .setTitle('SPX-DV · Dashboard de Recebimento');
   }
@@ -1244,7 +1244,7 @@ function dashboardTopDriversHtml_(records) {
     '</tr></thead><tbody>' + body + '</tbody></table>';
 }
 
-function dashboardHtml_(initialData, serviceUrl, params) {
+function dashboardHtml_(initialData) {
   const data = initialData && typeof initialData === 'object'
     ? initialData
     : {
@@ -1272,42 +1272,25 @@ function dashboardHtml_(initialData, serviceUrl, params) {
   const pendingToday = todayRecords.filter(function(record) {
     return clean_(record && record.status).toLowerCase() !== 'confirmed';
   });
+  const confirmedToday = todayRecords.filter(function(record) {
+    return clean_(record && record.status).toLowerCase() === 'confirmed';
+  });
   const allPending = records.filter(function(record) {
     return clean_(record && record.status).toLowerCase() !== 'confirmed';
   });
-  const operatorsToday = {};
+
+  const operatorCounts = {};
   todayRecords.forEach(function(record) {
     const login = clean_(record && record.operator_login).toLowerCase();
-    if (login) operatorsToday[login] = true;
+    if (!login) return;
+    operatorCounts[login] = Number(operatorCounts[login] || 0) + 1;
   });
 
   const sortedToday = todayRecords.slice().sort(function(a, b) {
     return Number(b && b.received_at || 0) - Number(a && a.received_at || 0);
   });
 
-  const serverOperator = clean_(params && params.operator).toLowerCase();
-  const serverSearchText = clean_(params && params.q);
-  const serverSearch = serverSearchText.toLowerCase();
-  const serverFilteredToday = sortedToday.filter(function(record) {
-    const login = clean_(record && record.operator_login).toLowerCase();
-    if (serverOperator && login !== serverOperator) return false;
-    if (!serverSearch) return true;
-
-    const haystack = [
-      record && record.shipment_id,
-      record && record.reason,
-      record && record.driver_id,
-      record && record.driver_name,
-      record && record.agency,
-      record && record.neighborhood,
-      record && record.operator_login
-    ].map(clean_).join(' ').toLowerCase();
-
-    return haystack.indexOf(serverSearch) >= 0;
-  });
-  const serverTopDriversHtml = dashboardTopDriversHtml_(todayRecords);
-
-  const serverRowsHtml = serverFilteredToday.map(function(record) {
+  const serverRowsHtml = sortedToday.map(function(record) {
     return '<tr>' +
       '<td>' + dashboardHtmlEscape_(dashboardFormatMillis_(record.received_at)) + '</td>' +
       '<td><strong>' + dashboardHtmlEscape_(record.shipment_id) + '</strong></td>' +
@@ -1321,36 +1304,17 @@ function dashboardHtml_(initialData, serviceUrl, params) {
       '</tr>';
   }).join('');
 
-  const serverOperatorOptions = Object.keys(operatorsToday)
+  const serverOperatorOptions = Object.keys(operatorCounts)
     .sort()
     .map(function(login) {
-      return '<option value="' + dashboardHtmlEscape_(login) + '"' +
-        (login === serverOperator ? ' selected' : '') +
-        '>' + dashboardHtmlEscape_(login) + '</option>';
+      return '<option value="' + dashboardHtmlEscape_(login) + '" data-count="' +
+        operatorCounts[login] + '">' +
+        dashboardHtmlEscape_(login) + ' (' + operatorCounts[login] + ')' +
+        '</option>';
     })
     .join('');
 
-  const baseUrl = clean_(serviceUrl || '');
-  const refreshQuery = [
-    'view=dashboard',
-    'build=' + encodeURIComponent(SPX_DV_BUILD),
-    '_=' + Date.now()
-  ];
-  if (serverOperator) refreshQuery.push('operator=' + encodeURIComponent(serverOperator));
-  if (serverSearchText) refreshQuery.push('q=' + encodeURIComponent(serverSearchText));
-  const refreshUrl = baseUrl + '?' + refreshQuery.join('&');
-  const clearFilterUrl = baseUrl +
-    '?view=dashboard&build=' + encodeURIComponent(SPX_DV_BUILD) +
-    '&_=' + Date.now();
-
-  const initialJson = JSON.stringify(data)
-    .replace(/</g, '\\u003c')
-    .replace(/\\u2028/g, '\\\\u2028')
-    .replace(/\\u2029/g, '\\\\u2029');
-
-  const serviceUrlJson = JSON.stringify(baseUrl)
-    .replace(/</g, '\\u003c');
-
+  const serverTopDriversHtml = dashboardTopDriversHtml_(todayRecords);
   const serverBuildInfo =
     'servidor ' + SPX_DV_BUILD +
     ' · base ' + records.length +
@@ -1365,262 +1329,217 @@ function dashboardHtml_(initialData, serviceUrl, params) {
           ' pendência(s) de dias anteriores.</div>'
         : '');
 
-  const serverEmptyText = serverFilteredToday.length
-    ? ''
-    : '<div class="empty">' +
-        (sortedToday.length
-          ? 'Nenhum recebimento corresponde ao filtro.'
-          : 'Nenhum recebimento hoje.') +
-      '</div>';
-
   return `<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<base target="_top">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SPX-DV · Dashboard</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#020202;color:#f8fafc;font:13px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}main{max-width:1600px;margin:auto;padding:26px 20px}
 header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:16px 18px;border:1px solid #4a260f;border-radius:14px;background:#070707;box-shadow:0 0 22px rgba(249,115,22,.16),inset 0 -1px rgba(249,115,22,.3)}h1{font-size:27px;letter-spacing:-.5px;margin:0;text-shadow:0 0 16px rgba(249,115,22,.34)}h2{font-size:16px;margin:0;color:#fff7ed;text-shadow:0 0 11px rgba(249,115,22,.26)}.muted{color:#9ca3af}.actions,.filters{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
-button,select,input{font:inherit}button,.button-link{background:#111;color:#fff;border:1px solid #6b3415;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750;box-shadow:0 0 12px rgba(249,115,22,.1);text-decoration:none;display:inline-block}button:hover,.button-link:hover{background:#1a0d07;border-color:#f97316}button:disabled{opacity:.45;cursor:not-allowed}button.danger{color:#fed7aa}button.primary{background:#f97316;border-color:#fb923c;color:#140800;box-shadow:0 0 18px rgba(249,115,22,.24)}button.primary:hover{background:#fb923c}
-.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415}.metric.clickable{cursor:pointer}.metric.clickable:hover,.metric.clickable.active{border-color:#f97316;box-shadow:0 0 20px rgba(249,115,22,.18),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
+button,select,input{font:inherit}button{background:#111;color:#fff;border:1px solid #6b3415;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750;box-shadow:0 0 12px rgba(249,115,22,.1)}button:hover{background:#1a0d07;border-color:#f97316}button:disabled{opacity:.45;cursor:not-allowed}button.danger{color:#fed7aa}button.primary{background:#f97316;border-color:#fb923c;color:#140800;box-shadow:0 0 18px rgba(249,115,22,.24)}button.primary:hover{background:#fb923c}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
 .panel{margin-bottom:16px}.panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}
-.search{width:min(360px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}.operator-filter{padding:10px 12px;background:#030303;border:1px solid #6b3415;color:#fff;border-radius:9px;min-width:210px}
-.ranking-wrap{overflow:auto;border:1px solid #2b211b;border-radius:10px;background:#050505}.ranking-table{border-collapse:collapse;width:max-content;min-width:100%;background:#050505}.ranking-table th,.ranking-table td{border:1px solid #2a2a2a;padding:8px 10px;text-align:center;white-space:nowrap}.ranking-table thead th{position:sticky;top:0;z-index:2;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.25px}.ranking-table .rank-col{width:54px;min-width:54px}.ranking-table .driver-col{min-width:270px;text-align:left}.ranking-table .agency-col{min-width:150px;text-align:left}.ranking-table .total-col{min-width:78px;font-size:15px;font-weight:900;color:#fb923c;background:#130a05}.ranking-table .reason-head{height:132px;min-width:58px;padding:0 6px;vertical-align:bottom}.ranking-table .reason-head>span{display:inline-block;transform:rotate(-52deg);transform-origin:left bottom;white-space:nowrap;margin-left:22px;margin-bottom:10px;color:#fdba74;font-size:10px;text-transform:none;letter-spacing:0}.ranking-table tbody tr:hover{background:#100b08}.ranking-table .reason-count{font-weight:900;color:#f97316}.ranking-table .reason-zero{color:#4b5563}.rank-number{display:inline-grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#351a0b;color:#fdba74;font-weight:900}.rank-driver-name{font-weight:800;color:#fff}.rank-driver-id{display:block;color:#9ca3af;font-size:10px;margin-top:2px}.rank-toggle{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;border:1px solid #6b3415;background:#0b0705;color:#fdba74;font-size:18px;font-weight:900;cursor:pointer;box-shadow:0 0 12px rgba(249,115,22,.1)}.rank-toggle:hover{border-color:#f97316;background:#1a0d07}.ranking-collapsed{display:none}.top-summary{cursor:pointer;list-style:none}.top-summary::-webkit-details-marker{display:none}.top-summary::after{content:'▸';display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;border:1px solid #6b3415;background:#0b0705;color:#fdba74;font-size:18px;font-weight:900;box-shadow:0 0 12px rgba(249,115,22,.1)}details[open]>.top-summary::after{content:'▾'}.filter-info{font-size:11px;color:#a3a3a3;white-space:nowrap}
-.table-wrap{max-height:64vh;overflow:auto;border:1px solid #262626;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1450px;background:#050505}th,td{padding:11px 12px;border-bottom:1px solid #262626;text-align:left;vertical-align:top}th{position:sticky;top:0;z-index:1;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.35px;box-shadow:inset 0 -1px #7c2d12,0 4px 14px rgba(249,115,22,.08)}tbody tr:hover{background:#100b08}
-.status{display:inline-flex;padding:4px 8px;border-radius:999px;background:#f59e0b2c;color:#fde68a;font-size:11px;font-weight:800}.status.confirmed{background:#16a34a2c;color:#bbf7d0}.warning{margin:0 0 16px;padding:11px 14px;border:1px solid #f59e0b55;border-radius:10px;background:#78350f25;color:#fde68a}.empty{padding:30px;text-align:center;color:#94a3b8}footer{color:#94a3b8;font-size:11px}
-@media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}main{padding:14px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
+.search{width:min(390px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}.operator-filter{padding:10px 12px;background:#030303;border:1px solid #6b3415;color:#fff;border-radius:9px;min-width:280px}.filter-badge{display:inline-flex;align-items:center;min-height:38px;padding:8px 11px;border:1px solid #3f3f46;border-radius:9px;background:#050505;color:#fdba74;font-weight:800}.filter-info{font-size:12px;color:#d1d5db;white-space:nowrap}
+.ranking-wrap{overflow:auto;border:1px solid #2b211b;border-radius:10px;background:#050505}.ranking-table{border-collapse:collapse;width:max-content;min-width:100%;background:#050505}.ranking-table th,.ranking-table td{border:1px solid #2a2a2a;padding:8px 10px;text-align:center;white-space:nowrap}.ranking-table thead th{position:sticky;top:0;z-index:2;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.25px}.ranking-table .rank-col{width:54px;min-width:54px}.ranking-table .driver-col{min-width:270px;text-align:left}.ranking-table .agency-col{min-width:150px;text-align:left}.ranking-table .total-col{min-width:78px;font-size:15px;font-weight:900;color:#fb923c;background:#130a05}.ranking-table .reason-head{height:132px;min-width:58px;padding:0 6px;vertical-align:bottom}.ranking-table .reason-head>span{display:inline-block;transform:rotate(-52deg);transform-origin:left bottom;white-space:nowrap;margin-left:22px;margin-bottom:10px;color:#fdba74;font-size:10px;text-transform:none;letter-spacing:0}.ranking-table tbody tr:hover{background:#100b08}.ranking-table .reason-count{font-weight:900;color:#f97316}.ranking-table .reason-zero{color:#4b5563}.rank-number{display:inline-grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#351a0b;color:#fdba74;font-weight:900}.rank-driver-name{font-weight:800;color:#fff}.rank-driver-id{display:block;color:#9ca3af;font-size:10px;margin-top:2px}.top-summary{cursor:pointer;list-style:none}.top-summary::-webkit-details-marker{display:none}.top-summary::after{content:'▸';display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;border:1px solid #6b3415;background:#0b0705;color:#fdba74;font-size:18px;font-weight:900;box-shadow:0 0 12px rgba(249,115,22,.1)}details[open]>.top-summary::after{content:'▾'}
+.table-wrap{max-height:64vh;overflow:auto;border:1px solid #262626;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1450px;background:#050505}th,td{padding:11px 12px;border-bottom:1px solid #262626;text-align:left;vertical-align:top}thead tr:first-child th{position:sticky;top:0;z-index:3;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.35px;box-shadow:inset 0 -1px #7c2d12,0 4px 14px rgba(249,115,22,.08)}.column-filters th{position:sticky;top:39px;z-index:2;background:#080503;padding:7px}.column-filter{width:100%;min-width:90px;padding:7px 8px;background:#020202;border:1px solid #3f3f46;color:#fff;border-radius:7px;font-size:11px}.column-filter::placeholder{color:#6b7280}tbody tr:hover{background:#100b08}
+.warning{margin:0 0 16px;padding:11px 14px;border:1px solid #f59e0b55;border-radius:10px;background:#78350f25;color:#fde68a}.empty{padding:30px;text-align:center;color:#94a3b8}.action-status{min-height:18px;margin-top:9px;color:#fdba74;font-size:11px}footer{color:#94a3b8;font-size:11px}
+@media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}main{padding:14px}.operator-filter{min-width:220px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
 </style>
 </head>
 <body><main>
-<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila · <span id="buildInfo">${dashboardHtmlEscape_(serverBuildInfo)}</span></div></div><div class="actions"><button id="sendPending" class="primary"${allPending.length ? '' : ' disabled'}>Enviar ${allPending.length} para a planilha</button><button id="clearConfirmed" class="danger">Limpar já enviados</button><a id="refresh" class="button-link" href="${dashboardHtmlEscape_(refreshUrl)}">Atualizar</a></div></header>
+<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila · <span id="buildInfo">${dashboardHtmlEscape_(serverBuildInfo)}</span></div></div><div><div class="actions"><button id="sendPending" class="primary"${allPending.length ? '' : ' disabled'}>Enviar ${allPending.length} para a planilha</button><button id="clearConfirmed" class="danger"${confirmedToday.length ? '' : ' disabled'}>Limpar já enviados</button><button id="refresh" type="button">Atualizar</button></div><div id="actionStatus" class="action-status"></div></div></header>
 <div id="warning">${serverWarningHtml}</div>
 <section class="metrics">
-<div class="metric clickable active" id="cardToday"><span>Recebidos hoje</span><strong id="mTotal">${todayRecords.length}</strong></div>
-<div class="metric clickable" id="cardPending"><span>Pendências</span><strong id="mPending">${pendingToday.length}</strong></div>
-<div class="metric clickable" id="cardOld"><span>Pendentes antigos</span><strong id="mOld">${oldPending.length}</strong></div>
-<div class="metric"><span>Operadores hoje</span><strong id="mOperators">${Object.keys(operatorsToday).length}</strong></div>
+<div class="metric"><span>Recebidos hoje</span><strong id="mTotal">${todayRecords.length}</strong></div>
+<div class="metric"><span>Pendências hoje</span><strong id="mPending">${pendingToday.length}</strong></div>
+<div class="metric"><span>Pendentes antigos</span><strong id="mOld">${oldPending.length}</strong></div>
+<div class="metric"><span>Operadores hoje</span><strong id="mOperators">${Object.keys(operatorCounts).length}</strong></div>
 </section>
 <section class="panel">
 <details open>
-<summary class="panel-head top-summary"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted">Matriz por motorista e ocorrência. Só aparecem motivos com quantidade no Top 10.</div></div></summary>
+<summary class="panel-head top-summary"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted">Matriz calculada no servidor. Clique no cabeçalho para abrir ou fechar.</div></div></summary>
 <div class="ranking-wrap"><div id="topDrivers">${serverTopDriversHtml}</div></div>
 </details>
 </section>
 <section class="panel">
-<div class="panel-head"><div><h2 id="tableTitle">Recebimentos de hoje</h2><div id="tableSubtitle" class="muted">Todos os logins e computadores aparecem nesta mesma fila central.</div></div><form class="filters" method="get" action="${dashboardHtmlEscape_(baseUrl)}"><input type="hidden" name="view" value="dashboard"><input type="hidden" name="build" value="${dashboardHtmlEscape_(SPX_DV_BUILD)}"><select id="operator" name="operator" class="operator-filter"><option value="">Todos os operadores</option>${serverOperatorOptions}</select><input id="search" name="q" class="search" value="${dashboardHtmlEscape_(serverSearchText)}" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"><button type="submit">Filtrar</button><a class="button-link" href="${dashboardHtmlEscape_(clearFilterUrl)}">Limpar filtro</a><span class="filter-info">${serverFilteredToday.length} de ${sortedToday.length}</span></form></div>
-<div class="table-wrap"><table><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th></tr></thead><tbody id="rows">${serverRowsHtml}</tbody></table><div id="empty" class="empty"${serverFilteredToday.length ? ' hidden' : ''}>${serverEmptyText}</div></div>
+<div class="panel-head"><div><h2>Recebimentos de hoje</h2><div class="muted">Filtros locais: nenhum filtro navega para script.google.com.</div></div><div class="filters"><select id="operator" class="operator-filter"><option value="" data-count="${todayRecords.length}">Todos os operadores (${todayRecords.length})</option>${serverOperatorOptions}</select><span id="operatorCount" class="filter-badge">${todayRecords.length} recebidos</span><input id="generalSearch" class="search" placeholder="Filtro geral: pedido, login, motorista, 3PL, bairro, motivo..."><button id="clearFilters" type="button">Limpar filtros</button><span id="filterInfo" class="filter-info">Mostrando ${todayRecords.length} de ${todayRecords.length}</span></div></div>
+<div class="table-wrap"><table id="receiveTable"><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th></tr><tr class="column-filters"><th><input class="column-filter" data-col="0" placeholder="Filtrar data"></th><th><input class="column-filter" data-col="1" placeholder="Filtrar pedido"></th><th><input class="column-filter" data-col="2" placeholder="Filtrar motivo"></th><th><input class="column-filter" data-col="3" placeholder="Filtrar ID"></th><th><input class="column-filter" data-col="4" placeholder="Filtrar motorista"></th><th><input class="column-filter" data-col="5" placeholder="Filtrar 3PL"></th><th><input class="column-filter" data-col="6" placeholder="Filtrar bairro"></th><th><input class="column-filter" data-col="7" placeholder="Filtrar ocorrência"></th><th><input class="column-filter" data-col="8" placeholder="Filtrar login"></th></tr></thead><tbody id="rows">${serverRowsHtml}</tbody></table><div id="empty" class="empty"${todayRecords.length ? ' hidden' : ''}>Nenhum recebimento corresponde aos filtros.</div></div>
 </section>
 <footer>Recebimentos confirmados pelo SPX ficam na fila até o envio explícito para Dados. Pendências antigas nunca são apagadas automaticamente.</footer>
 </main>
 <script>
-const INITIAL_DATA=${initialJson};
-const DASHBOARD_SERVICE_URL=${serviceUrlJson};
-const state={data:INITIAL_DATA,view:'today',requesting:false};
-const $=id=>document.getElementById(id);
-const esc=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
-const dt=ms=>ms?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(Number(ms))):'-';
-const occ=sec=>sec?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(Number(sec)*1000)):'-';
+(function(){
+  'use strict';
 
-function dashboardJsonp(view,params={},timeoutMs=8000){
-  return new Promise(resolve=>{
-    if(!DASHBOARD_SERVICE_URL){resolve(null);return;}
-    const callback='__spxDvDash_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
-    const script=document.createElement('script');
-    let done=false;
-    const finish=value=>{
-      if(done)return;
-      done=true;
-      clearTimeout(timer);
-      try{script.remove();}catch{}
-      try{delete window[callback];}catch{}
-      resolve(value&&typeof value==='object'?value:null);
-    };
-    window[callback]=value=>finish(value);
-    const query=new URLSearchParams({view,callback,_:String(Date.now())});
-    Object.entries(params||{}).forEach(([k,v])=>query.set(k,String(v??'')));
-    const timer=setTimeout(()=>finish(null),Math.max(2500,Number(timeoutMs)||8000));
-    script.async=true;
-    script.src=DASHBOARD_SERVICE_URL+'?'+query.toString();
-    script.onerror=()=>finish(null);
-    script.onload=()=>setTimeout(()=>finish(null),0);
-    (document.head||document.documentElement).appendChild(script);
-  });
-}
-
-async function requestData(){
-  if(state.requesting)return;
-  state.requesting=true;
-  try{
-    const data=await dashboardJsonp('dashboard_data');
-    if(!data)throw new Error('Servidor não respondeu ao dashboard_data');
-    state.data=data;
-    render();
-  }catch(err){
-    $('warning').innerHTML='<div class="warning">Falha ao atualizar Dashboard: '+esc(err&&err.message||err)+'</div>';
-  }finally{
-    state.requesting=false;
+  function byId(id){ return document.getElementById(id); }
+  function normalize(value){
+    return String(value == null ? '' : value)
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\\u0300-\\u036f]/g,'')
+      .trim();
   }
-}
 
-function render(){
-  const data=state.data||{today:'',records:[]};
-  if(data.ok===false&&data.error){
-    $('warning').innerHTML='<div class="warning">Falha ao carregar dados do Dashboard: '+esc(data.error)+'</div>';
+  function rows(){
+    return Array.prototype.slice.call(document.querySelectorAll('#rows tr'));
   }
-  const records=Array.isArray(data.records)?data.records:[];
-  const today=Array.isArray(data.today_records)
-    ? data.today_records
-    : records.filter(r=>r.received_day===data.today);
-  const pendingToday=today.filter(r=>r.status!=='confirmed');
-  const oldPending=Array.isArray(data.old_pending)
-    ? data.old_pending
-    : records.filter(r=>r.received_day&&r.received_day!==data.today&&r.status!=='confirmed');
-  const allPending=records.filter(r=>r.status!=='confirmed');
 
-  $('buildInfo').textContent='servidor '+esc(data.build||'?')+' · '+records.length+' registro(s) · hoje '+today.length;
-  $('mTotal').textContent=today.length;
-  $('mPending').textContent=pendingToday.length;
-  $('mOld').textContent=oldPending.length;
-  $('mOperators').textContent=new Set(today.map(r=>r.operator_login).filter(Boolean)).size;
-  $('sendPending').textContent='Enviar '+allPending.length+' para a planilha';
-  $('sendPending').disabled=allPending.length===0;
-  $('warning').innerHTML=oldPending.length?'<div class="warning">⚠ '+oldPending.length+' pendência(s) de dias anteriores. Elas também entram no envio em lote.</div>':'';
+  function selectedOperatorCount(){
+    var select=byId('operator');
+    if(!select || select.selectedIndex < 0) return 0;
+    var option=select.options[select.selectedIndex];
+    return Number(option && option.getAttribute('data-count') || 0);
+  }
 
-  const drivers=new Map();
-  today.forEach(r=>{
-    const id=String(r.driver_id||'').trim();
-    const name=String(r.driver_name||'').trim();
-    if(!id&&!name)return;
+  function applyFilters(){
+    try{
+      var operator=normalize(byId('operator') && byId('operator').value);
+      var general=normalize(byId('generalSearch') && byId('generalSearch').value);
+      var columnInputs=Array.prototype.slice.call(document.querySelectorAll('.column-filter'));
+      var columnFilters={};
+      columnInputs.forEach(function(input){
+        columnFilters[Number(input.getAttribute('data-col'))]=normalize(input.value);
+      });
 
-    const key=id||name.toLowerCase();
-    const agency=String(r.agency||'').trim();
-    const reason=String(r.reason||'Sem motivo informado').trim()||'Sem motivo informado';
-    const item=drivers.get(key)||{
-      id,
-      name:name||'Motorista não identificado',
-      agency,
-      count:0,
-      reasons:new Map()
-    };
+      var allRows=rows();
+      var visible=0;
+      allRows.forEach(function(row){
+        var cells=Array.prototype.slice.call(row.cells || []);
+        var cellTexts=cells.map(function(cell){ return normalize(cell.textContent); });
+        var rowText=cellTexts.join(' ');
+        var login=cellTexts[8] || '';
 
-    item.count++;
-    if(!item.agency&&agency)item.agency=agency;
-    item.reasons.set(reason,(item.reasons.get(reason)||0)+1);
-    drivers.set(key,item);
-  });
+        var ok=(!operator || login === operator) && (!general || rowText.indexOf(general) >= 0);
+        if(ok){
+          Object.keys(columnFilters).some(function(key){
+            var filter=columnFilters[key];
+            if(filter && (cellTexts[Number(key)] || '').indexOf(filter) < 0){
+              ok=false;
+              return true;
+            }
+            return false;
+          });
+        }
 
-  const top=[...drivers.values()]
-    .sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name,'pt-BR'))
-    .slice(0,10);
+        row.hidden=!ok;
+        if(ok) visible+=1;
+      });
 
-  const reasonTotals=new Map();
-  top.forEach(driver=>{
-    driver.reasons.forEach((count,reason)=>{
-      if(count>0)reasonTotals.set(reason,(reasonTotals.get(reason)||0)+count);
+      var total=allRows.length;
+      var info=byId('filterInfo');
+      if(info) info.textContent='Mostrando '+visible+' de '+total;
+      var badge=byId('operatorCount');
+      if(badge){
+        var count=operator ? selectedOperatorCount() : total;
+        badge.textContent=count+' recebido'+(count===1?'':'s');
+      }
+      var empty=byId('empty');
+      if(empty) empty.hidden=visible>0;
+    }catch(error){
+      var status=byId('actionStatus');
+      if(status) status.textContent='Filtro indisponível: '+String(error && error.message || error);
+    }
+  }
+
+  function clearFilters(){
+    var operator=byId('operator');
+    var general=byId('generalSearch');
+    if(operator) operator.value='';
+    if(general) general.value='';
+    Array.prototype.slice.call(document.querySelectorAll('.column-filter')).forEach(function(input){
+      input.value='';
     });
-  });
-
-  const visibleReasons=[...reasonTotals.entries()]
-    .filter(([,count])=>count>0)
-    .sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'pt-BR'))
-    .map(([reason])=>reason);
-
-  if(!top.length){
-    $('topDrivers').innerHTML='<div class="empty">Ainda não há motoristas para o ranking de hoje.</div>';
-  }else{
-    const headReasons=visibleReasons.map(reason=>
-      '<th class="reason-head"><span>'+esc(reason)+'</span></th>'
-    ).join('');
-
-    const body=top.map((driver,index)=>{
-      const reasonCells=visibleReasons.map(reason=>{
-        const count=Number(driver.reasons.get(reason)||0);
-        return '<td class="'+(count>0?'reason-count':'reason-zero')+'">'+(count>0?count:'')+'</td>';
-      }).join('');
-
-      return '<tr>'+
-        '<td class="rank-col"><span class="rank-number">'+(index+1)+'</span></td>'+
-        '<td class="driver-col"><span class="rank-driver-name">'+esc(driver.name)+'</span><span class="rank-driver-id">ID: '+esc(driver.id||'Não informado')+'</span></td>'+
-        '<td class="agency-col">'+esc(driver.agency||'Não informado')+'</td>'+
-        '<td class="total-col">'+driver.count+'</td>'+
-        reasonCells+
-      '</tr>';
-    }).join('');
-
-    $('topDrivers').innerHTML=
-      '<table class="ranking-table"><thead><tr>'+
-      '<th class="rank-col">Ranking</th>'+
-      '<th class="driver-col">Driver</th>'+
-      '<th class="agency-col">3PL</th>'+
-      '<th class="total-col">Total</th>'+
-      headReasons+
-      '</tr></thead><tbody>'+body+'</tbody></table>';
+    applyFilters();
   }
 
-  let list=today;
-  if(state.view==='pending')list=pendingToday;
-  if(state.view==='old')list=oldPending;
-  list=[...list].sort((a,b)=>Number(b.received_at||0)-Number(a.received_at||0));
+  function setStatus(message){
+    var el=byId('actionStatus');
+    if(el) el.textContent=String(message || '');
+  }
 
-  $('cardToday').classList.toggle('active',state.view==='today');
-  $('cardPending').classList.toggle('active',state.view==='pending');
-  $('cardOld').classList.toggle('active',state.view==='old');
-  $('tableTitle').textContent=state.view==='pending'?'Pendentes de hoje':state.view==='old'?'Pendentes de dias anteriores':'Recebimentos de hoje';
-  $('tableSubtitle').textContent=state.view==='pending'?'Recebimentos de hoje aguardando o envio explícito para Dados.':state.view==='old'?'Recebimentos de dias anteriores que continuam aguardando envio.':'Todos os recebimentos confirmados pelo SPX hoje.';
+  function bindActionButtons(){
+    var refresh=byId('refresh');
+    if(refresh){
+      refresh.addEventListener('click',function(){
+        setStatus('Atualizando...');
+        window.location.reload();
+      });
+    }
 
-  const operators=[...new Set(list.map(r=>String(r.operator_login||'').trim().toLowerCase()).filter(Boolean))].sort();
-  const previous=$('operator').value;
-  $('operator').innerHTML='<option value="">Todos os operadores</option>'+operators.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');
-  if(operators.includes(previous))$('operator').value=previous;
+    var send=byId('sendPending');
+    if(send){
+      send.addEventListener('click',function(){
+        var count=Number('${allPending.length}');
+        if(!count){ alert('Não há registros na fila para enviar.'); return; }
+        if(!confirm('Enviar '+count+' registro(s) da fila para a aba Dados?')) return;
+        if(!(window.google && google.script && google.script.run)){
+          setStatus('Ação indisponível nesta página.');
+          return;
+        }
+        send.disabled=true;
+        setStatus('Enviando para Dados...');
+        google.script.run
+          .withSuccessHandler(function(result){
+            var sent=Number(result && result.sent || 0);
+            var duplicates=Number(result && result.duplicates || 0);
+            var failed=Number(result && result.failed || 0);
+            setStatus('Concluído: '+sent+' gravados, '+duplicates+' já existentes, '+failed+' falhas.');
+            alert('Envio concluído.\\nGravados: '+sent+'\\nJá existentes: '+duplicates+'\\nFalhas: '+failed);
+            window.location.reload();
+          })
+          .withFailureHandler(function(error){
+            send.disabled=false;
+            setStatus('Falha no envio: '+String(error && error.message || error));
+          })
+          .sendPendingDashboardToData();
+      });
+    }
 
-  const q=String($('search').value||'').trim().toLowerCase(),opFilter=String($('operator').value||'').toLowerCase();
-  const filtered=list.filter(r=>{
-    const text=[r.shipment_id,r.reason,r.driver_id,r.driver_name,r.agency,r.neighborhood,r.operator_login].join(' ').toLowerCase();
-    return (!q||text.includes(q))&&(!opFilter||String(r.operator_login||'').toLowerCase()===opFilter);
-  });
+    var clear=byId('clearConfirmed');
+    if(clear){
+      clear.addEventListener('click',function(){
+        var count=Number('${confirmedToday.length}');
+        if(!count){ alert('Não há registros já enviados para limpar hoje.'); return; }
+        if(!confirm('Limpar '+count+' registro(s) já enviado(s) de hoje?\\n\\nPendências não serão apagadas.')) return;
+        if(!(window.google && google.script && google.script.run)){
+          setStatus('Ação indisponível nesta página.');
+          return;
+        }
+        clear.disabled=true;
+        setStatus('Limpando registros já enviados...');
+        google.script.run
+          .withSuccessHandler(function(result){
+            var removed=Number(result && result.removed || 0);
+            setStatus('Limpeza concluída: '+removed+' removidos.');
+            window.location.reload();
+          })
+          .withFailureHandler(function(error){
+            clear.disabled=false;
+            setStatus('Falha na limpeza: '+String(error && error.message || error));
+          })
+          .clearConfirmedDashboard();
+      });
+    }
+  }
 
-  $('rows').innerHTML=filtered.map(r=>'<tr><td>'+esc(dt(r.received_at))+'</td><td><strong>'+esc(r.shipment_id)+'</strong></td><td>'+esc(r.reason)+'</td><td>'+esc(r.driver_id)+'</td><td>'+esc(r.driver_name)+'</td><td>'+esc(r.agency)+'</td><td>'+esc(r.neighborhood)+'</td><td>'+esc(occ(r.occurrence_timestamp))+'</td><td>'+esc(r.operator_login||'Não identificado')+'</td></tr>').join('');
-  $('empty').hidden=filtered.length>0;
-  $('empty').textContent=state.view==='old'?'Nenhum pendente antigo.':state.view==='pending'?'Nenhum pendente de hoje.':'Nenhum recebimento hoje.';
-}
-
-$('cardToday').onclick=()=>{state.view='today';render();};
-$('cardPending').onclick=()=>{state.view='pending';render();};
-$('cardOld').onclick=()=>{state.view='old';render();};
-$('search').oninput=render;
-$('operator').onchange=render;
-$('refresh').onclick=requestData;
-$('sendPending').onclick=()=>{
-  const records=state.data&&Array.isArray(state.data.records)?state.data.records:[];
-  const count=records.filter(r=>r.status!=='confirmed').length;
-  if(!count){alert('Não há registros na fila para enviar.');return;}
-  if(!confirm('Enviar '+count+' registro(s) da fila para a aba Dados?'))return;
-  $('sendPending').disabled=true;
-  $('sendPending').textContent='Enviando...';
-  google.script.run
-    .withSuccessHandler(result=>{
-      const sent=Number(result&&result.sent||0);
-      const duplicates=Number(result&&result.duplicates||0);
-      const failed=Number(result&&result.failed||0);
-      alert('Envio concluído.\nGravados: '+sent+'\nJá existentes: '+duplicates+'\nFalhas: '+failed);
-      requestData();
-    })
-    .withFailureHandler(err=>{
-      alert('Falha no envio: '+(err&&err.message||err));
-      requestData();
-    })
-    .sendPendingDashboardToData();
-};
-$('clearConfirmed').onclick=()=>{
-  const count=state.data&&state.data.records?state.data.records.filter(r=>r.received_day===state.data.today&&r.status==='confirmed').length:0;
-  if(!count){alert('Não há registros já enviados para limpar hoje.');return;}
-  if(!confirm('Limpar '+count+' registro(s) já enviado(s) de hoje?\\n\\nPendências não serão apagadas.'))return;
-  google.script.run.withSuccessHandler(()=>requestData()).withFailureHandler(err=>alert('Falha: '+(err&&err.message||err))).clearConfirmedDashboard();
-};
-render();
-setInterval(requestData,5000);
+  try{
+    var operator=byId('operator');
+    var general=byId('generalSearch');
+    var clearFiltersButton=byId('clearFilters');
+    if(operator) operator.addEventListener('change',applyFilters);
+    if(general) general.addEventListener('input',applyFilters);
+    Array.prototype.slice.call(document.querySelectorAll('.column-filter')).forEach(function(input){
+      input.addEventListener('input',applyFilters);
+    });
+    if(clearFiltersButton) clearFiltersButton.addEventListener('click',clearFilters);
+    bindActionButtons();
+    applyFilters();
+  }catch(error){
+    setStatus('Falha ao iniciar controles: '+String(error && error.message || error));
+  }
+})();
 </script>
 </body>
 </html>`;

@@ -35,6 +35,7 @@
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
   const DASHBOARD_SYNC_GENERATION = '1.3.47';
+  const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
   let centralHealthCache = { checkedAt: 0, ok: false, build: '' };
@@ -240,19 +241,36 @@
 
   function ensureDashboardMigration() {
     if (dashboardMigrationPromise) return dashboardMigrationPromise;
+
     dashboardMigrationPromise = (async () => {
+      try {
+        if (localStorage.getItem(DASHBOARD_MIGRATION_DONE_KEY) === '1') return;
+      } catch {}
+
       const legacy = Object.values(readLegacyDashboardQueue().records || {}).filter(Boolean);
-      if (!legacy.length) return;
+      if (!legacy.length) {
+        try { localStorage.setItem(DASHBOARD_MIGRATION_DONE_KEY, '1'); } catch {}
+        return;
+      }
+
       const existing = await dashboardDbGetAll();
       const byKey = new Map(existing.map(item => [String(item?.key || ''), item]));
+
       for (const record of legacy) {
         const key = String(record?.key || dataSheetOccurrenceKey(record?.shipment_id, record?.occurrence_timestamp)).trim();
-        if (!key) continue;
-        const merged = mergeDashboardRecord(byKey.get(key), { ...record, key });
+        if (!key || byKey.has(key)) continue;
+
+        const merged = mergeDashboardRecord(null, { ...record, key });
         await dashboardDbPut(merged);
         byKey.set(key, merged);
       }
-    })().catch(error => console.warn('[SPX-DV] Migração do Dashboard não concluída', error));
+
+      try { localStorage.setItem(DASHBOARD_MIGRATION_DONE_KEY, '1'); } catch {}
+    })().catch(error => {
+      console.warn('[SPX-DV] Migração do Dashboard não concluída', error);
+      try { localStorage.removeItem(DASHBOARD_MIGRATION_DONE_KEY); } catch {}
+    });
+
     return dashboardMigrationPromise;
   }
 
@@ -483,7 +501,8 @@
 
   async function ensureCentralHealth(force = false) {
     const now = Date.now();
-    if (!force && now - Number(centralHealthCache.checkedAt || 0) < 60000) {
+    const cacheTtl = centralHealthCache.ok ? 60000 : 3000;
+    if (!force && now - Number(centralHealthCache.checkedAt || 0) < cacheTtl) {
       return Boolean(centralHealthCache.ok);
     }
 

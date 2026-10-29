@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.47';
+const SPX_DV_BUILD = '1.3.48';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -877,37 +877,73 @@ function reconcileDashboardStatuses_(spreadsheet, dashboardSheet) {
   return changed;
 }
 
+function dashboardEffectiveDay_(record) {
+  const receivedAt = Number(record && record.receivedAt || 0);
+  if (receivedAt > 0) {
+    const fromReceivedAt = Utilities.formatDate(
+      new Date(receivedAt),
+      SPX_DV_CONFIG.timezone,
+      'yyyy-MM-dd'
+    );
+    if (fromReceivedAt) return fromReceivedAt;
+  }
+  return normalizeDashboardDay_(record && record.receivedDay);
+}
+
+function dashboardClientRecord_(record) {
+  return {
+    occurrence_key: record.occurrenceKey,
+    received_day: dashboardEffectiveDay_(record),
+    received_at: record.receivedAt,
+    shipment_id: record.shipmentId,
+    reason: record.reason,
+    driver_id: record.driverId,
+    driver_name: record.driverName,
+    agency: record.agency,
+    neighborhood: record.neighborhood,
+    occurrence_timestamp: record.occurrenceTimestamp,
+    flow: record.flow,
+    operator_login: record.operatorLogin,
+    status: record.status
+  };
+}
+
 function getDashboardData() {
   // Leitura somente: não usa ScriptLock e não faz limpeza/reconciliação.
-  // Assim o polling do Dashboard não bloqueia os upserts dos operadores.
+  // O servidor já classifica "hoje" para a tela não depender de comparar
+  // datas vindas do Sheets no navegador.
   const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
   const sheet = getDashboardSheet_(spreadsheet);
 
   const today = Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
   const lastRow = sheet.getLastRow();
-  const records = lastRow >= 2
+  const source = lastRow >= 2
     ? sheet.getRange(2, 1, lastRow - 1, 14).getValues().map(dashboardRecordFromRow_)
     : [];
+
+  const records = source.map(dashboardClientRecord_);
+  const todayRecords = records
+    .filter(record => record.received_day === today)
+    .sort((a, b) => Number(b.received_at || 0) - Number(a.received_at || 0));
+  const oldPending = records
+    .filter(record =>
+      record.received_day &&
+      record.received_day !== today &&
+      record.status !== 'confirmed'
+    )
+    .sort((a, b) => Number(b.received_at || 0) - Number(a.received_at || 0));
 
   return {
     ok: true,
     today,
     build: SPX_DV_BUILD,
-    records: records.map(record => ({
-      occurrence_key: record.occurrenceKey,
-      received_day: record.receivedDay,
-      received_at: record.receivedAt,
-      shipment_id: record.shipmentId,
-      reason: record.reason,
-      driver_id: record.driverId,
-      driver_name: record.driverName,
-      agency: record.agency,
-      neighborhood: record.neighborhood,
-      occurrence_timestamp: record.occurrenceTimestamp,
-      flow: record.flow,
-      operator_login: record.operatorLogin,
-      status: record.status
-    }))
+    server_time: Date.now(),
+    source_rows: source.length,
+    today_count: todayRecords.length,
+    old_pending_count: oldPending.length,
+    records,
+    today_records: todayRecords,
+    old_pending: oldPending
   };
 }
 
@@ -1073,7 +1109,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </style>
 </head>
 <body><main>
-<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila</div></div><div class="actions"><button id="sendPending" class="primary">Enviar 0 para a planilha</button><button id="clearConfirmed" class="danger">Limpar já enviados</button><button id="refresh">Atualizar</button></div></header>
+<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila · <span id="buildInfo">carregando servidor...</span></div></div><div class="actions"><button id="sendPending" class="primary">Enviar 0 para a planilha</button><button id="clearConfirmed" class="danger">Limpar já enviados</button><button id="refresh">Atualizar</button></div></header>
 <div id="warning"></div>
 <section class="metrics">
 <div class="metric clickable active" id="cardToday"><span>Recebidos hoje</span><strong id="mTotal">0</strong></div>
@@ -1110,11 +1146,16 @@ function requestData(){
 function render(){
   const data=state.data||{today:'',records:[]};
   const records=Array.isArray(data.records)?data.records:[];
-  const today=records.filter(r=>r.received_day===data.today);
+  const today=Array.isArray(data.today_records)
+    ? data.today_records
+    : records.filter(r=>r.received_day===data.today);
   const pendingToday=today.filter(r=>r.status!=='confirmed');
-  const oldPending=records.filter(r=>r.received_day&&r.received_day!==data.today&&r.status!=='confirmed');
+  const oldPending=Array.isArray(data.old_pending)
+    ? data.old_pending
+    : records.filter(r=>r.received_day&&r.received_day!==data.today&&r.status!=='confirmed');
   const allPending=records.filter(r=>r.status!=='confirmed');
 
+  $('buildInfo').textContent='servidor '+esc(data.build||'?')+' · '+records.length+' registro(s) · hoje '+today.length;
   $('mTotal').textContent=today.length;
   $('mPending').textContent=pendingToday.length;
   $('mOld').textContent=oldPending.length;

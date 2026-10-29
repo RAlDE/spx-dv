@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.52
-Estado: desenvolvimento incremental; 1.3.52 preserva a captura/gravação central validada, mantém Top 10 no próprio Dash e adiciona filtros locais por login, busca geral e por coluna; requer validação real da interface.
+Versão atual do módulo: 1.3.53
+Estado: desenvolvimento incremental; 1.3.53 preserva o fluxo normal validado e adiciona ao Dashboard o caso especial de Endereço não encontrado confirmado pelo sucesso do cancelamento automático/manual; requer validação real desse fluxo.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -1983,3 +1983,91 @@ Teste recomendado:
 8. testar filtros individuais de Pedido, Motivo, Driver ID, Motorista, 3PL, Bairro, datas e Login;
 9. combinar dois ou mais filtros e conferir `Mostrando X de Y`;
 10. usar `Limpar filtros` e confirmar retorno de todas as linhas do dia.
+
+
+## Atualização 1.3.53 — Endereço não encontrado cancelado também entra no Dashboard
+Evidência real após a v1.3.52:
+- o Dashboard passou a exibir corretamente as informações e os filtros;
+- foi identificado que nem todos os BRs recebidos apareciam;
+- especificamente, ocorrências de **Endereço não encontrado** que entram na tratativa e são canceladas automaticamente não estavam sendo gravadas no Dashboard.
+
+### Causa
+O fluxo normal do Dashboard é deliberadamente alimentado somente quando:
+`POST /api/in-station/uni_receive/order -> retcode=0`.
+
+No caso especial de Endereço não encontrado:
+- o SPX pode responder ao recebimento com `retcode != 0` por causa do pedido interceptado/Tratativas;
+- o módulo então abre a tratativa e executa `cancel_eo_reason`;
+- quando esse cancelamento era concluído, o código apenas:
+  - marcava o BR como cancelado na sessão;
+  - enviava o BR para a integração antiga de endereço;
+- esse caminho não chamava `captureConfirmedOccurrenceToDashboard()`;
+- portanto a ocorrência nunca entrava na fila central do Dash.
+
+### Regra da v1.3.53
+A regra geral **não muda**:
+- `retcode != 0` continua NÃO sendo aceito genericamente como recebimento;
+- o fluxo normal continua dependendo de `retcode=0`.
+
+Exceção controlada:
+- enquanto `loadShipment()` monta o painel, se a última ocorrência real for **Endereço não encontrado** e existir tratativa pendente, o módulo guarda em memória um snapshot dessa ocorrência:
+  - occurrence timestamp real;
+  - motorista/Driver ID;
+  - 3PL já enriquecida;
+  - informação de fluxo;
+  - trade_info para resolução de Bairro;
+  - horário da bipagem (`scanUnix`);
+- esse snapshot não é enviado ao Dash nesse momento;
+- somente depois que `cancel_eo_reason` retorna sucesso o módulo chama `captureCancelledAddressToDashboard()`;
+- essa função valida novamente que o motivo do snapshot é realmente `Endereço não encontrado`;
+- então reutiliza `captureConfirmedOccurrenceToDashboard()`, preservando:
+  - mesma occurrence_key `BR|timestamp`;
+  - IndexedDB/outbox local;
+  - deduplicação;
+  - health do Web App;
+  - POST central;
+  - read-back `dashboard_check`;
+  - Bairro;
+  - login do operador;
+- o campo `received_at` usa o horário da bipagem que iniciou a tratativa, e não o horário posterior do fim do cancelamento.
+
+A mesma correção foi aplicada ao botão manual **Cancelar** da tratativa de endereço, pois ele usa o mesmo endpoint e tinha o mesmo buraco.
+
+### Diagnóstico novo
+Foram adicionadas etapas:
+- `address_cancel_dashboard_missing_snapshot`;
+- `address_cancel_dashboard_wrong_reason`;
+- `address_cancel_dashboard_start`;
+- `address_cancel_dashboard_confirmed`;
+- `address_cancel_dashboard_pending`.
+
+Se a gravação central falhar depois do cancelamento:
+- a ficha já terá sido salva na fila local pelo fluxo existente;
+- o operador recebe o aviso `Dashboard pendente: <BR>. Use D > Reenviar novos.`;
+- o replay continua restrito à geração atual, sem tocar registros legacy.
+
+### O que NÃO foi alterado
+- captura normal `/uni_receive/order`;
+- regra `retcode=0` para recebimentos normais;
+- receive-hook;
+- lógica do cancelamento automático;
+- integração antiga `sendCancelledAddressToSheet()`;
+- Apps Script de gravação, exceto bump de build para compatibilidade do health;
+- filtros/Top 10 da v1.3.52;
+- envio em lote para Dados.
+
+### Validação técnica
+- sintaxe do `assistente.js` validada antes do commit;
+- sintaxe do Apps Script validada antes do commit;
+- módulo, Apps Script e catálogo alinhados em 1.3.53;
+- validação real do caso Endereço não encontrado ainda pendente;
+- não chamar 1.3.53 de estável antes desse teste.
+
+### Teste recomendado
+1. reimplantar o Apps Script 1.3.53 na mesma implantação e URL `/exec`;
+2. desativar/ativar o módulo e confirmar 1.3.53;
+3. bipar um BR cuja última ocorrência seja **Endereço não encontrado** e que acione o cancelamento automático;
+4. confirmar que a tratativa continua cancelando normalmente;
+5. abrir o Dash e localizar o mesmo BR;
+6. confirmar Motivo = `Endereço não encontrado`, motorista, Driver ID, 3PL, Bairro e login;
+7. se não aparecer, abrir `D` e procurar as etapas `address_cancel_dashboard_*`.

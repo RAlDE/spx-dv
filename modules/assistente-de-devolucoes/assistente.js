@@ -320,6 +320,7 @@
       '<strong>DIAGNÓSTICO DO DASHBOARD</strong>' +
       '<div style="display:flex;gap:6px">' +
       '<button type="button" data-copy-receive-diag style="border:1px solid #fb923c;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Copiar</button>' +
+      '<button type="button" data-retry-receive-sync style="border:1px solid #22c55e;border-radius:7px;background:#052e16;color:#dcfce7;padding:6px 9px;cursor:pointer">Reenviar novos</button>' +
       '<button type="button" data-clear-receive-diag style="border:1px solid #64748b;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Limpar</button>' +
       '<button type="button" data-diag-back style="border:1px solid #fed7aa;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Voltar</button>' +
       '</div></div>' +
@@ -619,6 +620,37 @@
     return false;
   }
 
+  async function markLocalDashboardCentralSync(record, synced) {
+    const key = String(record?.key || dataSheetOccurrenceKey(record?.shipment_id, record?.occurrence_timestamp)).trim();
+    if (!key) return false;
+
+    try {
+      await ensureDashboardMigration();
+      const current = await dashboardDbGet(key);
+      if (!current) return false;
+      await dashboardDbPut({
+        ...current,
+        central_sync: synced ? 'synced' : 'pending',
+        central_synced_at: synced ? Date.now() : Number(current?.central_synced_at || 0)
+      });
+      return true;
+    } catch {
+      try {
+        const legacy = readLegacyDashboardQueue();
+        if (!legacy.records[key]) return false;
+        legacy.records[key] = {
+          ...legacy.records[key],
+          central_sync: synced ? 'synced' : 'pending',
+          central_synced_at: synced ? Date.now() : Number(legacy.records[key]?.central_synced_at || 0)
+        };
+        localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(legacy));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
   async function syncLocalDashboardToCentral(limit = 10) {
     try {
       const store = await readDashboardQueue();
@@ -632,17 +664,22 @@
         .sort((a, b) => Number(a.received_at || a.captured_at || 0) - Number(b.received_at || b.captured_at || 0))
         .slice(0, Math.max(1, Math.min(20, Number(limit) || 10)));
 
-      if (!records.length) return true;
-      if (!await ensureCentralHealth()) return false;
+      if (!records.length) {
+        receiveDiagPush('local_resync_empty', { generation: DASHBOARD_SYNC_GENERATION });
+        return true;
+      }
+      if (!await ensureCentralHealth(true)) return false;
 
       receiveDiagPush('local_resync_start', { records: records.length, generation: DASHBOARD_SYNC_GENERATION });
 
       for (const record of records) {
         const sent = await sendCentralDashboard(record, 'dashboard_upsert');
         if (!sent) {
+          await markLocalDashboardCentralSync(record, false);
           receiveDiagPush('local_resync_stopped', { shipment_id: record.shipment_id || '' });
           return false;
         }
+        await markLocalDashboardCentralSync(record, true);
       }
 
       receiveDiagPush('local_resync_done', { records: records.length, ok: true });
@@ -3286,6 +3323,16 @@
   }
 
   async function handleAction(event) {
+    if (event.target.closest('[data-retry-receive-sync]')) {
+      const button = event.target.closest('[data-retry-receive-sync]');
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Reenviando...';
+      }
+      await syncLocalDashboardToCentral(10);
+      renderReceiveDiagnostics();
+      return;
+    }
     if (event.target.closest('[data-copy-receive-diag]')) {
       navigator.clipboard?.writeText(receiveDiagText()).catch(() => {});
       return;

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.52';
+  const MODULE_VERSION = '1.3.53';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -34,7 +34,7 @@
   const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.52';
+  const DASHBOARD_SYNC_GENERATION = '1.3.53';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
@@ -119,6 +119,7 @@
   const confirmedReceiveSeen = new Set();
   const CANCELLED_ADDRESS_KEY = 'spxdv:cancelled-address-v1';
   const dashboardOccurrenceInFlight = new Set();
+  const addressDashboardSnapshots = new Map();
   const RECEIVE_CAPTURE_RETRY_DELAYS = [600, 1400, 2800, 5000];
 
   function readCancelledAddressState() {
@@ -2696,6 +2697,70 @@
     }
   }
 
+  async function captureCancelledAddressToDashboard(shipmentId) {
+    const shipment = String(shipmentId || '').trim().toUpperCase();
+    const snapshot = addressDashboardSnapshots.get(shipment);
+
+    if (!snapshot?.attempt) {
+      receiveDiagPush('address_cancel_dashboard_missing_snapshot', {
+        shipment_id: shipment
+      });
+      return false;
+    }
+
+    const reason = normalize(translateReason(snapshot.attempt?.on_hold_reason__desc));
+    if (reason !== 'endereco nao encontrado') {
+      receiveDiagPush('address_cancel_dashboard_wrong_reason', {
+        shipment_id: shipment,
+        reason
+      });
+      return false;
+    }
+
+    const operatorLogin = await refreshCurrentOperatorLogin();
+    const receivedAt = Number(snapshot.received_at || Date.now());
+
+    receiveDiagPush('address_cancel_dashboard_start', {
+      shipment_id: shipment,
+      occurrence_timestamp: Number(snapshot.attempt?.ctime || 0),
+      operator_login: operatorLogin,
+      received_at: receivedAt
+    });
+
+    const captured = await captureConfirmedOccurrenceToDashboard(
+      shipment,
+      snapshot.attempt,
+      Boolean(snapshot.return_flow),
+      operatorLogin,
+      receivedAt,
+      snapshot.trade_info || null,
+      ''
+    );
+
+    receiveDiagPush(
+      captured ? 'address_cancel_dashboard_confirmed' : 'address_cancel_dashboard_pending',
+      {
+        shipment_id: shipment,
+        occurrence_timestamp: Number(snapshot.attempt?.ctime || 0),
+        captured: Boolean(captured)
+      }
+    );
+
+    addressDashboardSnapshots.delete(shipment);
+
+    if (!captured) {
+      showNotice('Dashboard pendente: ' + shipment + '. Use D > Reenviar novos.');
+      window.setTimeout(() => {
+        const notice = document.getElementById(NOTICE_ID);
+        if (notice && String(notice.textContent || '').includes(shipment)) {
+          notice.remove();
+        }
+      }, 15000);
+    }
+
+    return Boolean(captured);
+  }
+
   async function processConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0) {
     if (!shipmentId || !ONHOLD_DATA_WEBAPP_URL) return false;
 
@@ -3202,6 +3267,7 @@
 
       markAddressCancelled(shipmentId);
       void sendCancelledAddressToSheet(shipmentId);
+      void captureCancelledAddressToDashboard(shipmentId);
       actions.querySelectorAll('button').forEach(item => item.remove());
       if (result) {
         result.textContent = 'Cancelado';
@@ -3355,7 +3421,21 @@
       });
 
       if (address.pending && normalize(latestReason) === 'endereco nao encontrado') {
+        const dashboardAttempt = visibleAttempts.at(-1);
+        if (
+          dashboardAttempt &&
+          normalize(translateReason(dashboardAttempt?.on_hold_reason__desc)) === 'endereco nao encontrado'
+        ) {
+          addressDashboardSnapshots.set(String(shipmentId || '').trim().toUpperCase(), {
+            attempt: dashboardAttempt,
+            return_flow: Boolean(cycleStart),
+            trade_info: tradeInfo || null,
+            received_at: Number(scanUnix || 0) > 0 ? Number(scanUnix) * 1000 : Date.now()
+          });
+        }
         watchForAutoAddressCancel(shipmentId);
+      } else {
+        addressDashboardSnapshots.delete(String(shipmentId || '').trim().toUpperCase());
       }
     } catch (error) {
       if (!diagnosticView) showPanel(shipmentId, `<div class="message error">Não foi possível consultar: ${escapeHtml(error.message)}</div>`);
@@ -3438,6 +3518,7 @@
       if (action === 'cancel') {
         markAddressCancelled(shipmentId);
         void sendCancelledAddressToSheet(shipmentId);
+        void captureCancelledAddressToDashboard(shipmentId);
       }
       if (result) result.textContent = action === 'confirm' ? 'Motivo confirmado.' : 'Cancelado';
       button.blur();

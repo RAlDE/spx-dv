@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.49
-Estado: desenvolvimento incremental; 1.3.49 preserva a captura/gravação central validada e faz o Dashboard nascer com os dados já embutidos pelo servidor; requer validação visual real.
+Versão atual do módulo: 1.3.50
+Estado: desenvolvimento incremental; 1.3.50 preserva a captura/gravação central validada e passa a renderizar métricas e linhas do Dashboard diretamente no servidor; requer validação visual real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -262,6 +262,7 @@ A integração antiga de planilha relacionada ao cancelamento deve ocorrer apena
 - v1.3.47: endurece a arquitetura central após auditoria: POST com dados no body + read-back por occurrence_key, health/capabilities do deploy, falha central propagada para retry, leitura do Dashboard sem lock, lock curto no upsert, captura única pelo receive-hook, migração local única e recuperação manual apenas da outbox nova.
 - v1.3.48: mantém intacta a captura/gravação central validada e simplifica a camada visual: o servidor classifica os registros de hoje, o HTML usa essa classificação pronta e o botão Dash força recarga da versão atual.
 - v1.3.49: elimina `google.script.run` do carregamento de dados do Dashboard; o `doGet(view=dashboard)` já entrega o HTML com o estado inicial embutido e as atualizações usam `dashboard_data` por JSONP.
+- v1.3.50: renderiza no servidor os contadores, operadores e linhas de `Recebimentos de hoje`, para que os dados apareçam mesmo se o JavaScript do Dashboard falhar completamente.
 
 ### Próximo teste recomendado
 O próximo teste deve validar somente a entrada no Dashboard da v1.3.47, sem ainda alterar retenção mensal nem a regra de envio por dia:
@@ -1855,3 +1856,44 @@ Validação técnica:
 - captura real `/uni_receive/order` e read-back central não foram alterados;
 - validação visual real ainda pendente;
 - não chamar 1.3.49 de estável antes do teste.
+
+
+## Atualização 1.3.50 — renderização server-side do Dashboard
+Evidência visual recebida na 1.3.49:
+- página abre com todo o layout;
+- cabeçalho permanece em `carregando servidor...`;
+- métricas continuam em zero;
+- tabela permanece vazia;
+- isso prova que o HTML está chegando ao navegador, mas o JavaScript da página não está completando a inicialização/renderização;
+- o usuário também relatou aumento no tempo de abertura porque a 1.3.49 passou a consultar a planilha antes de entregar o HTML.
+
+Decisão:
+- não mexer novamente na captura real do SPX nem no read-back central, já validados;
+- tornar a visualização independente do JavaScript do navegador.
+
+Mudanças:
+- `dashboardHtml_()` agora recebe os dados já lidos e gera no servidor:
+  - texto `servidor <build> · base X · hoje Y`;
+  - total de recebidos hoje;
+  - total pendente de hoje;
+  - pendentes antigos;
+  - operadores do dia;
+  - opções iniciais do filtro de operador;
+  - todas as linhas da tabela `Recebimentos de hoje`;
+  - aviso de erro/pêndencia quando aplicável;
+- o botão Atualizar também possui `href` real para recarregar a página, então continua funcional mesmo se JS falhar;
+- o JavaScript permanece apenas como camada de interação/polling/filtros, não como requisito para enxergar os BRs;
+- validação estática continua incluindo separadamente o JavaScript contido no `<script>` do HTML.
+
+Teste:
+1. reimplantar o Apps Script 1.3.50 na mesma URL `/exec`;
+2. desativar/ativar o módulo 1.3.50;
+3. abrir o Dashboard sem bipar nada;
+4. o cabeçalho deve mostrar imediatamente `servidor 1.3.50 · base X · hoje Y`;
+5. se `base > 0`, as linhas de hoje devem estar visíveis mesmo que o JS continue quebrado;
+6. verificar especificamente o BR `BR265987435609F`, já confirmado anteriormente na base central.
+
+Validação:
+- captura real e gravação central continuam baseadas na 1.3.47 validada;
+- Apps Script e JavaScript embutido passaram validação sintática;
+- renderização visual real da 1.3.50 ainda pendente.

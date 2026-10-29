@@ -43,12 +43,83 @@ function doGet(e) {
     return geoLookupResponse_(e);
   }
 
+  if (view === 'dashboard_upsert') {
+    return dashboardUpsertResponse_(e);
+  }
+
   return jsonResponse_({
     ok: true,
     service: 'SPX-DV recebimento On Hold',
     sheet: SPX_DV_CONFIG.sheetName,
     dashboard: true
   });
+}
+
+function dashboardUpsertResponse_(e) {
+  const callback = clean_(e && e.parameter && e.parameter.callback);
+  const validCallback = /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(callback);
+  let result = {
+    ok: false,
+    dashboard: true,
+    occurrence_key: '',
+    status: '',
+    error: ''
+  };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    const raw = String(e && e.parameter && e.parameter.payload || '').trim();
+    if (!raw) throw new Error('payload obrigatório');
+
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      throw new Error('payload JSON inválido');
+    }
+
+    const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
+    const dashboardSheet = getDashboardSheet_(spreadsheet);
+    cleanupOldConfirmedDashboard_(dashboardSheet);
+
+    const dashboardRecord = enrichDashboardNeighborhood_(
+      spreadsheet,
+      normalizeDashboardRecord_(payload)
+    );
+
+    if (!dashboardRecord.occurrenceKey) {
+      throw new Error('occurrence_key inválida');
+    }
+
+    const saved = upsertDashboardRecord_(dashboardSheet, dashboardRecord);
+    SpreadsheetApp.flush();
+
+    result = {
+      ok: true,
+      dashboard: true,
+      occurrence_key: dashboardRecord.occurrenceKey,
+      status: saved.status,
+      received_day: saved.receivedDay,
+      received_at: saved.receivedAt
+    };
+  } catch (error) {
+    result.error = String(error && error.message ? error.message : error);
+  } finally {
+    lock.releaseLock();
+  }
+
+  const payloadText = JSON.stringify(result);
+  if (validCallback) {
+    return ContentService
+      .createTextOutput(callback + '(' + payloadText + ');')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+
+  return ContentService
+    .createTextOutput(payloadText)
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 function doPost(e) {

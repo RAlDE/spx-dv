@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.46';
+  const MODULE_VERSION = '1.3.47';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -34,8 +34,10 @@
   const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
+  const DASHBOARD_SYNC_GENERATION = '1.3.47';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
+  let centralHealthCache = { checkedAt: 0, ok: false, build: '' };
 
   if (document.documentElement.dataset[APP_MARKER] === 'true') return;
   document.documentElement.dataset[APP_MARKER] = 'true';
@@ -349,7 +351,9 @@
       received_day: saoPauloDay(receivedAt),
       captured_at: receivedAt,
       updated_at: Date.now(),
-      status: 'captured'
+      status: 'captured',
+      central_sync: 'pending',
+      sync_generation: DASHBOARD_SYNC_GENERATION
     };
 
     try {
@@ -361,8 +365,18 @@
         occurrence_timestamp: incoming.occurrence_timestamp,
         received_at: incoming.received_at
       });
-      void sendCentralDashboard(incoming);
-      return true;
+      const centralConfirmed = await sendCentralDashboard(incoming);
+      try {
+        const saved = await dashboardDbGet(key);
+        if (saved) {
+          await dashboardDbPut({
+            ...saved,
+            central_sync: centralConfirmed ? 'synced' : 'pending',
+            central_synced_at: centralConfirmed ? Date.now() : Number(saved?.central_synced_at || 0)
+          });
+        }
+      } catch {}
+      return centralConfirmed;
     } catch (error) {
       console.warn('[SPX-DV] Não foi possível salvar no IndexedDB; usando fallback local', error);
       try {
@@ -375,8 +389,19 @@
           occurrence_timestamp: incoming.occurrence_timestamp,
           received_at: incoming.received_at
         });
-        void sendCentralDashboard(incoming);
-        return true;
+        const centralConfirmed = await sendCentralDashboard(incoming);
+        try {
+          const latest = readLegacyDashboardQueue();
+          if (latest.records[key]) {
+            latest.records[key] = {
+              ...latest.records[key],
+              central_sync: centralConfirmed ? 'synced' : 'pending',
+              central_synced_at: centralConfirmed ? Date.now() : Number(latest.records[key]?.central_synced_at || 0)
+            };
+            localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(latest));
+          }
+        } catch {}
+        return centralConfirmed;
       } catch {
         return false;
       }
@@ -410,12 +435,12 @@
     }
   }
 
-  function sendDashboardUpsertJsonp(payload, timeoutMs = 9000) {
-    if (!payload || !ONHOLD_DATA_WEBAPP_URL) return Promise.resolve(null);
+  function requestCentralJsonp(view, params = {}, timeoutMs = 6500) {
+    if (!ONHOLD_DATA_WEBAPP_URL) return Promise.resolve(null);
 
     return new Promise(resolve => {
       const suffix = String(Date.now()) + '_' + Math.random().toString(36).slice(2, 9);
-      const callbackName = '__spxDvDashboard_' + suffix;
+      const callbackName = '__spxDvCentral_' + suffix;
       const script = document.createElement('script');
       let finished = false;
 
@@ -431,23 +456,92 @@
       window[callbackName] = result => finish(result);
       const timer = window.setTimeout(
         () => finish(null),
-        Math.max(2500, Number(timeoutMs) || 9000)
+        Math.max(1800, Number(timeoutMs) || 6500)
       );
 
+      const query = new URLSearchParams({
+        view: String(view || ''),
+        callback: callbackName,
+        _: String(Date.now())
+      });
+      Object.entries(params || {}).forEach(([key, value]) => {
+        query.set(key, String(value ?? ''));
+      });
+
       script.async = true;
-      script.src = ONHOLD_DATA_WEBAPP_URL +
-        '?view=dashboard_upsert' +
-        '&payload=' + encodeURIComponent(JSON.stringify(payload)) +
-        '&callback=' + encodeURIComponent(callbackName) +
-        '&_=' + Date.now();
+      script.src = ONHOLD_DATA_WEBAPP_URL + '?' + query.toString();
       script.onerror = () => finish(null);
       script.onload = () => {
-        // Se o Web App devolveu algo que não executou o callback JSONP
-        // (ex.: implantação antiga/redirecionamento), encerra sem segurar o loading da aba.
+        // Callback JSONP roda antes do evento load. Se não rodou, a resposta
+        // provavelmente veio de implantação antiga/redirecionamento/login.
         window.setTimeout(() => finish(null), 0);
       };
       (document.head || document.documentElement).appendChild(script);
     });
+  }
+
+  async function ensureCentralHealth(force = false) {
+    const now = Date.now();
+    if (!force && now - Number(centralHealthCache.checkedAt || 0) < 60000) {
+      return Boolean(centralHealthCache.ok);
+    }
+
+    const result = await requestCentralJsonp('health', {}, 5000);
+    const ok = Boolean(
+      result?.ok &&
+      result?.capabilities?.dashboard_post === true &&
+      result?.capabilities?.dashboard_check === true
+    );
+
+    centralHealthCache = {
+      checkedAt: now,
+      ok,
+      build: String(result?.build || '')
+    };
+
+    receiveDiagPush(ok ? 'central_health_ok' : 'central_health_error', {
+      build: centralHealthCache.build,
+      dashboard_post: Boolean(result?.capabilities?.dashboard_post),
+      dashboard_check: Boolean(result?.capabilities?.dashboard_check)
+    });
+
+    return ok;
+  }
+
+  async function postCentralDashboardPayload(payload, timeoutMs = 12000) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), Math.max(4000, Number(timeoutMs) || 12000));
+
+    try {
+      await fetch(ONHOLD_DATA_WEBAPP_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        credentials: 'include',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: JSON.stringify({
+          ...payload,
+          action: 'dashboard_upsert'
+        }),
+        keepalive: true,
+        signal: controller.signal
+      });
+      return true;
+    } catch (error) {
+      receiveDiagPush('central_post_transport_error', {
+        shipment_id: payload?.shipment_id || '',
+        error: String(error?.message || error || '')
+      });
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function checkCentralDashboardOccurrence(occurrenceKey) {
+    if (!occurrenceKey) return null;
+    return await requestCentralJsonp('dashboard_check', {
+      occurrence_key: occurrenceKey
+    }, 5500);
   }
 
   async function sendCentralDashboard(payload, action = 'dashboard_upsert') {
@@ -459,99 +553,102 @@
       records: Array.isArray(payload?.records) ? payload.records.length : 0
     });
 
-    if (action === 'dashboard_upsert') {
-      try {
-        const result = await sendDashboardUpsertJsonp(payload);
-        if (!result?.ok) {
-          throw new Error(String(result?.error || 'Web App não confirmou o upsert'));
-        }
-
-        receiveDiagPush('central_send_confirmed', {
-          action,
-          shipment_id: payload?.shipment_id || '',
-          occurrence_key: String(result?.occurrence_key || ''),
-          status: String(result?.status || '')
-        });
-        return true;
-      } catch (error) {
-        receiveDiagPush('central_send_error', {
-          action,
-          shipment_id: payload?.shipment_id || '',
-          error: String(error?.message || error || '')
-        });
-        console.warn('[SPX-DV] Falha ao confirmar Dashboard central', error);
-        return false;
-      }
-    }
-
-    try {
-      await fetch(ONHOLD_DATA_WEBAPP_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        credentials: 'include',
-        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-        body: JSON.stringify({
-          ...payload,
-          action
-        }),
-        keepalive: true
-      });
-      receiveDiagPush('central_send_resolved_legacy', {
-        action,
-        shipment_id: payload?.shipment_id || ''
-      });
-      return true;
-    } catch (error) {
+    if (action !== 'dashboard_upsert') {
       receiveDiagPush('central_send_error', {
         action,
         shipment_id: payload?.shipment_id || '',
-        error: String(error?.message || error || '')
+        error: 'Ação central não suportada no fluxo atual'
       });
-      console.warn('[SPX-DV] Falha ao sincronizar Dashboard central', error);
       return false;
     }
+
+    const occurrenceKey = dataSheetOccurrenceKey(
+      payload?.shipment_id,
+      payload?.occurrence_timestamp
+    );
+    if (!occurrenceKey) {
+      receiveDiagPush('central_send_error', {
+        action,
+        shipment_id: payload?.shipment_id || '',
+        error: 'occurrence_key inválida'
+      });
+      return false;
+    }
+
+    if (!await ensureCentralHealth()) {
+      receiveDiagPush('central_send_error', {
+        action,
+        shipment_id: payload?.shipment_id || '',
+        error: 'Implantação do Web App sem health/dashboard_check compatível'
+      });
+      return false;
+    }
+
+    for (const delay of [0, 900, 2200]) {
+      if (delay) await sleep(delay);
+
+      await postCentralDashboardPayload(payload);
+
+      for (const checkDelay of [250, 700, 1400]) {
+        if (checkDelay) await sleep(checkDelay);
+        const check = await checkCentralDashboardOccurrence(occurrenceKey);
+        if (
+          check?.ok &&
+          check?.found &&
+          String(check?.occurrence_key || '') === occurrenceKey &&
+          String(check?.shipment_id || '').toUpperCase() === String(payload?.shipment_id || '').toUpperCase()
+        ) {
+          receiveDiagPush('central_send_confirmed', {
+            action,
+            shipment_id: payload?.shipment_id || '',
+            occurrence_key: occurrenceKey,
+            status: String(check?.status || ''),
+            build: String(check?.build || centralHealthCache.build || '')
+          });
+          return true;
+        }
+      }
+    }
+
+    receiveDiagPush('central_send_error', {
+      action,
+      shipment_id: payload?.shipment_id || '',
+      occurrence_key: occurrenceKey,
+      error: 'POST enviado, mas o read-back não encontrou a ocorrência'
+    });
+    return false;
   }
 
-  async function syncLocalDashboardToCentral() {
+  async function syncLocalDashboardToCentral(limit = 10) {
     try {
       const store = await readDashboardQueue();
-      const today = saoPauloDay();
       const records = Object.values(store.records || {})
         .filter(record =>
           record &&
           typeof record === 'object' &&
-          String(record.received_day || '') === today &&
-          record.status !== 'confirmed'
+          record.sync_generation === DASHBOARD_SYNC_GENERATION &&
+          record.central_sync === 'pending'
         )
-        .sort((a, b) => Number(a.received_at || a.captured_at || 0) - Number(b.received_at || b.captured_at || 0));
+        .sort((a, b) => Number(a.received_at || a.captured_at || 0) - Number(b.received_at || b.captured_at || 0))
+        .slice(0, Math.max(1, Math.min(20, Number(limit) || 10)));
 
       if (!records.length) return true;
+      if (!await ensureCentralHealth()) return false;
 
-      receiveDiagPush('local_resync_start', { records: records.length, received_day: today });
+      receiveDiagPush('local_resync_start', { records: records.length, generation: DASHBOARD_SYNC_GENERATION });
 
-      let ok = true;
       for (const record of records) {
-        const sent = await sendCentralDashboard({
-          shipment_id: record.shipment_id,
-          reason: record.reason,
-          driver_id: record.driver_id,
-          driver_name: record.driver_name,
-          agency: record.agency,
-          neighborhood: record.neighborhood,
-          occurrence_timestamp: record.occurrence_timestamp,
-          flow: record.flow,
-          operator_login: record.operator_login,
-          received_at: record.received_at || record.captured_at,
-          status: record.status
-        }, 'dashboard_upsert');
-        if (!sent) ok = false;
+        const sent = await sendCentralDashboard(record, 'dashboard_upsert');
+        if (!sent) {
+          receiveDiagPush('local_resync_stopped', { shipment_id: record.shipment_id || '' });
+          return false;
+        }
       }
 
-      receiveDiagPush('local_resync_done', { records: records.length, ok });
-      return ok;
+      receiveDiagPush('local_resync_done', { records: records.length, ok: true });
+      return true;
     } catch (error) {
       receiveDiagPush('local_resync_error', { error: String(error?.message || error || '') });
-      console.warn('[SPX-DV] Não foi possível sincronizar a fila local de hoje com o Dashboard central', error);
       return false;
     }
   }
@@ -1403,8 +1500,6 @@
       let parsed = null;
       try { parsed = JSON.parse(text); } catch {}
 
-      handleRealReceiveResponse(meta, parsed);
-
       if (/\/api\//i.test(url.pathname)) {
         saveReturnDiagnostic(meta, parsed, text);
       }
@@ -1466,7 +1561,6 @@
           }
 
           if (text) {
-            handleRealReceiveResponse(meta, parsed);
             if (/\/api\//i.test(url.pathname)) saveReturnDiagnostic(meta, parsed, text);
             saveNeighborhoodDiagnostic(meta, parsed, text, {
               contentType: this.getResponseHeader('content-type') || '',
@@ -2526,11 +2620,11 @@
 
       // IMPORTANTE: esta etapa alimenta SOMENTE o Dashboard/fila central.
       // A aba Dados é gravada exclusivamente pelo botão de envio em lote do Dashboard.
-      await saveDashboardRecord(payload);
+      const centralConfirmed = await saveDashboardRecord(payload);
 
-      // A fonte principal de Bairro agora é trade_info -> lat/lng -> reverse geocoding.
-      // A exportação automática permanece desligada.
-      return true;
+      // Só encerramos a fila de retry quando o registro foi confirmado no servidor.
+      // O dado local permanece salvo mesmo se o Web App estiver temporariamente indisponível.
+      return Boolean(centralConfirmed);
     } catch (error) {
       console.warn('[SPX-DV] Falha ao capturar recebimento confirmado no Dashboard', error);
       return false;
@@ -3344,6 +3438,7 @@
     // Migração local continua válida, mas não dispara replay automático da fila.
     // Recebimentos novos são enviados individualmente assim que confirmados pelo SPX.
     void ensureDashboardMigration();
+    void ensureCentralHealth();
     showPanel('', '<div class="message">Aguardando leitura do BR...</div>');
     checkShipment();
 

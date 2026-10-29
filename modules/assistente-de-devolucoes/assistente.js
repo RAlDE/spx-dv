@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.43';
+  const MODULE_VERSION = '1.3.44';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -33,6 +33,7 @@
   const DASHBOARD_WINDOW_NAME = 'spxdv-receiving-dashboard';
   const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
   const DASHBOARD_DB_STORE = 'records';
+  const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
 
@@ -274,6 +275,68 @@
     }
   }
 
+  function receiveDiagRead() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(RECEIVE_DIAG_STORAGE_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function receiveDiagPush(stage, data = {}) {
+    try {
+      const list = receiveDiagRead();
+      list.unshift({ at: new Date().toISOString(), stage: String(stage || ''), ...data });
+      localStorage.setItem(RECEIVE_DIAG_STORAGE_KEY, JSON.stringify(list.slice(0, 80)));
+    } catch {}
+  }
+
+  function receiveDiagText() {
+    let hook = {};
+    try { hook = JSON.parse(localStorage.getItem('spxdv:receive-hook-diag-v1') || '{}') || {}; } catch {}
+    return JSON.stringify({ version: MODULE_VERSION, page: location.href, hook, main: receiveDiagRead() }, null, 2);
+  }
+
+  function renderReceiveDiagnostics() {
+    const panel = document.getElementById(PANEL_ID);
+    const body = panel?.querySelector('.body');
+    if (!panel || !body) return;
+
+    let hook = {};
+    try { hook = JSON.parse(localStorage.getItem('spxdv:receive-hook-diag-v1') || '{}') || {}; } catch {}
+
+    const rows = receiveDiagRead().slice(0, 30).map(item =>
+      '<div style="padding:7px 0;border-top:1px solid #334155">' +
+      '<b>' + escapeHtml(item.stage || '') + '</b>' +
+      '<div style="font-size:11px;color:#cbd5e1">' + escapeHtml(item.at || '') + '</div>' +
+      '<div style="font-size:11px;word-break:break-word">' + escapeHtml(JSON.stringify(item)) + '</div></div>'
+    ).join('');
+
+    body.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">' +
+      '<strong>DIAGNÓSTICO DO DASHBOARD</strong>' +
+      '<div style="display:flex;gap:6px">' +
+      '<button type="button" data-copy-receive-diag style="border:1px solid #fb923c;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Copiar</button>' +
+      '<button type="button" data-clear-receive-diag style="border:1px solid #64748b;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Limpar</button>' +
+      '<button type="button" data-diag-back style="border:1px solid #fed7aa;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Voltar</button>' +
+      '</div></div>' +
+      '<div style="padding:8px;border:1px solid #475569;border-radius:8px;background:#050505;font-size:11px;line-height:1.45">' +
+      '<div><b>Hook carregado:</b> ' + escapeHtml(hook.loaded_at || 'não detectado') + '</div>' +
+      '<div><b>fetch patch:</b> ' + escapeHtml(String(Boolean(hook.fetch_patched))) + '</div>' +
+      '<div><b>XHR patch:</b> ' + escapeHtml(String(Boolean(hook.xhr_patched))) + '</div>' +
+      '<div><b>Performance observer:</b> ' + escapeHtml(String(Boolean(hook.performance_observer))) + '</div>' +
+      '<div><b>Hits do endpoint:</b> ' + escapeHtml(String(Number(hook.target_hits || 0))) + '</div>' +
+      '<div><b>Eventos publicados:</b> ' + escapeHtml(String(Number(hook.published || 0))) + '</div>' +
+      '<div><b>Último alvo:</b> ' + escapeHtml(JSON.stringify(hook.last_target || {})) + '</div>' +
+      '<div style="margin-top:8px"><b>Últimos POSTs in-station:</b></div>' +
+      '<pre style="white-space:pre-wrap;word-break:break-word;color:#cbd5e1">' + escapeHtml(JSON.stringify((hook.posts || []).slice(0, 10), null, 2)) + '</pre>' +
+      '<div><b>Últimos recursos in-station:</b></div>' +
+      '<pre style="white-space:pre-wrap;word-break:break-word;color:#cbd5e1">' + escapeHtml(JSON.stringify((hook.resources || []).slice(0, 10), null, 2)) + '</pre>' +
+      '</div>' +
+      '<div style="margin-top:8px">' + (rows || '<div class="message">Nenhum estágio registrado no módulo principal.</div>') + '</div>';
+  }
+
   async function saveDashboardRecord(payload) {
     const key = dataSheetOccurrenceKey(payload?.shipment_id, payload?.occurrence_timestamp);
     if (!key) return false;
@@ -293,6 +356,11 @@
       await ensureDashboardMigration();
       const previous = await dashboardDbGet(key);
       await dashboardDbPut(mergeDashboardRecord(previous, incoming));
+      receiveDiagPush('local_saved', {
+        shipment_id: incoming.shipment_id,
+        occurrence_timestamp: incoming.occurrence_timestamp,
+        received_at: incoming.received_at
+      });
       void sendCentralDashboard(incoming);
       return true;
     } catch (error) {
@@ -302,6 +370,11 @@
         const previous = legacy.records[key] && typeof legacy.records[key] === 'object' ? legacy.records[key] : {};
         legacy.records[key] = mergeDashboardRecord(previous, incoming);
         localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(legacy));
+        receiveDiagPush('local_saved_fallback', {
+          shipment_id: incoming.shipment_id,
+          occurrence_timestamp: incoming.occurrence_timestamp,
+          received_at: incoming.received_at
+        });
         void sendCentralDashboard(incoming);
         return true;
       } catch {
@@ -340,6 +413,12 @@
   async function sendCentralDashboard(payload, action = 'dashboard_upsert') {
     if (!payload) return false;
 
+    receiveDiagPush('central_send_start', {
+      action,
+      shipment_id: payload?.shipment_id || '',
+      records: Array.isArray(payload?.records) ? payload.records.length : 0
+    });
+
     try {
       await fetch(ONHOLD_DATA_WEBAPP_URL, {
         method: 'POST',
@@ -352,8 +431,17 @@
         }),
         keepalive: true
       });
+      receiveDiagPush('central_send_resolved', {
+        action,
+        shipment_id: payload?.shipment_id || ''
+      });
       return true;
     } catch (error) {
+      receiveDiagPush('central_send_error', {
+        action,
+        shipment_id: payload?.shipment_id || '',
+        error: String(error?.message || error || '')
+      });
       console.warn('[SPX-DV] Falha ao sincronizar Dashboard central', error);
       return false;
     }
@@ -1469,7 +1557,7 @@
     style.id = STYLE_ID;
     style.textContent = `
       #${PANEL_ID}{position:fixed;z-index:2147483647;top:16px;left:16px;right:auto;width:min(520px,calc(100vw - 32px));max-height:82vh;overflow:hidden;border:1px solid #334155;border-radius:14px;background:#0f172a;color:#f8fafc;box-shadow:0 22px 62px #0008;font:15px Arial,sans-serif}
-      #${PANEL_ID}[hidden]{display:none!important}#${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} header{position:relative;padding:15px 172px 13px 15px;border-bottom:1px solid #fb923c;background:linear-gradient(135deg,#ff6a00,#e94b00 68%,#9a3412);cursor:grab;user-select:none;touch-action:none}
+      #${PANEL_ID}[hidden]{display:none!important}#${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} header{position:relative;padding:15px 210px 13px 15px;border-bottom:1px solid #fb923c;background:linear-gradient(135deg,#ff6a00,#e94b00 68%,#9a3412);cursor:grab;user-select:none;touch-action:none}
       #${PANEL_ID}.dragging header{cursor:grabbing}#${PANEL_ID} h2{margin:0;font-size:19px;display:flex;align-items:baseline;gap:6px}#${PANEL_ID} .module-version{font-size:11px;font-weight:700;color:#fff;opacity:.78}#${PANEL_ID} header small{display:block;margin-top:7px;color:#fff;font-size:19px;font-weight:700}#${PANEL_ID} header small strong{font-size:inherit}#${PANEL_ID} .header-actions{position:absolute;top:9px;right:9px;display:flex;gap:6px}#${PANEL_ID} .icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #fed7aa;border-radius:8px;background:#111827;color:#fff;font-size:18px;cursor:pointer}#${PANEL_ID} .dashboard-button{width:auto;min-width:58px;padding:0 9px;font-size:11px;font-weight:800}
       #${PANEL_ID} .body{max-height:65vh;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;pointer-events:auto;padding:10px}#${PANEL_ID} .message{padding:22px;text-align:center;color:#cbd5e1}#${PANEL_ID} .error{color:#fca5a5}
       #${PANEL_ID} .attempt{display:grid;grid-template-columns:27px minmax(0,1fr) auto;gap:9px;margin-bottom:8px;padding:10px;border:1px solid #3f3f46;border-radius:10px;background:#050505}
@@ -1490,7 +1578,7 @@
     if (!panel) {
       panel = document.createElement('section');
       panel.id = PANEL_ID;
-      panel.innerHTML = `<header><h2><span>Rastreio do pedido</span><span class="module-version">v${MODULE_VERSION}</span></h2><small>Shipment ID: <strong></strong></small><div class="header-actions"><button class="icon-button dashboard-button" data-dashboard title="Abrir Dashboard de Recebimento">Dash</button><button class="icon-button" data-diagnostic title="Diagnóstico">i</button><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>`;
+      panel.innerHTML = `<header><h2><span>Rastreio do pedido</span><span class="module-version">v${MODULE_VERSION}</span></h2><small>Shipment ID: <strong></strong></small><div class="header-actions"><button class="icon-button dashboard-button" data-dashboard title="Abrir Dashboard de Recebimento">Dash</button><button class="icon-button" data-receive-diag title="Diagnóstico do Dashboard">D</button><button class="icon-button" data-diagnostic title="Diagnóstico">i</button><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>`;
       panel.addEventListener('click', handleAction);
       document.body.appendChild(panel);
       restorePanelPosition(panel);
@@ -2376,6 +2464,12 @@
   async function processConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0) {
     if (!shipmentId || !ONHOLD_DATA_WEBAPP_URL) return false;
 
+    receiveDiagPush('process_start', {
+      shipment_id: shipmentId,
+      operator_login: operatorLogin,
+      received_at: receivedAt
+    });
+
     try {
       const historyPromise = fetchJson(
         `https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`
@@ -2432,9 +2526,22 @@
         .sort((a, b) => Number(a?.ctime || 0) - Number(b?.ctime || 0));
 
       const currentOccurrence = visibleAttempts.at(-1);
-      if (!currentOccurrence) return false;
+      if (!currentOccurrence) {
+        receiveDiagPush('process_no_occurrence', {
+          shipment_id: shipmentId,
+          attempts: attempts.length,
+          visible_attempts: visibleAttempts.length,
+          return_flow: Boolean(cycleStart)
+        });
+        return false;
+      }
 
       const neighborhood = await neighborhoodPromise;
+      receiveDiagPush('process_occurrence_ready', {
+        shipment_id: shipmentId,
+        occurrence_timestamp: Number(currentOccurrence?.ctime || 0),
+        neighborhood: String(neighborhood || '')
+      });
       return await captureConfirmedOccurrenceToDashboard(
         shipmentId,
         currentOccurrence,
@@ -2445,6 +2552,10 @@
         neighborhood
       );
     } catch (error) {
+      receiveDiagPush('process_error', {
+        shipment_id: shipmentId,
+        error: String(error?.message || error || '')
+      });
       console.warn('[SPX-DV] Falha ao montar ficha do recebimento confirmado', shipmentId, error);
       return false;
     }
@@ -2459,6 +2570,11 @@
       for (const delay of RECEIVE_CAPTURE_RETRY_DELAYS) {
         if (delay) await sleep(delay);
         const captured = await processConfirmedReceive(shipmentId, operatorSnapshot, receivedAtSnapshot);
+        receiveDiagPush('process_attempt_result', {
+          shipment_id: shipmentId,
+          delay,
+          captured: Boolean(captured)
+        });
         if (captured) return;
       }
 
@@ -2466,18 +2582,109 @@
     })();
   }
 
+  function receiveShipmentIdsFromBody(rawBody) {
+    const raw = String(rawBody || '').trim();
+    if (!raw) return [];
+
+    const found = new Set();
+    const add = value => {
+      const text = String(value || '').trim().toUpperCase();
+      if (/^BR[A-Z0-9]{8,}$/.test(text)) found.add(text);
+    };
+
+    const walk = (value, depth = 0) => {
+      if (depth > 8 || value == null) return;
+      if (Array.isArray(value)) {
+        value.forEach(item => walk(item, depth + 1));
+        return;
+      }
+      if (typeof value === 'object') {
+        Object.entries(value).forEach(([key, child]) => {
+          const normalizedKey = normalize(key);
+          if (/shipment|tracking|order|tn|sls/.test(normalizedKey) && typeof child !== 'object') add(child);
+          walk(child, depth + 1);
+        });
+        return;
+      }
+      if (typeof value === 'string') {
+        const matches = value.toUpperCase().match(/BR[A-Z0-9]{8,}/g) || [];
+        matches.forEach(add);
+      }
+    };
+
+    try {
+      walk(JSON.parse(raw));
+    } catch {
+      try {
+        const params = new URLSearchParams(raw);
+        for (const [key, value] of params.entries()) {
+          if (/shipment|tracking|order|tn|sls/i.test(key)) add(value);
+          walk(value);
+        }
+      } catch {}
+      walk(raw);
+    }
+
+    return [...found];
+  }
+
   function handleRealReceiveResponse(meta, parsed) {
     try {
       const url = new URL(String(meta?.url || ''), location.href);
+      const normalizedPath = String(url.pathname || '').replace(/\/+$/, '');
       if (url.origin !== location.origin) return;
-      if (url.pathname !== '/api/in-station/uni_receive/order') return;
+      if (normalizedPath !== '/api/in-station/uni_receive/order') return;
       if (String(meta?.method || 'GET').toUpperCase() !== 'POST') return;
-      if (Number(parsed?.retcode) !== 0) return;
+
+      receiveDiagPush('receive_response_seen', {
+        path: normalizedPath,
+        transport: String(meta?.transport || ''),
+        retcode: parsed?.retcode,
+        response_orders: Array.isArray(parsed?.data?.order_list) ? parsed.data.order_list.length : 0,
+        body_size: String(meta?.body || '').length
+      });
+
+      if (Number(parsed?.retcode) !== 0) {
+        receiveDiagPush('receive_response_not_success', {
+          retcode: parsed?.retcode,
+          message: String(parsed?.message || '')
+        });
+        return;
+      }
 
       const operatorLogin = String(parsed?.data?.task_operator || currentOperatorLogin || '')
         .trim()
         .toLowerCase();
-      const orders = Array.isArray(parsed?.data?.order_list) ? parsed.data.order_list : [];
+
+      let orders = Array.isArray(parsed?.data?.order_list)
+        ? parsed.data.order_list.filter(Boolean)
+        : [];
+
+      if (!orders.length) {
+        const requestShipmentIds = receiveShipmentIdsFromBody(meta?.body);
+        const fallbackReceiveTime = Number(parsed?.data?.receive_time || parsed?.receive_time || 0);
+        orders = requestShipmentIds.map(shipmentId => ({
+          shipment_id: shipmentId,
+          receive_time: fallbackReceiveTime
+        }));
+
+        receiveDiagPush('receive_orders_from_request_body', {
+          count: orders.length,
+          shipment_ids: requestShipmentIds.slice(0, 10)
+        });
+      }
+
+      if (!orders.length) {
+        receiveDiagPush('receive_success_without_orders', {
+          body_excerpt: String(meta?.body || '').slice(0, 500)
+        });
+        return;
+      }
+
+      receiveDiagPush('receive_success_recognized', {
+        operator_login: operatorLogin,
+        order_count: orders.length
+      });
 
       orders.forEach(order => {
         const shipmentId = String(order?.shipment_id || order?.sls_tracking_number || '')
@@ -2488,12 +2695,21 @@
         const receiveSeconds = Number(order?.receive_time || 0);
         const receivedAt = receiveSeconds > 0 ? receiveSeconds * 1000 : Date.now();
         const receiveKey = shipmentId + '|' + Math.floor(receiveSeconds || receivedAt / 1000);
-        if (confirmedReceiveSeen.has(receiveKey)) return;
+        if (confirmedReceiveSeen.has(receiveKey)) {
+          receiveDiagPush('receive_duplicate_ignored', { shipment_id: shipmentId, receive_key: receiveKey });
+          return;
+        }
         confirmedReceiveSeen.add(receiveKey);
 
+        receiveDiagPush('receive_queued', {
+          shipment_id: shipmentId,
+          received_at: receivedAt,
+          operator_login: operatorLogin
+        });
         queueConfirmedReceive(shipmentId, operatorLogin, receivedAt);
       });
     } catch (error) {
+      receiveDiagPush('receive_handler_error', { error: String(error?.message || error || '') });
       console.warn('[SPX-DV] Falha ao reconhecer recebimento real do SPX', error);
     }
   }
@@ -2507,6 +2723,19 @@
 
     const consume = detail => {
       if (!detail || typeof detail !== 'object') return;
+      receiveDiagPush('bridge_event', {
+        path: (() => {
+          try {
+            const u = new URL(String(detail?.meta?.url || ''), location.href);
+            return u.pathname + u.search;
+          } catch {
+            return String(detail?.meta?.url || '');
+          }
+        })(),
+        transport: String(detail?.meta?.transport || ''),
+        retcode: detail?.payload?.retcode,
+        body_size: String(detail?.meta?.body || '').length
+      });
       handleRealReceiveResponse(detail.meta || {}, detail.payload || null);
     };
 
@@ -2519,6 +2748,10 @@
       : [];
 
     window[readyKey] = true;
+    receiveDiagPush('bridge_ready', {
+      buffered: buffered.length,
+      hook_loaded: Boolean(window.__SPX_DV_REAL_RECEIVE_HOOK_V1__)
+    });
     buffered.forEach(consume);
   }
 
@@ -2881,6 +3114,23 @@
   }
 
   async function handleAction(event) {
+    if (event.target.closest('[data-copy-receive-diag]')) {
+      navigator.clipboard?.writeText(receiveDiagText()).catch(() => {});
+      return;
+    }
+    if (event.target.closest('[data-clear-receive-diag]')) {
+      try {
+        localStorage.removeItem(RECEIVE_DIAG_STORAGE_KEY);
+        localStorage.removeItem('spxdv:receive-hook-diag-v1');
+      } catch {}
+      renderReceiveDiagnostics();
+      return;
+    }
+    if (event.target.closest('[data-receive-diag]')) {
+      diagnosticView = true;
+      renderReceiveDiagnostics();
+      return;
+    }
     if (event.target.closest('[data-dashboard]')) {
       openReceivingDashboard();
       return;

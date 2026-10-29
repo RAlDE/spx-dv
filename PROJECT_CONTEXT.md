@@ -1146,3 +1146,30 @@ Validação necessária:
 4. testar `buyer_info` em BR normal e `seller_info` em Return;
 5. comparar o bairro retornado com `Sort Code Name`/bairro conhecido em vários BRs;
 6. somente após consistência real, migrar `fetchOccurrenceNeighborhood` para `trade_info -> reverse geocoding`.
+
+
+## Atualização 1.3.39 — Bairro operacional por geolocalização do trade_info
+Validação real da 1.3.38 confirmou que o reverse geocoding retornou o bairro correto tanto para:
+- BR normal usando `data.buyer_info.buyer_geo_lat/lng`;
+- BR Return usando `data.seller_info.seller_geo_lat/lng`.
+
+A 1.3.39 passa a usar essa fonte operacionalmente:
+- fonte principal: `GET /api/fleet_order/order/detail/trade_info?shipment_id=<BR>`;
+- LMHub normal: coordenadas do comprador/destinatário;
+- Return_LMHub: coordenadas do vendedor/remetente;
+- `return_dest_geo_lat/lng = 0,0` continua ignorado;
+- lat/lng -> Bairro via `GET ?view=geo&lat=...&lng=...` no Web App Apps Script;
+- a caixa de recebimento não espera o geocoder para renderizar: mostra `Bairro: Consultando...` e atualiza o texto quando a resposta chega;
+- Return também passa a exibir Bairro na caixa;
+- recebimento real continua reconhecido exclusivamente por `POST /api/in-station/uni_receive/order` com `retcode=0`;
+- captura do Dashboard ocorre em background, portanto o scanner/recebimento do SPX não fica bloqueado pela resposta do geocoder;
+- exportação automática de Bairro continua desligada;
+- fallback temporário: fluxo normal pode usar a cache central antiga; Return pode usar `seller_addr_district` via `show_sensitive_data` somente se trade_info/geocoder falharem;
+- o resultado do geocoder não é persistido/cacheado pelo SPX-DV no Apps Script.
+
+Ainda requer validação real antes de considerar estável:
+1. BR normal na caixa deve mostrar `Consultando...` e depois o bairro correto;
+2. BR Return deve fazer o mesmo usando seller_geo;
+3. bip/recebimento deve continuar fluido mesmo se o geocoder demorar;
+4. recebimento real deve criar Dashboard com bairro;
+5. envio em lote do Dashboard deve levar o mesmo bairro para Dados.

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.36';
+  const MODULE_VERSION = '1.3.37';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -21,6 +21,10 @@
   const NEIGHBOR_DIAG_KEY = 'spxdv:neighborhood-network-diag-v1';
   const NEIGHBOR_DIAG_BUTTON_ID = 'spxdv-neighborhood-diag-button';
   const NEIGHBOR_DIAG_MODAL_ID = 'spxdv-neighborhood-diag-modal';
+  const GEO_DIAG_KEY = 'spxdv:geo-network-diag-v1';
+  const GEO_DIAG_BUTTON_ID = 'spxdv-geo-diag-button';
+  const GEO_DIAG_MODAL_ID = 'spxdv-geo-diag-modal';
+  const NEIGHBOR_EXPORT_AUTO_ENABLED = false;
   const NEIGHBOR_EXPORT_REFRESH_KEY = 'spxdv:neighborhood-export-refresh-v1';
   const NEIGHBOR_EXPORT_REFRESH_MS = 10 * 60 * 1000;
   const NEIGHBOR_EXPORT_ORDER_ACCOUNTS = '51,9,81,8,82,38,62,63,10,11,50,52,13,26,56,45,59,2,41,32,24,76,16,65,33,35,22,53,37,12,44,74,75,4,80,40,25,31,85,64,7,83,28,29,39,5,48,54,6,49,70,73,67,43,55,1,23,14,21,17,3,27,18,66,30,46,71,47,42,69,68,34,36';
@@ -481,6 +485,315 @@
       location.hash.startsWith('#/exceptionOnholdList');
   }
 
+  function isGeoSourceRoute() {
+    return location.origin === 'https://spx.shopee.com.br' &&
+      /^#\/orderDetail\/BR[A-Z0-9]{8,}\/sender_info(?:\?|$)/i.test(location.hash);
+  }
+
+  function geoCoordinateNumber(value, axis) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return null;
+    if (axis === 'lat' && number >= -90 && number <= 90) return number;
+    if (axis === 'lng' && number >= -180 && number <= 180) return number;
+    return null;
+  }
+
+  function normalizedGeoKey(key) {
+    return String(key || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  }
+
+  function collectGeoPairs(value, path = '', out = [], depth = 0) {
+    if (!value || typeof value !== 'object' || depth > 14 || out.length >= 80) return out;
+
+    if (Array.isArray(value)) {
+      value.slice(0, 80).forEach((child, index) =>
+        collectGeoPairs(child, path + '[' + index + ']', out, depth + 1)
+      );
+      return out;
+    }
+
+    const entries = Object.entries(value);
+    let lat = null;
+    let lng = null;
+    let latKey = '';
+    let lngKey = '';
+
+    for (const [key, child] of entries) {
+      if (child && typeof child === 'object') continue;
+      const nk = normalizedGeoKey(key);
+
+      if (
+        /(^|_)(lat|latitude)$/.test(nk) ||
+        /(^|_)(buyer|recipient|receiver|seller|sender)_(lat|latitude)$/.test(nk)
+      ) {
+        const candidate = geoCoordinateNumber(child, 'lat');
+        if (candidate !== null) {
+          lat = candidate;
+          latKey = key;
+        }
+      }
+
+      if (
+        /(^|_)(lng|lon|long|longitude)$/.test(nk) ||
+        /(^|_)(buyer|recipient|receiver|seller|sender)_(lng|lon|long|longitude)$/.test(nk)
+      ) {
+        const candidate = geoCoordinateNumber(child, 'lng');
+        if (candidate !== null) {
+          lng = candidate;
+          lngKey = key;
+        }
+      }
+    }
+
+    if (lat !== null && lng !== null) {
+      out.push({
+        path: path || '$',
+        latitude: lat,
+        longitude: lng,
+        latKey,
+        lngKey
+      });
+    }
+
+    for (const [key, child] of entries) {
+      if (out.length >= 80) break;
+      if (!child || typeof child !== 'object') continue;
+      const nextPath = path ? path + '.' + key : key;
+      collectGeoPairs(child, nextPath, out, depth + 1);
+    }
+
+    return out;
+  }
+
+  function collectGeoScalarHints(value, path = '', out = [], depth = 0) {
+    if (!value || typeof value !== 'object' || depth > 14 || out.length >= 120) return out;
+
+    if (Array.isArray(value)) {
+      value.slice(0, 80).forEach((child, index) =>
+        collectGeoScalarHints(child, path + '[' + index + ']', out, depth + 1)
+      );
+      return out;
+    }
+
+    for (const [key, child] of Object.entries(value)) {
+      if (out.length >= 120) break;
+      const nextPath = path ? path + '.' + key : key;
+
+      if (child && typeof child === 'object') {
+        collectGeoScalarHints(child, nextPath, out, depth + 1);
+        continue;
+      }
+
+      const nk = normalizedGeoKey(key);
+      if (/lat|latitude|lng|lon|longitude|geo|coordinate|map/.test(nk)) {
+        out.push({ path: nextPath, value: String(child ?? '').slice(0, 220) });
+      }
+    }
+
+    return out;
+  }
+
+  function geoPairsFromText(text) {
+    const raw = String(text || '');
+    const out = [];
+    const regex = /(-?\d{1,2}\.\d{4,})\s*[,;]\s*(-?\d{1,3}\.\d{4,})/g;
+    let match = null;
+
+    while ((match = regex.exec(raw)) && out.length < 30) {
+      const latitude = geoCoordinateNumber(match[1], 'lat');
+      const longitude = geoCoordinateNumber(match[2], 'lng');
+      if (latitude === null || longitude === null) continue;
+      out.push({
+        path: '$text',
+        latitude,
+        longitude,
+        latKey: 'text',
+        lngKey: 'text'
+      });
+    }
+
+    return out;
+  }
+
+  function dedupeGeoPairs(pairs) {
+    const seen = new Set();
+    return (pairs || []).filter(item => {
+      const key = Number(item.latitude).toFixed(7) + '|' +
+        Number(item.longitude).toFixed(7) + '|' + String(item.path || '');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function saveGeoDiagnostic(meta, parsed, rawText) {
+    try {
+      if (!isGeoSourceRoute()) return;
+
+      const urlText = String(meta?.url || '');
+      if (!urlText) return;
+      const url = new URL(urlText, location.href);
+      if (url.origin !== location.origin) return;
+
+      const text = String(rawText || '');
+      const objectPairs = parsed && typeof parsed === 'object'
+        ? collectGeoPairs(parsed)
+        : [];
+      const textPairs = geoPairsFromText(text);
+      const pairs = dedupeGeoPairs([...objectPairs, ...textPairs]);
+
+      const scalarHints = parsed && typeof parsed === 'object'
+        ? collectGeoScalarHints(parsed)
+        : [];
+
+      const pathSignal = /order|detail|receiver|recipient|buyer|sender|seller|address|geo|map/i
+        .test(url.pathname + url.search);
+
+      if (!pairs.length && !scalarHints.length && !pathSignal) return;
+
+      const candidate = {
+        capturedAt: new Date().toISOString(),
+        pageBr: pageShipmentId(),
+        pageHash: location.hash,
+        method: String(meta?.method || 'GET').toUpperCase(),
+        url: urlText,
+        requestBody: String(meta?.body || '').slice(0, 3000),
+        size: text.length,
+        coordinatePairs: pairs.slice(0, 30),
+        coordinateHints: scalarHints.slice(0, 60)
+      };
+
+      let list = [];
+      try {
+        list = JSON.parse(localStorage.getItem(GEO_DIAG_KEY) || '[]');
+        if (!Array.isArray(list)) list = [];
+      } catch {}
+
+      const signature = candidate.method + '|' + candidate.url + '|' + candidate.requestBody;
+      list = list.filter(item =>
+        (String(item.method || '') + '|' + String(item.url || '') + '|' +
+          String(item.requestBody || '')) !== signature
+      );
+      list.unshift(candidate);
+      localStorage.setItem(GEO_DIAG_KEY, JSON.stringify(list.slice(0, 80)));
+      updateGeoDiagButton();
+    } catch {}
+  }
+
+  function getGeoDiagnostics() {
+    try {
+      const list = JSON.parse(localStorage.getItem(GEO_DIAG_KEY) || '[]');
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function updateGeoDiagButton() {
+    const button = document.getElementById(GEO_DIAG_BUTTON_ID);
+    if (!button) return;
+    const list = getGeoDiagnostics();
+    const hits = list.filter(item => Array.isArray(item.coordinatePairs) && item.coordinatePairs.length).length;
+    button.textContent = hits ? 'Geo · ' + hits : 'Geo diag';
+  }
+
+  function renderGeoDiagnosticModal() {
+    document.getElementById(GEO_DIAG_MODAL_ID)?.remove();
+    const list = getGeoDiagnostics();
+    const rows = list.length ? list.slice(0, 40).map((item, index) => {
+      let path = item.url || '';
+      try {
+        const u = new URL(path, location.href);
+        path = u.pathname + u.search;
+      } catch {}
+
+      const pairs = (item.coordinatePairs || []).map(pair =>
+        '<div style="padding:5px 0;border-top:1px solid #2a2a2a">' +
+        '<b>' + escapeHtml(pair.path || '$') + '</b> · ' +
+        escapeHtml(String(pair.latitude)) + ', ' +
+        escapeHtml(String(pair.longitude)) +
+        '<div style="color:#94a3b8;font-size:10px">' +
+        escapeHtml(String(pair.latKey || 'lat')) + ' / ' +
+        escapeHtml(String(pair.lngKey || 'lng')) + '</div></div>'
+      ).join('');
+
+      const hints = (item.coordinateHints || []).slice(0, 24).map(h =>
+        '<div style="padding:3px 0;border-top:1px solid #262626"><b>' +
+        escapeHtml(h.path) + '</b>: ' + escapeHtml(h.value) + '</div>'
+      ).join('');
+
+      const hasPair = Boolean((item.coordinatePairs || []).length);
+      return '<details ' + (hasPair || index === 0 ? 'open' : '') +
+        ' style="margin-bottom:8px;border:1px solid ' + (hasPair ? '#22c55e' : '#333') +
+        ';border-radius:9px;background:#080808">' +
+        '<summary style="cursor:pointer;padding:9px 10px;font-weight:900;color:' +
+        (hasPair ? '#bbf7d0' : '#e5e7eb') + '">#' + (index + 1) + ' ' +
+        escapeHtml(item.method || 'GET') + (hasPair ? ' · COORDENADA' : '') + '</summary>' +
+        '<div style="padding:9px 10px;font-size:11px;line-height:1.5">' +
+        '<div style="word-break:break-all"><b>Endpoint:</b> ' + escapeHtml(path) + '</div>' +
+        (item.requestBody ? '<div style="margin-top:5px;word-break:break-all"><b>Body:</b> ' +
+          escapeHtml(item.requestBody) + '</div>' : '') +
+        (pairs ? '<div style="margin-top:7px;padding:7px;border:1px solid #166534;border-radius:7px"><b style="color:#86efac">Coordenadas encontradas</b>' + pairs + '</div>' : '') +
+        (hints ? '<div style="margin-top:7px">' + hints + '</div>' : '') +
+        '</div></details>';
+    }).join('') : '<div style="padding:20px;color:#9ca3af;text-align:center">Ainda não capturei coordenadas. Pesquise o BR e abra Informações comprador/vendedor.</div>';
+
+    const overlay = document.createElement('div');
+    overlay.id = GEO_DIAG_MODAL_ID;
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.78);display:grid;place-items:center;padding:20px';
+    overlay.innerHTML =
+      '<div style="width:min(1050px,96vw);max-height:88vh;overflow:hidden;background:#030303;border:1px solid #166534;border-radius:14px;box-shadow:0 20px 70px #000;color:#f8fafc">' +
+      '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px;border-bottom:1px solid #14532d;background:#03150b">' +
+      '<div><div style="font-size:17px;font-weight:900;color:#dcfce7">Diagnóstico de Geolocalização</div>' +
+      '<div style="font-size:11px;color:#9ca3af">Somente orderDetail / comprador-vendedor. Não altera Bairro nem recebimento.</div></div>' +
+      '<div style="display:flex;gap:7px"><button data-geo-copy style="padding:8px 10px;border:1px solid #166534;border-radius:8px;background:#111;color:#fff;cursor:pointer">Copiar</button>' +
+      '<button data-geo-clear style="padding:8px 10px;border:1px solid #166534;border-radius:8px;background:#111;color:#fff;cursor:pointer">Limpar</button>' +
+      '<button data-geo-close style="padding:8px 10px;border:1px solid #166534;border-radius:8px;background:#111;color:#fff;cursor:pointer">Fechar</button></div></div>' +
+      '<div style="padding:12px 14px;overflow:auto;max-height:72vh">' + rows + '</div></div>';
+
+    overlay.querySelector('[data-geo-close]')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) overlay.remove();
+    });
+    overlay.querySelector('[data-geo-clear]')?.addEventListener('click', () => {
+      localStorage.removeItem(GEO_DIAG_KEY);
+      overlay.remove();
+      updateGeoDiagButton();
+    });
+    overlay.querySelector('[data-geo-copy]')?.addEventListener('click', async () => {
+      const text = JSON.stringify(getGeoDiagnostics(), null, 2);
+      try {
+        await navigator.clipboard.writeText(text);
+        alert('Diagnóstico de geolocalização copiado.');
+      } catch {
+        prompt('Copie o diagnóstico:', text);
+      }
+    });
+    document.body.appendChild(overlay);
+  }
+
+  function ensureGeoDiagnosticUi() {
+    const active = isGeoSourceRoute();
+    if (!active) {
+      document.getElementById(GEO_DIAG_BUTTON_ID)?.remove();
+      document.getElementById(GEO_DIAG_MODAL_ID)?.remove();
+      return;
+    }
+
+    if (document.getElementById(GEO_DIAG_BUTTON_ID)) {
+      updateGeoDiagButton();
+      return;
+    }
+
+    const button = document.createElement('button');
+    button.id = GEO_DIAG_BUTTON_ID;
+    button.type = 'button';
+    button.style.cssText = 'position:fixed;right:18px;bottom:66px;z-index:2147483645;padding:10px 13px;border:1px solid #22c55e;border-radius:10px;background:#03150b;color:#bbf7d0;font:800 12px/1.2 Inter,system-ui,sans-serif;cursor:pointer;box-shadow:0 8px 30px rgba(0,0,0,.5),0 0 18px rgba(34,197,94,.18)';
+    button.addEventListener('click', renderGeoDiagnosticModal);
+    document.body.appendChild(button);
+    updateGeoDiagButton();
+  }
+
   function neighborhoodDiagnosticExcerpt(text) {
     const raw = String(text || '');
     const match = raw.match(/sort[ _-]*code(?:[ _-]*name)?|sortCodeName|bairro|district|neighborhood|BR[A-Z0-9]{8,}/i);
@@ -830,6 +1143,7 @@
         contentType: response.headers.get('content-type') || '',
         contentDisposition: response.headers.get('content-disposition') || ''
       });
+      saveGeoDiagnostic(meta, parsed, text);
     } catch {}
   }
 
@@ -888,6 +1202,7 @@
               contentType: this.getResponseHeader('content-type') || '',
               contentDisposition: this.getResponseHeader('content-disposition') || ''
             });
+            saveGeoDiagnostic(meta, parsed, text);
           }
         } catch {}
       });
@@ -1783,6 +2098,7 @@
   }
 
   async function ensureNeighborhoodExportRefresh(force = false) {
+    if (!NEIGHBOR_EXPORT_AUTO_ENABLED) return false;
     if (neighborhoodExportRefreshPromise) return neighborhoodExportRefreshPromise;
 
     const now = Date.now();
@@ -2515,9 +2831,11 @@
   // Garante abertura toda vez que o usuário entra em Recebimento unitário.
   window.setInterval(() => syncReceiveRoute(false), 250);
   window.setInterval(ensureNeighborhoodDiagnosticUi, 500);
+  window.setInterval(ensureGeoDiagnosticUi, 500);
 
   installReturnNetworkDiagnostic();
   ensureNeighborhoodDiagnosticUi();
+  ensureGeoDiagnosticUi();
   ensureShipmentKeyListener();
   if (isTargetRoute()) void start();
 })();

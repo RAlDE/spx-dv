@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.37';
+  const MODULE_VERSION = '1.3.38';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -689,6 +689,54 @@
     }
   }
 
+  function fetchGeoNeighborhood(latitude, longitude, timeoutMs = 4500) {
+    if (!ONHOLD_DATA_WEBAPP_URL) return Promise.resolve(null);
+
+    const lat = Number(latitude);
+    const lng = Number(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) ||
+        lat < -90 || lat > 90 || lng < -180 || lng > 180 ||
+        (lat === 0 && lng === 0)) {
+      return Promise.resolve(null);
+    }
+
+    // Bairro não exige precisão centimétrica. Enviamos somente coordenadas
+    // arredondadas ao Apps Script e nunca BR/nome/endereço para o geocoder.
+    const safeLat = Math.round(lat * 100000) / 100000;
+    const safeLng = Math.round(lng * 100000) / 100000;
+
+    return new Promise(resolve => {
+      const suffix = String(Date.now()) + '_' + Math.random().toString(36).slice(2, 9);
+      const callbackName = '__spxDvGeo_' + suffix;
+      const script = document.createElement('script');
+      let finished = false;
+
+      const finish = value => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        try { script.remove(); } catch {}
+        try { delete window[callbackName]; } catch {}
+        resolve(value && typeof value === 'object' ? value : null);
+      };
+
+      window[callbackName] = payload => finish(payload);
+      const timer = window.setTimeout(
+        () => finish(null),
+        Math.max(1500, Number(timeoutMs) || 4500)
+      );
+
+      script.async = true;
+      script.src = ONHOLD_DATA_WEBAPP_URL +
+        '?view=geo&lat=' + encodeURIComponent(safeLat) +
+        '&lng=' + encodeURIComponent(safeLng) +
+        '&callback=' + encodeURIComponent(callbackName) +
+        '&_=' + Date.now();
+      script.onerror = () => finish(null);
+      (document.head || document.documentElement).appendChild(script);
+    });
+  }
+
   function updateGeoDiagButton() {
     const button = document.getElementById(GEO_DIAG_BUTTON_ID);
     if (!button) return;
@@ -707,15 +755,29 @@
         path = u.pathname + u.search;
       } catch {}
 
-      const pairs = (item.coordinatePairs || []).map(pair =>
-        '<div style="padding:5px 0;border-top:1px solid #2a2a2a">' +
-        '<b>' + escapeHtml(pair.path || '$') + '</b> · ' +
-        escapeHtml(String(pair.latitude)) + ', ' +
-        escapeHtml(String(pair.longitude)) +
-        '<div style="color:#94a3b8;font-size:10px">' +
-        escapeHtml(String(pair.latKey || 'lat')) + ' / ' +
-        escapeHtml(String(pair.lngKey || 'lng')) + '</div></div>'
-      ).join('');
+      const pairs = (item.coordinatePairs || []).map(pair => {
+        const lat = Number(pair.latitude);
+        const lng = Number(pair.longitude);
+        const valid = Number.isFinite(lat) && Number.isFinite(lng) &&
+          lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 &&
+          !(lat === 0 && lng === 0);
+
+        return '<div style="padding:7px 0;border-top:1px solid #2a2a2a">' +
+          '<b>' + escapeHtml(pair.path || '$') + '</b> · ' +
+          escapeHtml(String(pair.latitude)) + ', ' +
+          escapeHtml(String(pair.longitude)) +
+          '<div style="color:#94a3b8;font-size:10px">' +
+          escapeHtml(String(pair.latKey || 'lat')) + ' / ' +
+          escapeHtml(String(pair.lngKey || 'lng')) + '</div>' +
+          (valid
+            ? '<div style="display:flex;align-items:center;gap:8px;margin-top:6px">' +
+              '<button type="button" data-geo-lookup data-lat="' + escapeHtml(String(lat)) +
+              '" data-lng="' + escapeHtml(String(lng)) +
+              '" style="padding:5px 8px;border:1px solid #16a34a;border-radius:7px;background:#052e16;color:#dcfce7;font-weight:800;cursor:pointer">Testar bairro</button>' +
+              '<span data-geo-lookup-result style="color:#cbd5e1">—</span></div>'
+            : '<div style="margin-top:5px;color:#fca5a5">Coordenada 0,0 ignorada.</div>') +
+          '</div>';
+      }).join('');
 
       const hints = (item.coordinateHints || []).slice(0, 24).map(h =>
         '<div style="padding:3px 0;border-top:1px solid #262626"><b>' +
@@ -769,6 +831,48 @@
         prompt('Copie o diagnóstico:', text);
       }
     });
+
+    overlay.querySelectorAll('[data-geo-lookup]').forEach(button => {
+      button.addEventListener('click', async () => {
+        const resultNode = button.parentElement?.querySelector('[data-geo-lookup-result]');
+        const lat = Number(button.getAttribute('data-lat'));
+        const lng = Number(button.getAttribute('data-lng'));
+        button.disabled = true;
+        button.textContent = 'Consultando...';
+        if (resultNode) resultNode.textContent = 'aguarde';
+
+        try {
+          const result = await fetchGeoNeighborhood(lat, lng);
+          if (!result) {
+            if (resultNode) resultNode.textContent = 'sem resposta — confira se o Apps Script 1.3.38 foi reimplantado';
+            return;
+          }
+          if (!result.ok) {
+            if (resultNode) resultNode.textContent = 'erro: ' + String(result.error || 'não localizado');
+            return;
+          }
+
+          const candidates = Array.isArray(result.candidates)
+            ? result.candidates.slice(0, 5)
+            : [];
+          const extra = candidates.length
+            ? ' · ' + candidates.map(item =>
+                String(item.name || '') + ' [' + String(item.type || '') + ']'
+              ).join(' | ')
+            : '';
+
+          if (resultNode) {
+            resultNode.textContent = (result.neighborhood || 'não localizado') + extra;
+          }
+        } catch (error) {
+          if (resultNode) resultNode.textContent = 'falha na consulta';
+        } finally {
+          button.disabled = false;
+          button.textContent = 'Testar bairro';
+        }
+      });
+    });
+
     document.body.appendChild(overlay);
   }
 

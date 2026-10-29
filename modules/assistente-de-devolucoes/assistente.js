@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.41';
+  const MODULE_VERSION = '1.3.42';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -2303,13 +2303,14 @@
     }
 
     // Sem consulta a campo sensível. No fluxo normal ainda podemos aproveitar
-    // a cache central já existente. No Return, se o geocoder não resolver,
-    // deixamos Bairro vazio; a interface mostra "Atualizar base".
+    // a cache central já existente. Se nenhuma fonte resolver, "Atualizar base"
+    // vira o valor operacional do Bairro e segue para Dashboard/Dados.
     if (!returnFlow) {
-      return await fetchNeighborhoodFromCentralCache(shipment).catch(() => '');
+      const cached = await fetchNeighborhoodFromCentralCache(shipment).catch(() => '');
+      if (cached) return cached;
     }
 
-    return '';
+    return 'Atualizar base';
   }
 
   function currentOccurrenceSheetPayload(shipmentId, attempt, returnFlow, neighborhood, operatorLogin = '', receivedAt = 0) {

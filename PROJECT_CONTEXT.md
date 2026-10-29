@@ -1116,3 +1116,33 @@ Validação necessária:
 4. repetir com um BR Return;
 5. comparar os endpoints/paths e confirmar qual campo corresponde ao localizador superior e ao inferior;
 6. somente depois implementar conversão lat/lng -> Bairro.
+
+
+## Atualização 1.3.38 — validação lat/lng -> Bairro
+Em 28/10/2026 o diagnóstico v1.3.37 confirmou a fonte de geolocalização:
+`GET /api/fleet_order/order/detail/trade_info?shipment_id=<BR>`.
+
+Campos confirmados:
+- LMHub normal / destinatário: `data.buyer_info.buyer_geo_lat` + `buyer_geo_lng`;
+- Return_LMHub / remetente: `data.seller_info.seller_geo_lat` + `seller_geo_lng`;
+- `data.return_info.return_dest_geo_lat/lng` veio `0,0` nos casos observados e deve ser ignorado.
+
+A v1.3.38 adiciona uma validação controlada de reverse geocoding:
+- Apps Script: novo `GET ?view=geo&lat=...&lng=...&callback=...`;
+- usa `Maps.newGeocoder().setLanguage('pt-BR').setRegion('br').reverseGeocode(...)`;
+- o geocoder recebe apenas lat/lng arredondados a 5 casas; não recebe BR, nome, telefone ou endereço;
+- não persiste coordenadas;
+- usa CacheService por 6 horas para coordenadas repetidas;
+- candidatos de Bairro são coletados por prioridade: `sublocality_level_1`, `neighborhood`, `sublocality`, `administrative_area_level_4`, `administrative_area_level_3`;
+- módulo: cada par de coordenadas no `Geo diag` recebe botão `Testar bairro`, exibindo o candidato e até 5 classificações retornadas.
+
+Esta versão ainda NÃO substitui a fonte operacional de Bairro e não grava o resultado geográfico em Dashboard/Dados.
+A exportação automática de Bairro continua pausada.
+
+Validação necessária:
+1. atualizar/reimplantar o Apps Script preservando o mesmo `/exec`;
+2. carregar o módulo 1.3.38;
+3. abrir BR com `trade_info` e clicar `Geo diag`;
+4. testar `buyer_info` em BR normal e `seller_info` em Return;
+5. comparar o bairro retornado com `Sort Code Name`/bairro conhecido em vários BRs;
+6. somente após consistência real, migrar `fetchOccurrenceNeighborhood` para `trade_info -> reverse geocoding`.

@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-28
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.40
-Estado: desenvolvimento incremental; 1.3.40 requer validação real antes de ser chamada de estável.
+Versão atual do módulo: 1.3.41
+Estado: desenvolvimento incremental; 1.3.41 requer validação real antes de ser chamada de estável.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -186,9 +186,11 @@ Conversão atual:
 
 O geocoder recebe somente latitude/longitude arredondadas; não recebe BR, nome, telefone ou endereço. O SPX-DV não persiste/cacheia o resultado do Google Maps no Apps Script.
 
-Fallback temporário da v1.3.39/1.3.40:
+Fallback atual a partir da v1.3.41:
 - normal: pode tentar a cache central antiga `_SPX_DV_BAIRROS` se geolocalização/geocoder falhar;
-- Return: pode usar `show_sensitive_data?data_field=seller_addr_district` somente como fallback;
+- Return: **não usa mais `show_sensitive_data` nem qualquer campo sensível como fallback**;
+- se o Bairro não for resolvido, o valor operacional permanece vazio;
+- na caixa, valor vazio aparece apenas visualmente como `Atualizar base`; esse texto não deve ser gravado no Dashboard nem em `Dados`;
 - a exportação automática de Bairro está **DESLIGADA** (`NEIGHBOR_EXPORT_AUTO_ENABLED = false`);
 - não criar tarefas de exportação de Bairro automaticamente.
 
@@ -216,7 +218,7 @@ A v1.3.40 foi criada especificamente para reduzir esse atraso:
 - no recebimento real, o Bairro também começa antes do enriquecimento da AT;
 - o resultado pré-carregado é reutilizado ao salvar no Dashboard para evitar uma segunda chamada na mesma captura.
 
-**Situação atual:** v1.3.40 passou por validação estática/sintática, mas a melhora de velocidade ainda precisa ser validada em novo teste real/vídeo. Não chamar v1.3.40 de estável ainda.
+**Situação atual:** v1.3.41 mantém a arquitetura/velocidade da 1.3.40, remove o fallback por campo sensível e mostra `Atualizar base` apenas na interface quando o Bairro vier vazio. A 1.3.41 passou por validação estática/sintática e ainda requer validação real antes de ser chamada de estável.
 
 ### Fonte autoritativa por responsabilidade
 Para evitar regressões, cada fonte tem um papel específico:
@@ -250,12 +252,13 @@ A integração antiga de planilha relacionada ao cancelamento deve ocorrer apena
 - v1.3.37: diagnóstico das coordenadas buyer/seller.
 - v1.3.38: reverse geocoding testado manualmente e retornou bairro correto em normal e Return.
 - v1.3.39: Bairro geográfico passou a ser fonte operacional; vídeo real confirmou funcionamento, mas mostrou atraso visual perceptível.
-- v1.3.40: geocoding antecipado/paralelo para reduzir esse atraso; **validação real de velocidade pendente**.
+- v1.3.40: geocoding antecipado/paralelo para reduzir esse atraso; teste real indicou velocidade operacional aceitável.
+- v1.3.41: remove completamente o fallback de Bairro por `show_sensitive_data`; se não houver Bairro, a UI mostra `Atualizar base` sem gravar esse texto como dado.
 
 ### Próximo teste recomendado
-Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.40:
+Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.41:
 
-1. carregar v1.3.40;
+1. carregar v1.3.41;
 2. bipar/colar BR normal e observar se o Bairro já aparece junto do painel ou quanto tempo fica em `Consultando...`;
 3. repetir com Return;
 4. confirmar que o operador consegue continuar bipando sem qualquer bloqueio;
@@ -1457,3 +1460,23 @@ Objetivo de validação real:
 - manter o bip/recebimento sem qualquer espera adicional;
 - confirmar que normal e Return continuam retornando o bairro correto;
 - confirmar que Dashboard/Dados continuam recebendo o mesmo bairro após recebimento real.
+
+
+## Atualização 1.3.41 — remoção total do fallback sensível de Bairro
+Solicitação operacional: não consultar mais o endpoint sensível para completar Bairro.
+
+Mudanças:
+- removido do módulo o fallback por `/api/fleet_order/order/detail/show_sensitive_data?data_field=seller_addr_district`;
+- `show_sensitive_data` deixa de ser usado operacionalmente pelo módulo para Bairro;
+- a fonte principal permanece `trade_info -> buyer_geo/seller_geo -> Apps Script reverse geocoding`;
+- no fluxo normal, a cache central antiga `_SPX_DV_BAIRROS` ainda pode ser usada como fallback não sensível;
+- no Return, se o geocoder não resolver, Bairro fica vazio;
+- na caixa de recebimento, Bairro vazio é exibido como `Atualizar base`;
+- `Atualizar base` é somente texto de interface e **não é enviado como valor de Bairro para Dashboard ou Dados**;
+- exportação automática continua desligada;
+- Apps Script não foi alterado nesta versão.
+
+Validação:
+- sintaxe JavaScript validada;
+- `assistente.js` não contém mais referência a `show_sensitive_data`;
+- validação real no SPX ainda pendente antes de chamar a versão de estável.

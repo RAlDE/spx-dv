@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.49';
+const SPX_DV_BUILD = '1.3.50';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -1126,18 +1126,129 @@ function clearConfirmedDashboard() {
   }
 }
 
-function dashboardHtml_(initialData, serviceUrl) {
-  const initialJson = JSON.stringify(initialData || {
-    ok: false,
-    build: SPX_DV_BUILD,
-    records: [],
-    today_records: [],
-    old_pending: [],
-    error: 'Dashboard sem estado inicial'
-  }).replace(/</g, '\\u003c');
+function dashboardHtmlEscape_(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
-  const serviceUrlJson = JSON.stringify(clean_(serviceUrl || ''))
+function dashboardFormatMillis_(value) {
+  const number = Number(value || 0);
+  if (!number) return '-';
+  return Utilities.formatDate(
+    new Date(number),
+    SPX_DV_CONFIG.timezone,
+    'dd/MM/yyyy HH:mm:ss'
+  );
+}
+
+function dashboardFormatSeconds_(value) {
+  const number = Number(value || 0);
+  if (!number) return '-';
+  return Utilities.formatDate(
+    new Date(number * 1000),
+    SPX_DV_CONFIG.timezone,
+    'dd/MM/yyyy HH:mm:ss'
+  );
+}
+
+function dashboardHtml_(initialData, serviceUrl) {
+  const data = initialData && typeof initialData === 'object'
+    ? initialData
+    : {
+        ok: false,
+        build: SPX_DV_BUILD,
+        records: [],
+        today_records: [],
+        old_pending: [],
+        error: 'Dashboard sem estado inicial'
+      };
+
+  const records = Array.isArray(data.records) ? data.records : [];
+  const todayRecords = Array.isArray(data.today_records)
+    ? data.today_records
+    : records.filter(function(record) {
+        return clean_(record && record.received_day) === clean_(data.today);
+      });
+  const oldPending = Array.isArray(data.old_pending)
+    ? data.old_pending
+    : records.filter(function(record) {
+        return clean_(record && record.received_day) &&
+          clean_(record.received_day) !== clean_(data.today) &&
+          clean_(record.status).toLowerCase() !== 'confirmed';
+      });
+  const pendingToday = todayRecords.filter(function(record) {
+    return clean_(record && record.status).toLowerCase() !== 'confirmed';
+  });
+  const allPending = records.filter(function(record) {
+    return clean_(record && record.status).toLowerCase() !== 'confirmed';
+  });
+  const operatorsToday = {};
+  todayRecords.forEach(function(record) {
+    const login = clean_(record && record.operator_login).toLowerCase();
+    if (login) operatorsToday[login] = true;
+  });
+
+  const sortedToday = todayRecords.slice().sort(function(a, b) {
+    return Number(b && b.received_at || 0) - Number(a && a.received_at || 0);
+  });
+
+  const serverRowsHtml = sortedToday.map(function(record) {
+    return '<tr>' +
+      '<td>' + dashboardHtmlEscape_(dashboardFormatMillis_(record.received_at)) + '</td>' +
+      '<td><strong>' + dashboardHtmlEscape_(record.shipment_id) + '</strong></td>' +
+      '<td>' + dashboardHtmlEscape_(record.reason) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(record.driver_id) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(record.driver_name) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(record.agency) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(record.neighborhood) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(dashboardFormatSeconds_(record.occurrence_timestamp)) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(record.operator_login || 'Não identificado') + '</td>' +
+      '</tr>';
+  }).join('');
+
+  const serverOperatorOptions = Object.keys(operatorsToday)
+    .sort()
+    .map(function(login) {
+      return '<option value="' + dashboardHtmlEscape_(login) + '">' +
+        dashboardHtmlEscape_(login) +
+        '</option>';
+    })
+    .join('');
+
+  const baseUrl = clean_(serviceUrl || '');
+  const refreshUrl = baseUrl +
+    '?view=dashboard&build=' + encodeURIComponent(SPX_DV_BUILD) +
+    '&_=' + Date.now();
+
+  const initialJson = JSON.stringify(data)
+    .replace(/</g, '\\u003c')
+    .replace(/\\u2028/g, '\\\\u2028')
+    .replace(/\\u2029/g, '\\\\u2029');
+
+  const serviceUrlJson = JSON.stringify(baseUrl)
     .replace(/</g, '\\u003c');
+
+  const serverBuildInfo =
+    'servidor ' + SPX_DV_BUILD +
+    ' · base ' + records.length +
+    ' · hoje ' + todayRecords.length;
+
+  const serverWarningHtml = data.ok === false && data.error
+    ? '<div class="warning">Falha ao carregar dados do Dashboard: ' +
+        dashboardHtmlEscape_(data.error) +
+      '</div>'
+    : (oldPending.length
+        ? '<div class="warning">⚠ ' + oldPending.length +
+          ' pendência(s) de dias anteriores.</div>'
+        : '');
+
+  const serverEmptyText = sortedToday.length
+    ? ''
+    : '<div class="empty">Nenhum recebimento hoje.</div>';
 
   return `<!doctype html>
 <html lang="pt-BR">
@@ -1148,7 +1259,7 @@ function dashboardHtml_(initialData, serviceUrl) {
 <style>
 *{box-sizing:border-box}body{margin:0;background:#020202;color:#f8fafc;font:13px/1.5 Inter,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}main{max-width:1600px;margin:auto;padding:26px 20px}
 header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:16px 18px;border:1px solid #4a260f;border-radius:14px;background:#070707;box-shadow:0 0 22px rgba(249,115,22,.16),inset 0 -1px rgba(249,115,22,.3)}h1{font-size:27px;letter-spacing:-.5px;margin:0;text-shadow:0 0 16px rgba(249,115,22,.34)}h2{font-size:16px;margin:0;color:#fff7ed;text-shadow:0 0 11px rgba(249,115,22,.26)}.muted{color:#9ca3af}.actions,.filters{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
-button,select,input{font:inherit}button{background:#111;color:#fff;border:1px solid #6b3415;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750;box-shadow:0 0 12px rgba(249,115,22,.1)}button:hover{background:#1a0d07;border-color:#f97316}button:disabled{opacity:.45;cursor:not-allowed}button.danger{color:#fed7aa}button.primary{background:#f97316;border-color:#fb923c;color:#140800;box-shadow:0 0 18px rgba(249,115,22,.24)}button.primary:hover{background:#fb923c}
+button,select,input{font:inherit}button,.button-link{background:#111;color:#fff;border:1px solid #6b3415;border-radius:9px;padding:10px 14px;cursor:pointer;font-weight:750;box-shadow:0 0 12px rgba(249,115,22,.1);text-decoration:none;display:inline-block}button:hover,.button-link:hover{background:#1a0d07;border-color:#f97316}button:disabled{opacity:.45;cursor:not-allowed}button.danger{color:#fed7aa}button.primary{background:#f97316;border-color:#fb923c;color:#140800;box-shadow:0 0 18px rgba(249,115,22,.24)}button.primary:hover{background:#fb923c}
 .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}.metric,.panel{background:#080808;border:1px solid #252525;border-radius:14px;padding:18px;box-shadow:0 10px 28px rgba(0,0,0,.42)}.metric{border-top-color:#6b3415}.metric.clickable{cursor:pointer}.metric.clickable:hover,.metric.clickable.active{border-color:#f97316;box-shadow:0 0 20px rgba(249,115,22,.18),0 10px 28px rgba(0,0,0,.42)}.metric span{display:block;font-size:11px;color:#a3a3a3;text-transform:uppercase;letter-spacing:.45px}.metric strong{display:block;font-size:28px;margin-top:5px}
 .panel{margin-bottom:16px}.panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}
 .search{width:min(360px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}.operator-filter{padding:10px 12px;background:#030303;border:1px solid #6b3415;color:#fff;border-radius:9px;min-width:210px}
@@ -1159,21 +1270,21 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </style>
 </head>
 <body><main>
-<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila · <span id="buildInfo">carregando servidor...</span></div></div><div class="actions"><button id="sendPending" class="primary">Enviar 0 para a planilha</button><button id="clearConfirmed" class="danger">Limpar já enviados</button><button id="refresh">Atualizar</button></div></header>
-<div id="warning"></div>
+<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila · <span id="buildInfo">${dashboardHtmlEscape_(serverBuildInfo)}</span></div></div><div class="actions"><button id="sendPending" class="primary"${allPending.length ? '' : ' disabled'}>Enviar ${allPending.length} para a planilha</button><button id="clearConfirmed" class="danger">Limpar já enviados</button><a id="refresh" class="button-link" href="${dashboardHtmlEscape_(refreshUrl)}">Atualizar</a></div></header>
+<div id="warning">${serverWarningHtml}</div>
 <section class="metrics">
-<div class="metric clickable active" id="cardToday"><span>Recebidos hoje</span><strong id="mTotal">0</strong></div>
-<div class="metric clickable" id="cardPending"><span>Pendências</span><strong id="mPending">0</strong></div>
-<div class="metric clickable" id="cardOld"><span>Pendentes antigos</span><strong id="mOld">0</strong></div>
-<div class="metric"><span>Operadores hoje</span><strong id="mOperators">0</strong></div>
+<div class="metric clickable active" id="cardToday"><span>Recebidos hoje</span><strong id="mTotal">${todayRecords.length}</strong></div>
+<div class="metric clickable" id="cardPending"><span>Pendências</span><strong id="mPending">${pendingToday.length}</strong></div>
+<div class="metric clickable" id="cardOld"><span>Pendentes antigos</span><strong id="mOld">${oldPending.length}</strong></div>
+<div class="metric"><span>Operadores hoje</span><strong id="mOperators">${Object.keys(operatorsToday).length}</strong></div>
 </section>
 <section class="panel">
 <div class="panel-head"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted">Matriz por motorista e ocorrência. Só aparecem motivos com quantidade no Top 10.</div></div><button id="toggleTopDrivers" class="rank-toggle" title="Abrir/fechar Top 10" aria-label="Abrir/fechar Top 10">▾</button></div>
 <div id="topDriversWrap" class="ranking-wrap"><div id="topDrivers"></div></div>
 </section>
 <section class="panel">
-<div class="panel-head"><div><h2 id="tableTitle">Recebimentos de hoje</h2><div id="tableSubtitle" class="muted">Todos os logins e computadores aparecem nesta mesma fila central.</div></div><div class="filters"><select id="operator" class="operator-filter"><option value="">Todos os operadores</option></select><input id="search" class="search" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"></div></div>
-<div class="table-wrap"><table><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th></tr></thead><tbody id="rows"></tbody></table><div id="empty" class="empty" hidden>Nenhum recebimento.</div></div>
+<div class="panel-head"><div><h2 id="tableTitle">Recebimentos de hoje</h2><div id="tableSubtitle" class="muted">Todos os logins e computadores aparecem nesta mesma fila central.</div></div><div class="filters"><select id="operator" class="operator-filter"><option value="">Todos os operadores</option>${serverOperatorOptions}</select><input id="search" class="search" placeholder="Pesquisar pedido, login, motorista, 3PL, bairro ou motivo"></div></div>
+<div class="table-wrap"><table><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th></tr></thead><tbody id="rows">${serverRowsHtml}</tbody></table><div id="empty" class="empty"${sortedToday.length ? ' hidden' : ''}>${serverEmptyText}</div></div>
 </section>
 <footer>Recebimentos confirmados pelo SPX ficam na fila até o envio explícito para Dados. Pendências antigas nunca são apagadas automaticamente.</footer>
 </main>

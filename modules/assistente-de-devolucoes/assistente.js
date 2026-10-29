@@ -624,7 +624,10 @@
             shipment_id: payload?.shipment_id || '',
             occurrence_key: occurrenceKey,
             status: String(check?.status || ''),
-            build: String(check?.build || centralHealthCache.build || '')
+            build: String(check?.build || centralHealthCache.build || ''),
+            received_day: String(check?.received_day || ''),
+            today: String(check?.today || ''),
+            visible_today: Boolean(check?.visible_today)
           });
           return true;
         }

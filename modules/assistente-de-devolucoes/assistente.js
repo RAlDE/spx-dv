@@ -441,6 +441,11 @@
         '&callback=' + encodeURIComponent(callbackName) +
         '&_=' + Date.now();
       script.onerror = () => finish(null);
+      script.onload = () => {
+        // Se o Web App devolveu algo que não executou o callback JSONP
+        // (ex.: implantação antiga/redirecionamento), encerra sem segurar o loading da aba.
+        window.setTimeout(() => finish(null), 0);
+      };
       (document.head || document.documentElement).appendChild(script);
     });
   }

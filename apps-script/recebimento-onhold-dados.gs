@@ -1377,6 +1377,7 @@ function dashboardHtml_(initialData, serviceUrl, params) {
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
+<base target="_top">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SPX-DV · Dashboard</title>
 <style>

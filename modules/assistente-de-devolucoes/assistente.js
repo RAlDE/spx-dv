@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.44';
+  const MODULE_VERSION = '1.3.45';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -410,6 +410,41 @@
     }
   }
 
+  function sendDashboardUpsertJsonp(payload, timeoutMs = 9000) {
+    if (!payload || !ONHOLD_DATA_WEBAPP_URL) return Promise.resolve(null);
+
+    return new Promise(resolve => {
+      const suffix = String(Date.now()) + '_' + Math.random().toString(36).slice(2, 9);
+      const callbackName = '__spxDvDashboard_' + suffix;
+      const script = document.createElement('script');
+      let finished = false;
+
+      const finish = value => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        try { script.remove(); } catch {}
+        try { delete window[callbackName]; } catch {}
+        resolve(value && typeof value === 'object' ? value : null);
+      };
+
+      window[callbackName] = result => finish(result);
+      const timer = window.setTimeout(
+        () => finish(null),
+        Math.max(2500, Number(timeoutMs) || 9000)
+      );
+
+      script.async = true;
+      script.src = ONHOLD_DATA_WEBAPP_URL +
+        '?view=dashboard_upsert' +
+        '&payload=' + encodeURIComponent(JSON.stringify(payload)) +
+        '&callback=' + encodeURIComponent(callbackName) +
+        '&_=' + Date.now();
+      script.onerror = () => finish(null);
+      (document.head || document.documentElement).appendChild(script);
+    });
+  }
+
   async function sendCentralDashboard(payload, action = 'dashboard_upsert') {
     if (!payload) return false;
 
@@ -418,6 +453,31 @@
       shipment_id: payload?.shipment_id || '',
       records: Array.isArray(payload?.records) ? payload.records.length : 0
     });
+
+    if (action === 'dashboard_upsert') {
+      try {
+        const result = await sendDashboardUpsertJsonp(payload);
+        if (!result?.ok) {
+          throw new Error(String(result?.error || 'Web App não confirmou o upsert'));
+        }
+
+        receiveDiagPush('central_send_confirmed', {
+          action,
+          shipment_id: payload?.shipment_id || '',
+          occurrence_key: String(result?.occurrence_key || ''),
+          status: String(result?.status || '')
+        });
+        return true;
+      } catch (error) {
+        receiveDiagPush('central_send_error', {
+          action,
+          shipment_id: payload?.shipment_id || '',
+          error: String(error?.message || error || '')
+        });
+        console.warn('[SPX-DV] Falha ao confirmar Dashboard central', error);
+        return false;
+      }
+    }
 
     try {
       await fetch(ONHOLD_DATA_WEBAPP_URL, {
@@ -431,7 +491,7 @@
         }),
         keepalive: true
       });
-      receiveDiagPush('central_send_resolved', {
+      receiveDiagPush('central_send_resolved_legacy', {
         action,
         shipment_id: payload?.shipment_id || ''
       });
@@ -450,15 +510,23 @@
   async function syncLocalDashboardToCentral() {
     try {
       const store = await readDashboardQueue();
-      const records = Object.values(store.records || {}).filter(record => {
-        if (!record || typeof record !== 'object') return false;
-        return record.received_day === saoPauloDay() || record.status !== 'confirmed';
-      });
+      const today = saoPauloDay();
+      const records = Object.values(store.records || {})
+        .filter(record =>
+          record &&
+          typeof record === 'object' &&
+          String(record.received_day || '') === today &&
+          record.status !== 'confirmed'
+        )
+        .sort((a, b) => Number(a.received_at || a.captured_at || 0) - Number(b.received_at || b.captured_at || 0));
 
       if (!records.length) return true;
 
-      return await sendCentralDashboard({
-        records: records.map(record => ({
+      receiveDiagPush('local_resync_start', { records: records.length, received_day: today });
+
+      let ok = true;
+      for (const record of records) {
+        const sent = await sendCentralDashboard({
           shipment_id: record.shipment_id,
           reason: record.reason,
           driver_id: record.driver_id,
@@ -470,10 +538,15 @@
           operator_login: record.operator_login,
           received_at: record.received_at || record.captured_at,
           status: record.status
-        }))
-      }, 'dashboard_merge');
+        }, 'dashboard_upsert');
+        if (!sent) ok = false;
+      }
+
+      receiveDiagPush('local_resync_done', { records: records.length, ok });
+      return ok;
     } catch (error) {
-      console.warn('[SPX-DV] Não foi possível migrar a fila local para o Dashboard central', error);
+      receiveDiagPush('local_resync_error', { error: String(error?.message || error || '') });
+      console.warn('[SPX-DV] Não foi possível sincronizar a fila local de hoje com o Dashboard central', error);
       return false;
     }
   }

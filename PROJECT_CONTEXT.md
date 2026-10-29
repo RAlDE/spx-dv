@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-28
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.43
-Estado: desenvolvimento incremental; 1.3.43 requer validação real antes de ser chamada de estável.
+Versão atual do módulo: 1.3.44
+Estado: desenvolvimento incremental; 1.3.44 requer validação real antes de ser chamada de estável.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -256,11 +256,12 @@ A integração antiga de planilha relacionada ao cancelamento deve ocorrer apena
 - v1.3.41: remove completamente o fallback de Bairro por `show_sensitive_data`.
 - v1.3.42: se geolocalização/cache não resolverem o Bairro, usa `Atualizar base` como valor real e envia ao Dashboard/Dados.
 - v1.3.43: adiciona hook mínimo em `document_start` para capturar o recebimento real antes do SPX guardar referências nativas de `fetch`/XHR; módulo principal continua em `document_idle`.
+- v1.3.44: adiciona diagnóstico ponta a ponta da captura do Dashboard e fallback para extrair BR do body do POST quando a resposta de sucesso não trouxer `order_list`.
 
 ### Próximo teste recomendado
-Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.43:
+Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.44:
 
-1. carregar v1.3.43;
+1. carregar v1.3.44;
 2. bipar/colar BR normal e observar se o Bairro já aparece junto do painel ou quanto tempo fica em `Consultando...`;
 3. repetir com Return;
 4. confirmar que o operador consegue continuar bipando sem qualquer bloqueio;
@@ -1533,3 +1534,43 @@ Validação:
 - sintaxe do hook e do módulo principal validada estaticamente;
 - validação real do recebimento e Dashboard ainda pendente;
 - não chamar 1.3.43 de estável até confirmar pelo menos um recebimento real.
+
+
+## Atualização 1.3.44 — diagnóstico ponta a ponta do Dashboard + fallback pelo body
+Após teste real da v1.3.43, o SPX mostrou claramente `Recebido com sucesso`, o painel do SPX-DV carregou os dados do BR, porém o Dashboard permaneceu zerado. Portanto o problema não é Bairro, ordenação ou carregamento visual do painel; está na cadeia `recebimento real -> captura -> fila local -> Web App central`.
+
+A v1.3.44 adiciona diagnóstico técnico temporário para localizar exatamente a etapa de falha:
+- o hook em `document_start` registra se carregou e se conseguiu sobrescrever `fetch` e `XMLHttpRequest`;
+- registra os POSTs vistos em `/api/in-station/*`;
+- usa `PerformanceObserver` como evidência adicional das URLs requisitadas pela página;
+- registra quantas vezes o endpoint exato `POST /api/in-station/uni_receive/order` foi interceptado;
+- registra retcode, quantidade de orders e se havia body de requisição;
+- o módulo principal registra as etapas `bridge_event`, `receive_response_seen`, `receive_success_recognized`, `receive_queued`, `process_start`, `process_occurrence_ready`, `local_saved`, `central_send_start` e `central_send_resolved/error`;
+- o painel ganhou botão `D` para abrir `DIAGNÓSTICO DO DASHBOARD`, com Copiar/Limpar/Voltar.
+
+Robustez adicional:
+- se a resposta `retcode=0` não trouxer `data.order_list[]`, o módulo tenta extrair BR(s) do body do próprio POST de recebimento;
+- o fallback aceita JSON, URLSearchParams e busca recursiva por campos relacionados a shipment/tracking/order/TN/SLS;
+- nesse caso o sucesso do endpoint continua sendo obrigatório; Enter/paste isolado continua sem criar Dashboard;
+- o horário usa `receive_time` da resposta quando existir; sem esse campo, usa o instante da resposta como fallback;
+- deduplicação BR + segundo continua ativa.
+
+O objetivo desta versão é que um único próximo recebimento real permita distinguir:
+1. hook não carregou;
+2. endpoint mudou/não foi visto;
+3. resposta foi vista mas não reconhecida;
+4. BR foi reconhecido mas falhou ao montar ocorrência;
+5. fila local salvou mas envio central falhou;
+6. envio central resolveu e o problema está no Apps Script/Dashboard.
+
+Para o teste:
+1. desativar/ativar o módulo para garantir que hook + módulo principal estejam registrados;
+2. confirmar v1.3.44;
+3. fazer um recebimento real;
+4. se o BR não aparecer no Dashboard, clicar `D` no painel e usar `Copiar` (ou enviar captura do diagnóstico);
+5. não alterar mais a arquitetura antes de ler esse diagnóstico.
+
+Validação:
+- sintaxe do hook e do módulo principal validada;
+- validação real ainda pendente;
+- não chamar v1.3.44 de estável.

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.38';
+  const MODULE_VERSION = '1.3.39';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -2264,31 +2264,60 @@
     return neighborhoodExportRefreshPromise;
   }
 
-  async function fetchOccurrenceNeighborhood(shipmentId, returnFlow) {
-    if (!returnFlow) {
-      const cached = await fetchNeighborhoodFromCentralCache(shipmentId).catch(() => '');
-      if (!cached) {
-        void ensureNeighborhoodExportRefresh(false).then(updated => {
-          if (!updated) return;
-          window.setTimeout(() => {
-            if (currentShipment === String(shipmentId || '').trim().toUpperCase() && authorized) {
-              loadShipment(currentShipment);
-            }
-          }, 1400);
-        });
+  function tradeInfoCoordinates(tradeInfo, returnFlow) {
+    const block = returnFlow
+      ? tradeInfo?.data?.seller_info
+      : tradeInfo?.data?.buyer_info;
+
+    const latitude = Number(returnFlow ? block?.seller_geo_lat : block?.buyer_geo_lat);
+    const longitude = Number(returnFlow ? block?.seller_geo_lng : block?.buyer_geo_lng);
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
+    if (latitude === 0 && longitude === 0) return null;
+
+    return { latitude, longitude };
+  }
+
+  async function fetchOccurrenceNeighborhood(shipmentId, returnFlow, tradeInfo = null) {
+    const shipment = String(shipmentId || '').trim().toUpperCase();
+    if (!shipment) return '';
+
+    try {
+      const info = tradeInfo || await fetchJson(
+        'https://spx.shopee.com.br/api/fleet_order/order/detail/trade_info?shipment_id=' +
+        encodeURIComponent(shipment)
+      );
+      const coordinates = tradeInfoCoordinates(info, returnFlow);
+
+      if (coordinates) {
+        const geo = await fetchGeoNeighborhood(
+          coordinates.latitude,
+          coordinates.longitude
+        );
+        const neighborhood = String(geo?.ok ? geo?.neighborhood || '' : '').trim();
+        if (neighborhood) return neighborhood;
       }
-      return cached;
+    } catch (error) {
+      console.warn('[SPX-DV] Geolocalização não resolveu o bairro; usando fallback', error);
     }
 
-    // O CSV de On Hold confirmou buyer_addr_district (Sort Code Name), mas não
-    // seller_addr_district. No ciclo de Return mantemos a fonte sensível apenas
-    // como fallback até existir uma fonte não sensível equivalente para o vendedor.
-    const url = 'https://spx.shopee.com.br/api/fleet_order/order/detail/show_sensitive_data' +
-      '?shipment_id=' + encodeURIComponent(shipmentId) +
-      '&data_field=seller_addr_district';
+    // Fallback temporário da primeira versão operacional:
+    // normal tenta a cache já existente; Return usa a fonte sensível somente
+    // se trade_info/geocoder falharem. A exportação automática continua desativada.
+    if (!returnFlow) {
+      return await fetchNeighborhoodFromCentralCache(shipment).catch(() => '');
+    }
 
-    const response = await fetchJson(url);
-    return String(response?.data?.data_detail || '').trim();
+    try {
+      const url = 'https://spx.shopee.com.br/api/fleet_order/order/detail/show_sensitive_data' +
+        '?shipment_id=' + encodeURIComponent(shipment) +
+        '&data_field=seller_addr_district';
+      const response = await fetchJson(url);
+      return String(response?.data?.data_detail || '').trim();
+    } catch {
+      return '';
+    }
   }
 
   function currentOccurrenceSheetPayload(shipmentId, attempt, returnFlow, neighborhood, operatorLogin = '', receivedAt = 0) {
@@ -2311,7 +2340,7 @@
     };
   }
 
-  async function captureConfirmedOccurrenceToDashboard(shipmentId, attempt, returnFlow, operatorLogin = '', receivedAt = 0) {
+  async function captureConfirmedOccurrenceToDashboard(shipmentId, attempt, returnFlow, operatorLogin = '', receivedAt = 0, tradeInfo = null) {
     if (!shipmentId || !attempt || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     const occurrenceKey = dataSheetOccurrenceKey(shipmentId, attempt?.ctime);
@@ -2323,7 +2352,7 @@
     try {
       let neighborhood = '';
       try {
-        neighborhood = await fetchOccurrenceNeighborhood(shipmentId, returnFlow);
+        neighborhood = await fetchOccurrenceNeighborhood(shipmentId, returnFlow, tradeInfo);
       } catch (error) {
         console.warn('[SPX-DV] Não foi possível obter o bairro da ocorrência', error);
       }
@@ -2338,10 +2367,8 @@
       // A aba Dados é gravada exclusivamente pelo botão de envio em lote do Dashboard.
       await saveDashboardRecord(payload);
 
-      // No fluxo normal, uma base de Sort Code atualizada pode preencher o Bairro
-      // depois do recebimento sem consumir show_sensitive_data.
-      if (!returnFlow) void ensureNeighborhoodExportRefresh(false);
-
+      // A fonte principal de Bairro agora é trade_info -> lat/lng -> reverse geocoding.
+      // A exportação automática permanece desligada.
       return true;
     } catch (error) {
       console.warn('[SPX-DV] Falha ao capturar recebimento confirmado no Dashboard', error);
@@ -2355,9 +2382,10 @@
     if (!shipmentId || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     try {
-      const [history, tracking] = await Promise.all([
+      const [history, tracking, tradeInfo] = await Promise.all([
         fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`),
-        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null)
+        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null),
+        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/trade_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null)
       ]);
 
       const attempts = Array.isArray(history?.data?.recipient?.On_Hold)
@@ -2402,7 +2430,8 @@
         currentOccurrence,
         Boolean(cycleStart),
         operatorLogin,
-        receivedAt
+        receivedAt,
+        tradeInfo
       );
     } catch (error) {
       console.warn('[SPX-DV] Falha ao montar ficha do recebimento confirmado', shipmentId, error);
@@ -2580,17 +2609,29 @@
       const addressActions = isLatestAddress && !wasCancelled && address.pending
         ? `<div class="actions" data-reason-id="${escapeHtml(address.reasonId)}" data-local-lang="${escapeHtml(address.localLang)}"><button class="confirm" data-action="confirm">Confirmar</button><button class="cancel" data-action="cancel">Cancelar</button><div class="result"></div></div>`
         : '';
+      const neighborhoodText = String(neighborhood || '').trim() || 'Não localizado';
+      const neighborhoodLine = `<br><span class="neighborhood"><b>Bairro:</b> <span class="neighborhood-value">${escapeHtml(neighborhoodText)}</span></span>`;
+
       if (attempt?.return_occurrence) {
         const returnLabel = attempt.current_return ? 'ATUAL DO RETORNO' : 'OCORRÊNCIA DO RETORNO';
-        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${attempt.return_operator ? '<b>Operador:</b> ' + escapeHtml(attempt.return_operator) : 'Ocorrência do retorno'}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
+        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${attempt.return_operator ? '<b>Operador:</b> ' + escapeHtml(attempt.return_operator) : 'Ocorrência do retorno'}${neighborhoodLine}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
       }
       const agency = String(attempt?.assignment_agency || '').trim();
       const agencyInline = agency ? ` <span class="driver-code">${escapeHtml(agency)}</span>` : '';
-      const neighborhoodLine = `<br><span class="neighborhood"><b>Bairro:</b> ${escapeHtml(neighborhood || 'Não localizado')}</span>`;
       return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span>${cancelledBadge}<div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}${agencyInline}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span>${neighborhoodLine}</div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
     }).join('');
     const decision = recommendation(ordered, address);
     return `${cards}<div class="decision ${decision.className}"><strong>${escapeHtml(decision.text)}</strong></div>`;
+  }
+
+  function updatePanelNeighborhood(shipmentId, neighborhood) {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel || String(panel.dataset.shipmentId || '').toUpperCase() !== String(shipmentId || '').toUpperCase()) return;
+
+    const text = String(neighborhood || '').trim() || 'Não localizado';
+    panel.querySelectorAll('.neighborhood-value').forEach(node => {
+      node.textContent = text;
+    });
   }
 
   function isVisibleElement(element) {
@@ -2710,9 +2751,10 @@
       if (version === currentRequest && shipmentId === currentShipment) showAutoAdd(info);
     });
     try {
-      const [history, tracking] = await Promise.all([
+      const [history, tracking, tradeInfo] = await Promise.all([
         fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`),
-        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null)
+        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null),
+        fetchJson(`https://spx.shopee.com.br/api/fleet_order/order/detail/trade_info?shipment_id=${encodeURIComponent(shipmentId)}`).catch(() => null)
       ]);
       if (version !== currentRequest || shipmentId !== currentShipment) return;
       const attempts = Array.isArray(history?.data?.recipient?.On_Hold) ? history.data.recipient.On_Hold.filter(Boolean) : [];
@@ -2748,12 +2790,13 @@
         })
         .sort((a, b) => Number(a?.ctime || 0) - Number(b?.ctime || 0));
 
-      let neighborhood = '';
-      if (visibleAttempts.length) {
-        try { neighborhood = await fetchOccurrenceNeighborhood(shipmentId, Boolean(cycleStart)); }
-        catch (error) { console.warn('[SPX-DV] Não foi possível obter o bairro para exibição', error); }
-        if (version !== currentRequest || shipmentId !== currentShipment) return;
-      }
+      const neighborhoodPromise = visibleAttempts.length
+        ? fetchOccurrenceNeighborhood(shipmentId, Boolean(cycleStart), tradeInfo)
+            .catch(error => {
+              console.warn('[SPX-DV] Não foi possível obter o bairro para exibição', error);
+              return '';
+            })
+        : Promise.resolve('');
 
       let address = { pending: false };
       const latestReason = translateReason([...currentAttempts]
@@ -2763,7 +2806,22 @@
         try { address = getAddressState(await postJson('https://spx.shopee.com.br/api/in-station/admin/common_site/eha/no_reason_inbound', { shipment_id: shipmentId })); }
         catch { address = { pending: false }; }
       }
-      if (!diagnosticView) showPanel(shipmentId, renderAttempts(visibleAttempts, address, shipmentId, neighborhood));
+      if (!diagnosticView) {
+        showPanel(
+          shipmentId,
+          renderAttempts(
+            visibleAttempts,
+            address,
+            shipmentId,
+            visibleAttempts.length ? 'Consultando...' : ''
+          )
+        );
+      }
+
+      void neighborhoodPromise.then(neighborhood => {
+        if (version !== currentRequest || shipmentId !== currentShipment || diagnosticView) return;
+        updatePanelNeighborhood(shipmentId, neighborhood);
+      });
 
       if (address.pending && normalize(latestReason) === 'endereco nao encontrado') {
         watchForAutoAddressCancel(shipmentId);

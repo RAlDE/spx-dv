@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.50
+Versão atual do módulo: 1.3.51
 Estado: desenvolvimento incremental; 1.3.50 preserva a captura/gravação central validada e passa a renderizar métricas e linhas do Dashboard diretamente no servidor; requer validação visual real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
@@ -1897,3 +1897,39 @@ Validação:
 - captura real e gravação central continuam baseadas na 1.3.47 validada;
 - Apps Script e JavaScript embutido passaram validação sintática;
 - renderização visual real da 1.3.50 ainda pendente.
+
+
+## Atualização 1.3.51 — Top 10 e filtros independentes do JavaScript
+Evidência real da v1.3.50 em 29/10/2026:
+- o Dashboard finalmente exibiu os dados da base central;
+- cabeçalho mostrou `servidor 1.3.50 · base 900 · hoje 744`;
+- foram identificadas 156 pendências de dias anteriores e 3 operadores no dia;
+- as linhas de recebimento apareceram corretamente;
+- porém o Top 10 permaneceu vazio e o filtro de operador abriu normalmente como controle HTML, mas não alterou a tabela;
+- isso confirmou que a renderização server-side funciona e que o JavaScript da página continua não executando no ambiente real.
+
+Decisão da v1.3.51:
+- não alterar captura do SPX, gravação central, read-back ou fluxo de recebimento já validado;
+- o Top 10 passa a ser calculado e renderizado integralmente no servidor junto com o HTML;
+- abrir/fechar o Top 10 usa o elemento HTML nativo `<details>/<summary>`, sem JavaScript;
+- filtro de operador e pesquisa passam a usar formulário GET do próprio Dashboard;
+- o servidor filtra as linhas antes de entregar o HTML;
+- o filtro exibe a quantidade `X de Y` para deixar claro quantas linhas correspondem ao critério;
+- o botão `Limpar filtro` retorna à lista completa;
+- o JavaScript existente permanece apenas como melhoria opcional para atualização/interação quando disponível, não como requisito para Top 10 e filtros.
+
+Teste recomendado:
+1. copiar/reimplantar o Apps Script 1.3.51 mantendo a mesma URL `/exec`;
+2. desativar/ativar o módulo e confirmar 1.3.51;
+3. abrir o Dashboard sem bipar nada;
+4. confirmar que o Top 10 já aparece preenchido ao carregar a página;
+5. clicar no cabeçalho do Top 10 e confirmar que abre/fecha sem depender de script;
+6. escolher um operador, clicar `Filtrar` e confirmar que a tabela recarrega apenas com esse login;
+7. testar a busca por BR, motorista, 3PL, Bairro e motivo;
+8. usar `Limpar filtro` para voltar aos 744 registros do dia observados no teste da 1.3.50.
+
+Validação técnica:
+- sintaxe completa do Apps Script validada;
+- JavaScript embutido extraído e validado separadamente;
+- validação real da interface 1.3.51 ainda pendente;
+- não chamar 1.3.51 de estável antes do teste real.

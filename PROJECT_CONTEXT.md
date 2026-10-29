@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.47
-Estado: desenvolvimento incremental; 1.3.47 passou por auditoria estática aprofundada e requer validação real antes de ser chamada de estável.
+Versão atual do módulo: 1.3.48
+Estado: desenvolvimento incremental; 1.3.48 preserva a captura central validada da 1.3.47 e simplifica a leitura visual do Dashboard; requer validação real antes de ser chamada de estável.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -260,6 +260,7 @@ A integração antiga de planilha relacionada ao cancelamento deve ocorrer apena
 - v1.3.45: troca o `dashboard_upsert` central para JSONP com confirmação legível do Apps Script; remove a sincronização automática gigante via `dashboard_merge` e recupera apenas registros pendentes do dia, um a um.
 - v1.3.46: remove qualquer replay automático da fila local ao entrar na tela ou abrir o Dashboard e encerra imediatamente JSONP inválido, evitando o ícone da aba em carregamento contínuo.
 - v1.3.47: endurece a arquitetura central após auditoria: POST com dados no body + read-back por occurrence_key, health/capabilities do deploy, falha central propagada para retry, leitura do Dashboard sem lock, lock curto no upsert, captura única pelo receive-hook, migração local única e recuperação manual apenas da outbox nova.
+- v1.3.48: mantém intacta a captura/gravação central validada e simplifica a camada visual: o servidor classifica os registros de hoje, o HTML usa essa classificação pronta e o botão Dash força recarga da versão atual.
 
 ### Próximo teste recomendado
 O próximo teste deve validar somente a entrada no Dashboard da v1.3.47, sem ainda alterar retenção mensal nem a regra de envio por dia:
@@ -1783,3 +1784,40 @@ Ainda pendente antes de chamar a versão inteira de estável:
 
 Observação sobre logs antigos:
 - entradas `local_resync_done`/reenvios com horário anterior ao carregamento do hook atual pertencem a testes/versões anteriores persistidos no diagnóstico e não fazem parte deste fluxo real das 19:52.
+
+
+## Atualização 1.3.48 — simplificação da leitura visual do Dashboard
+Após a v1.3.47 confirmar no SPX real que o BR `BR265987435609F` foi gravado na aba central e encontrado pelo read-back, a investigação foi separada em duas responsabilidades:
+1. entrada/gravação central;
+2. leitura/renderização do HTML do Dashboard.
+
+A comparação com o código antigo mostrou que a renderização sempre foi simples e muito parecida com a atual; a complexidade surgiu principalmente ao trocar a origem da captura para o recebimento real. Como a cadeia de gravação já foi validada, a v1.3.48 não altera essa arquitetura.
+
+Mudanças:
+- `getDashboardData()` passa a calcular no servidor o dia efetivo de cada registro usando `received_at` como fonte principal;
+- o servidor devolve explicitamente `today_records` e `old_pending`;
+- o navegador deixa de depender exclusivamente de `received_day === today` para decidir quais BRs aparecem em “Recebidos hoje”;
+- o Dashboard mostra no cabeçalho o build ativo e quantos registros o servidor devolveu;
+- o botão `Dash` abre a mesma janela com parâmetros `build=<versão>&_=<timestamp>`, forçando navegação/reload mesmo quando uma aba com o mesmo nome já estava aberta;
+- `central_health_ok` agora exige que o build publicado seja exatamente igual à geração do módulo;
+- `dashboard_check` passa a devolver `received_day`, `today` e `visible_today`;
+- `central_send_confirmed` registra esses campos no diagnóstico.
+
+Objetivo:
+- manter o caminho de gravação robusto da 1.3.47;
+- voltar a deixar a exibição do Dashboard simples e autoritativa do lado do servidor;
+- eliminar dois riscos de invisibilidade: classificação de dia divergente no cliente e reutilização de HTML antigo numa aba nomeada já aberta.
+
+Teste recomendado:
+1. reimplantar o Apps Script 1.3.48 na mesma URL `/exec`;
+2. desativar/ativar o módulo e confirmar v1.3.48;
+3. clicar `Dash` novamente para forçar recarga;
+4. confirmar no cabeçalho do Dashboard `servidor 1.3.48`;
+5. verificar se os registros já gravados aparecem, especialmente `BR265987435609F`;
+6. em novo recebimento, confirmar no diagnóstico `central_send_confirmed` com `visible_today=true`.
+
+Validação:
+- a captura/gravação central da 1.3.47 continua sendo a base e já possui validação real;
+- a simplificação visual 1.3.48 passou por validação estática/sintática;
+- validação visual real ainda pendente;
+- não chamar 1.3.48 de estável antes desse teste.

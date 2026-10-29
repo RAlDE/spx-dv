@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-28
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.41
-Estado: desenvolvimento incremental; 1.3.41 requer validação real antes de ser chamada de estável.
+Versão atual do módulo: 1.3.42
+Estado: desenvolvimento incremental; 1.3.42 requer validação real antes de ser chamada de estável.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -189,8 +189,8 @@ O geocoder recebe somente latitude/longitude arredondadas; não recebe BR, nome,
 Fallback atual a partir da v1.3.41:
 - normal: pode tentar a cache central antiga `_SPX_DV_BAIRROS` se geolocalização/geocoder falhar;
 - Return: **não usa mais `show_sensitive_data` nem qualquer campo sensível como fallback**;
-- se o Bairro não for resolvido, o valor operacional permanece vazio;
-- na caixa, valor vazio aparece apenas visualmente como `Atualizar base`; esse texto não deve ser gravado no Dashboard nem em `Dados`;
+- se o Bairro não for resolvido, o valor operacional passa a ser `Atualizar base`;
+- `Atualizar base` segue normalmente para Dashboard e para `Dados`, como qualquer outro valor de Bairro;
 - a exportação automática de Bairro está **DESLIGADA** (`NEIGHBOR_EXPORT_AUTO_ENABLED = false`);
 - não criar tarefas de exportação de Bairro automaticamente.
 
@@ -218,7 +218,7 @@ A v1.3.40 foi criada especificamente para reduzir esse atraso:
 - no recebimento real, o Bairro também começa antes do enriquecimento da AT;
 - o resultado pré-carregado é reutilizado ao salvar no Dashboard para evitar uma segunda chamada na mesma captura.
 
-**Situação atual:** v1.3.41 mantém a arquitetura/velocidade da 1.3.40, remove o fallback por campo sensível e mostra `Atualizar base` apenas na interface quando o Bairro vier vazio. A 1.3.41 passou por validação estática/sintática e ainda requer validação real antes de ser chamada de estável.
+**Situação atual:** v1.3.42 mantém a arquitetura/velocidade da 1.3.40, não usa campo sensível e, se nenhuma fonte resolver o Bairro, grava `Atualizar base` como valor operacional no Dashboard e em `Dados`. A 1.3.42 passou por validação estática/sintática e ainda requer validação real antes de ser chamada de estável.
 
 ### Fonte autoritativa por responsabilidade
 Para evitar regressões, cada fonte tem um papel específico:
@@ -253,12 +253,13 @@ A integração antiga de planilha relacionada ao cancelamento deve ocorrer apena
 - v1.3.38: reverse geocoding testado manualmente e retornou bairro correto em normal e Return.
 - v1.3.39: Bairro geográfico passou a ser fonte operacional; vídeo real confirmou funcionamento, mas mostrou atraso visual perceptível.
 - v1.3.40: geocoding antecipado/paralelo para reduzir esse atraso; teste real indicou velocidade operacional aceitável.
-- v1.3.41: remove completamente o fallback de Bairro por `show_sensitive_data`; se não houver Bairro, a UI mostra `Atualizar base` sem gravar esse texto como dado.
+- v1.3.41: remove completamente o fallback de Bairro por `show_sensitive_data`.
+- v1.3.42: se geolocalização/cache não resolverem o Bairro, usa `Atualizar base` como valor real e envia ao Dashboard/Dados.
 
 ### Próximo teste recomendado
-Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.41:
+Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.42:
 
-1. carregar v1.3.41;
+1. carregar v1.3.42;
 2. bipar/colar BR normal e observar se o Bairro já aparece junto do painel ou quanto tempo fica em `Consultando...`;
 3. repetir com Return;
 4. confirmar que o operador consegue continuar bipando sem qualquer bloqueio;
@@ -1480,3 +1481,19 @@ Validação:
 - sintaxe JavaScript validada;
 - `assistente.js` não contém mais referência a `show_sensitive_data`;
 - validação real no SPX ainda pendente antes de chamar a versão de estável.
+
+
+## Atualização 1.3.42 — Atualizar base como valor operacional de Bairro
+Correção de entendimento da 1.3.41:
+- `Atualizar base` não é apenas texto visual;
+- se `trade_info -> geocoder` não retornar Bairro e, no fluxo normal, a cache antiga também não tiver valor, o módulo retorna literalmente `Atualizar base`;
+- esse valor entra no payload `neighborhood`, aparece no Dashboard e é gravado normalmente na coluna I de `Dados` quando o lote for enviado;
+- a expectativa operacional continua sendo que isso seja raro, pois a geolocalização validada deve resolver o Bairro correto na maioria dos casos;
+- não foi reintroduzido `show_sensitive_data`;
+- exportação automática continua desligada;
+- Apps Script não precisou ser alterado.
+
+Validação:
+- sintaxe JavaScript validada;
+- `assistente.js` continua sem referência a `show_sensitive_data`;
+- validação real no SPX ainda pendente.

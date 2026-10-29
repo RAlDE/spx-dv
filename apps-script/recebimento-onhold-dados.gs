@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.48';
+const SPX_DV_BUILD = '1.3.49';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -32,9 +32,41 @@ const SPX_DV_CONFIG = Object.freeze({
 function doGet(e) {
   const view = clean_(e && e.parameter && e.parameter.view).toLowerCase();
   if (view === 'dashboard') {
+    let initialData;
+    try {
+      initialData = getDashboardData();
+    } catch (error) {
+      initialData = {
+        ok: false,
+        today: Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd'),
+        build: SPX_DV_BUILD,
+        records: [],
+        today_records: [],
+        old_pending: [],
+        error: String(error && error.message ? error.message : error)
+      };
+    }
+
     return HtmlService
-      .createHtmlOutput(dashboardHtml_())
+      .createHtmlOutput(
+        dashboardHtml_(initialData, ScriptApp.getService().getUrl())
+      )
       .setTitle('SPX-DV · Dashboard de Recebimento');
+  }
+
+  if (view === 'dashboard_data') {
+    try {
+      return jsonpResponse_(e, getDashboardData());
+    } catch (error) {
+      return jsonpResponse_(e, {
+        ok: false,
+        build: SPX_DV_BUILD,
+        records: [],
+        today_records: [],
+        old_pending: [],
+        error: String(error && error.message ? error.message : error)
+      });
+    }
   }
 
   if (view === 'neighborhood') {
@@ -61,6 +93,7 @@ function doGet(e) {
       capabilities: {
         dashboard_post: true,
         dashboard_check: true,
+        dashboard_data: true,
         dashboard_upsert_jsonp_legacy: true,
         geo: true
       }
@@ -1093,7 +1126,19 @@ function clearConfirmedDashboard() {
   }
 }
 
-function dashboardHtml_() {
+function dashboardHtml_(initialData, serviceUrl) {
+  const initialJson = JSON.stringify(initialData || {
+    ok: false,
+    build: SPX_DV_BUILD,
+    records: [],
+    today_records: [],
+    old_pending: [],
+    error: 'Dashboard sem estado inicial'
+  }).replace(/</g, '\\u003c');
+
+  const serviceUrlJson = JSON.stringify(clean_(serviceUrl || ''))
+    .replace(/</g, '\\u003c');
+
   return `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -1133,23 +1178,60 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 <footer>Recebimentos confirmados pelo SPX ficam na fila até o envio explícito para Dados. Pendências antigas nunca são apagadas automaticamente.</footer>
 </main>
 <script>
-const state={data:null,view:'today',requesting:false};
+const INITIAL_DATA=${initialJson};
+const DASHBOARD_SERVICE_URL=${serviceUrlJson};
+const state={data:INITIAL_DATA,view:'today',requesting:false};
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
 const dt=ms=>ms?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(Number(ms))):'-';
 const occ=sec=>sec?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(Number(sec)*1000)):'-';
 
-function requestData(){
+function dashboardJsonp(view,params={},timeoutMs=8000){
+  return new Promise(resolve=>{
+    if(!DASHBOARD_SERVICE_URL){resolve(null);return;}
+    const callback='__spxDvDash_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
+    const script=document.createElement('script');
+    let done=false;
+    const finish=value=>{
+      if(done)return;
+      done=true;
+      clearTimeout(timer);
+      try{script.remove();}catch{}
+      try{delete window[callback];}catch{}
+      resolve(value&&typeof value==='object'?value:null);
+    };
+    window[callback]=value=>finish(value);
+    const query=new URLSearchParams({view,callback,_:String(Date.now())});
+    Object.entries(params||{}).forEach(([k,v])=>query.set(k,String(v??'')));
+    const timer=setTimeout(()=>finish(null),Math.max(2500,Number(timeoutMs)||8000));
+    script.async=true;
+    script.src=DASHBOARD_SERVICE_URL+'?'+query.toString();
+    script.onerror=()=>finish(null);
+    script.onload=()=>setTimeout(()=>finish(null),0);
+    (document.head||document.documentElement).appendChild(script);
+  });
+}
+
+async function requestData(){
   if(state.requesting)return;
   state.requesting=true;
-  google.script.run
-    .withSuccessHandler(data=>{state.requesting=false;state.data=data;render();})
-    .withFailureHandler(err=>{state.requesting=false;$('warning').innerHTML='<div class="warning">Falha ao atualizar Dashboard: '+esc(err&&err.message||err)+'</div>';})
-    .getDashboardData();
+  try{
+    const data=await dashboardJsonp('dashboard_data');
+    if(!data)throw new Error('Servidor não respondeu ao dashboard_data');
+    state.data=data;
+    render();
+  }catch(err){
+    $('warning').innerHTML='<div class="warning">Falha ao atualizar Dashboard: '+esc(err&&err.message||err)+'</div>';
+  }finally{
+    state.requesting=false;
+  }
 }
 
 function render(){
   const data=state.data||{today:'',records:[]};
+  if(data.ok===false&&data.error){
+    $('warning').innerHTML='<div class="warning">Falha ao carregar dados do Dashboard: '+esc(data.error)+'</div>';
+  }
   const records=Array.isArray(data.records)?data.records:[];
   const today=Array.isArray(data.today_records)
     ? data.today_records
@@ -1310,7 +1392,7 @@ $('clearConfirmed').onclick=()=>{
   if(!confirm('Limpar '+count+' registro(s) já enviado(s) de hoje?\\n\\nPendências não serão apagadas.'))return;
   google.script.run.withSuccessHandler(()=>requestData()).withFailureHandler(err=>alert('Falha: '+(err&&err.message||err))).clearConfirmedDashboard();
 };
-requestData();
+render();
 setInterval(requestData,5000);
 </script>
 </body>

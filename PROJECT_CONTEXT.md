@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.48
-Estado: desenvolvimento incremental; 1.3.48 preserva a captura central validada da 1.3.47 e simplifica a leitura visual do Dashboard; requer validação real antes de ser chamada de estável.
+Versão atual do módulo: 1.3.49
+Estado: desenvolvimento incremental; 1.3.49 preserva a captura/gravação central validada e faz o Dashboard nascer com os dados já embutidos pelo servidor; requer validação visual real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -261,6 +261,7 @@ A integração antiga de planilha relacionada ao cancelamento deve ocorrer apena
 - v1.3.46: remove qualquer replay automático da fila local ao entrar na tela ou abrir o Dashboard e encerra imediatamente JSONP inválido, evitando o ícone da aba em carregamento contínuo.
 - v1.3.47: endurece a arquitetura central após auditoria: POST com dados no body + read-back por occurrence_key, health/capabilities do deploy, falha central propagada para retry, leitura do Dashboard sem lock, lock curto no upsert, captura única pelo receive-hook, migração local única e recuperação manual apenas da outbox nova.
 - v1.3.48: mantém intacta a captura/gravação central validada e simplifica a camada visual: o servidor classifica os registros de hoje, o HTML usa essa classificação pronta e o botão Dash força recarga da versão atual.
+- v1.3.49: elimina `google.script.run` do carregamento de dados do Dashboard; o `doGet(view=dashboard)` já entrega o HTML com o estado inicial embutido e as atualizações usam `dashboard_data` por JSONP.
 
 ### Próximo teste recomendado
 O próximo teste deve validar somente a entrada no Dashboard da v1.3.47, sem ainda alterar retenção mensal nem a regra de envio por dia:
@@ -1821,3 +1822,36 @@ Validação:
 - a simplificação visual 1.3.48 passou por validação estática/sintática;
 - validação visual real ainda pendente;
 - não chamar 1.3.48 de estável antes desse teste.
+
+
+## Atualização 1.3.49 — Dashboard com dados embutidos no HTML
+Motivação: mesmo após a v1.3.47 comprovar que as ocorrências realmente existiam na aba central e a v1.3.48 simplificar a classificação de “hoje”, o usuário relatou que o Dashboard continuava sem qualquer informação, antes e depois de novos recebimentos.
+
+Auditoria específica da página:
+- `doGet(view=dashboard)` já usava `HtmlService`, portanto o HTML em si estava sendo servido corretamente;
+- o JavaScript embutido no `dashboardHtml_()` foi extraído e validado separadamente; não havia erro de sintaxe;
+- a fragilidade restante era o carregamento de dados depender de `google.script.run.getDashboardData()` somente depois que a página já tinha aberto.
+
+Correção:
+- `doGet(view=dashboard)` chama `getDashboardData()` no próprio servidor antes de gerar a página;
+- o resultado é embutido no HTML como `INITIAL_DATA`;
+- o estado inicial do Dashboard passa a ser `state.data = INITIAL_DATA`;
+- a primeira renderização ocorre imediatamente por `render()`, sem depender de chamada assíncrona posterior;
+- se `getDashboardData()` falhar na geração, o erro é embutido e exibido no próprio Dashboard;
+- criado `GET ?view=dashboard_data&callback=...` para atualizações posteriores por JSONP;
+- o polling de 5 s e o botão Atualizar usam `dashboard_data`, não `google.script.run`;
+- o `health` anuncia `dashboard_data:true`;
+- o módulo 1.3.49 exige build 1.3.49 e capability `dashboard_data`.
+
+Consequência operacional:
+- abrir o Dashboard já deve mostrar os registros existentes na base central;
+- não é necessário bipar outro BR para testar a exibição;
+- se a página abrir sem registros na 1.3.49, ela deve pelo menos mostrar no cabeçalho o build/quantidade ou um erro explícito de carregamento;
+- isso reduz drasticamente a dependência do bridge interno do HtmlService para a parte mais básica: mostrar dados.
+
+Validação técnica:
+- sintaxe do Apps Script validada;
+- JavaScript contido dentro do `<script>` do Dashboard validado separadamente;
+- captura real `/uni_receive/order` e read-back central não foram alterados;
+- validação visual real ainda pendente;
+- não chamar 1.3.49 de estável antes do teste.

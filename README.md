@@ -19,6 +19,20 @@ Extensão modular para apoio ao fluxo de recebimento e devoluções no SPX.
 5. Nos detalhes da extensão, ative **Permitir scripts de usuário**.
 6. Clique no ícone da extensão e ative o Assistente de devoluções.
 
+
+## Continuidade e manutenção
+
+Antes de qualquer alteração, leia **`PROJECT_CONTEXT.md` diretamente do GitHub**. Ele é a fonte de continuidade do projeto, contém as regras operacionais, endpoints confirmados, arquitetura do Dashboard/planilha, fluxo normal x Return, fonte atual de Bairro e o estado de validação das versões.
+
+Versão atual documentada: **1.3.40**.
+
+Regra de manutenção:
+- não misturar este projeto com SPX OnHold;
+- buscar sempre os arquivos e SHAs atuais antes de editar;
+- manter `assistente.js` e `catalog.json` na mesma versão;
+- registrar mudanças relevantes no `PROJECT_CONTEXT.md`;
+- validação de sintaxe não equivale a validação real no SPX.
+
 ## Publicação
 
 Ative o GitHub Pages para a branch `main`, pasta raiz. O catálogo e os scripts

@@ -1,9 +1,9 @@
 # PROJECT_CONTEXT — SPX-DV
 
-Atualizado em: 2026-10-28
+Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.46
-Estado: desenvolvimento incremental; 1.3.46 requer validação real antes de ser chamada de estável.
+Versão atual do módulo: 1.3.47
+Estado: desenvolvimento incremental; 1.3.47 passou por auditoria estática aprofundada e requer validação real antes de ser chamada de estável.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -259,20 +259,22 @@ A integração antiga de planilha relacionada ao cancelamento deve ocorrer apena
 - v1.3.44: adiciona diagnóstico ponta a ponta da captura do Dashboard e fallback para extrair BR do body do POST quando a resposta de sucesso não trouxer `order_list`.
 - v1.3.45: troca o `dashboard_upsert` central para JSONP com confirmação legível do Apps Script; remove a sincronização automática gigante via `dashboard_merge` e recupera apenas registros pendentes do dia, um a um.
 - v1.3.46: remove qualquer replay automático da fila local ao entrar na tela ou abrir o Dashboard e encerra imediatamente JSONP inválido, evitando o ícone da aba em carregamento contínuo.
+- v1.3.47: endurece a arquitetura central após auditoria: POST com dados no body + read-back por occurrence_key, health/capabilities do deploy, falha central propagada para retry, leitura do Dashboard sem lock, lock curto no upsert, captura única pelo receive-hook, migração local única e recuperação manual apenas da outbox nova.
 
 ### Próximo teste recomendado
-Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.46:
+O próximo teste deve validar somente a entrada no Dashboard da v1.3.47, sem ainda alterar retenção mensal nem a regra de envio por dia:
 
-1. atualizar/reimplantar o Apps Script preservando a mesma URL `/exec`;
-2. carregar v1.3.46;
-3. bipar/colar BR normal e observar se o Bairro já aparece junto do painel ou quanto tempo fica em `Consultando...`;
-4. repetir com Return;
-5. confirmar que o operador consegue continuar bipando sem qualquer bloqueio;
-6. fazer recebimento real e verificar que somente a resposta `/uni_receive/order retcode=0` cria a ficha no Dashboard;
-7. confirmar Bairro correto no Dashboard;
-8. confirmar que nenhuma tarefa automática de exportação de Bairro foi criada;
-9. testar `Enviar X para a planilha` e confirmar o mesmo Bairro em `Dados`;
-10. somente após esses testes decidir se v1.3.40 pode ser marcada como validada ou se ainda é necessário reduzir latência.
+1. atualizar o código do Apps Script com a versão 1.3.47 e **reimplantar a mesma implantação**, preservando a URL `/exec`;
+2. desativar/ativar o módulo e confirmar v1.3.47;
+3. recarregar a tela SPX e verificar que o ícone da aba não fica em loading contínuo;
+4. abrir `D` antes do primeiro recebimento e confirmar que aparece `central_health_ok` com build 1.3.47; se aparecer `central_health_error`, o deploy ativo está antigo/incompatível e não adianta testar recebimento ainda;
+5. fazer um único recebimento real;
+6. confirmar no diagnóstico, em ordem aproximada: `bridge_event` -> `receive_response_seen` -> `receive_success_recognized` -> `receive_queued` -> `process_occurrence_ready` -> `local_saved` -> `central_send_start` -> `central_send_confirmed`;
+7. confirmar o BR no Dashboard com `received_at` do SPX, Login SPX, motivo, motorista/3PL e Bairro;
+8. fazer mais alguns recebimentos rápidos e, se possível, com outro login/perfil, verificando que todos entram no mesmo Dashboard em ordem de horário;
+9. somente depois validar o botão de envio para `Dados`.
+
+Não marcar v1.3.47 como estável até esse teste real.
 
 ### Disciplina de continuidade
 Em uma conversa nova, não pedir ao usuário para reexplicar tudo acima. Leia este arquivo e continue do estado atual. Se algo parecer contraditório em seções antigas, procure primeiro a versão mais recente documentada e o código atual antes de propor mudanças.
@@ -1662,3 +1664,86 @@ Validação:
 - sintaxe do módulo validada;
 - validação real ainda pendente;
 - não chamar v1.3.46 de estável.
+
+
+## Atualização 1.3.47 — auditoria aprofundada da cadeia de recebimento/Dashboard
+Motivação: após as versões 1.3.43–1.3.46, o usuário pediu uma revisão completa para antecipar falhas antes de novos testes, pois surgiram problemas que as validações anteriores não haviam previsto.
+
+### Evidência real já obtida
+O diagnóstico da v1.3.44 comprovou no SPX real:
+- o hook em `document_start` carregou;
+- `fetch` e XHR foram patchados;
+- `POST /api/in-station/uni_receive/order` foi visto via XHR;
+- resposta veio com `retcode=0`;
+- `data.order_list` trouxe 1 pedido;
+- BR `BR261688874664Y` foi reconhecido;
+- operador `italo.soares@shopee.com` foi capturado;
+- ocorrência foi montada;
+- Bairro `Pedreiras` foi resolvido;
+- registro foi salvo localmente;
+- o antigo envio central apenas “resolveu” por `no-cors`, sem prova de gravação.
+
+Isso isolou o problema no trecho navegador -> Web App central, não na captura do SPX nem na montagem da ficha.
+
+### Falhas de arquitetura encontradas na auditoria
+1. **Falso sucesso central:** `saveDashboardRecord()` salvava localmente, disparava `sendCentralDashboard()` com `void` e retornava sucesso mesmo se o Web App falhasse.
+2. **Propagação quebrada:** `captureConfirmedOccurrenceToDashboard()` ignorava o retorno de `saveDashboardRecord()` e sempre retornava `true`.
+3. **JSONP com ficha inteira na URL:** a 1.3.45/1.3.46 usava GET/JSONP mutável com login/motorista/agência no query string, sujeito a limite de URL e exposição desnecessária.
+4. **Leitura competindo com escrita:** `getDashboardData()` usava `ScriptLock`, fazia cleanup/reconcile e era chamado pelo Dashboard a cada 5 s, podendo bloquear os upserts de vários operadores.
+5. **Polling sobreposto:** não havia trava de requisição em andamento no HTML do Dashboard.
+6. **Duas capturas da mesma resposta:** o hook novo e o diagnóstico de rede antigo chamavam `handleRealReceiveResponse`; a deduplicação segurava, mas havia trabalho duplicado.
+7. **Lock longo em concorrência:** o doPost aguardava até 30 s pelo lock; durante envio de lote para Dados isso podia criar fila/timeout de recebimentos novos.
+8. **Migração local repetida:** a fila legacy podia ser migrada novamente a cada recarga; com centenas de registros isso podia atrasar um recebimento novo.
+9. **Falha silenciosa após todos os retries:** a ficha ficava local, porém sem aviso claro ao operador.
+10. **Replay legado perigoso:** versões anteriores chegaram a tentar sincronizar centenas de registros locais antigos; isso não pode voltar.
+
+### Arquitetura 1.3.47
+Fluxo central:
+`retcode=0 do SPX -> montar ficha -> salvar outbox local -> health do Web App -> POST dashboard_upsert com JSON no body -> GET/JSONP dashboard_check apenas com occurrence_key -> somente então central_send_confirmed`
+
+Regras:
+- o POST continua levando os dados no body; a ficha não vai mais na URL;
+- novo `GET ?view=health&callback=...` informa build/capabilities do deploy ativo;
+- novo `GET ?view=dashboard_check&occurrence_key=...&callback=...` confirma que a ocorrência realmente existe na aba central;
+- `central_send_confirmed` só existe depois desse read-back;
+- deploy antigo/incompatível gera `central_health_error`, evitando teste às cegas;
+- falha central retorna `false` e mantém a fila de retry ativa;
+- após esgotar retries, registro continua local e aparece aviso visual `Dashboard pendente: <BR>. Use D > Reenviar novos.`;
+- a chave é removida de `confirmedReceiveSeen` no esgotamento para não bloquear uma futura nova tentativa;
+- botão `D -> Reenviar novos` reenviará no máximo 10 registros e **somente** registros marcados com `sync_generation = 1.3.47` e `central_sync = pending`; não toca nos centenas de registros legacy;
+- não há replay automático ao abrir tela nem ao abrir Dash.
+
+Concorrência:
+- `doPost`/upsert usa `tryLock(1200)`; se outro processo estiver ocupando o lock, falha rápido e o módulo faz retry/read-back em vez de ficar 30 s bloqueado;
+- leitura `getDashboardData()` não usa mais ScriptLock e não executa cleanup/reconcile no polling;
+- HTML do Dashboard impede chamadas `getDashboardData()` sobrepostas;
+- receive-hook é a única fonte que chama `handleRealReceiveResponse`; o interceptor genérico antigo continua apenas para diagnósticos de Return/Geo.
+
+Migração local:
+- adicionada chave `spxdv:dashboard-migration-v2-done`;
+- registros legacy já existentes no IndexedDB não são regravados;
+- migração é marcada como concluída após sucesso;
+- os 467 registros antigos observados anteriormente não são enviados automaticamente ao servidor.
+
+### O que ainda NÃO foi implementado de propósito
+O usuário definiu uma nova regra futura para o Dashboard, mas pediu primeiro validar a entrada central:
+- histórico por **mês calendário** (01 até 30/31), não janela móvel de 30 dias;
+- única pendência é “ainda não enviado para Dados”;
+- enviados devem permanecer no Dashboard e ficar verdes;
+- se houver pendentes de ontem, eles devem ser enviados antes dos de hoje;
+- dias diferentes não podem ser misturados em `Dados`;
+- a linha verde da planilha continua marcando a virada do dia;
+- se virar o mês com pendência do último dia, ela deve permanecer até ser enviada.
+
+**Essas regras ainda não estão implementadas na v1.3.47.** Não alterar retenção/envio por dia até primeiro confirmar que os recebimentos reais entram corretamente no Dashboard central.
+
+### Limitação que continua existindo
+`sendPendingDashboardToData()` ainda usa lock global durante o envio de lote. A 1.3.47 protege o recebimento novo com lock curto + retry + outbox local, mas a regra definitiva de prioridade por dia/linha verde será redesenhada depois da validação da entrada no Dashboard.
+
+### Validação técnica
+- sintaxe de `assistente.js`, `receive-hook.js` e Apps Script validada;
+- módulo principal/catalog/Apps Script devem ficar em 1.3.47;
+- `show_sensitive_data` continua ausente;
+- exportação automática de Bairro continua desligada;
+- validação real no SPX ainda pendente;
+- não chamar v1.3.47 de estável.

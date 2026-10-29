@@ -15,6 +15,8 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
+const SPX_DV_BUILD = '1.3.47';
+
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
   sheetName: 'Dados',
@@ -47,12 +49,96 @@ function doGet(e) {
     return dashboardUpsertResponse_(e);
   }
 
+  if (view === 'dashboard_check') {
+    return dashboardCheckResponse_(e);
+  }
+
+  if (view === 'health') {
+    return jsonpResponse_(e, {
+      ok: true,
+      service: 'SPX-DV recebimento On Hold',
+      build: SPX_DV_BUILD,
+      capabilities: {
+        dashboard_post: true,
+        dashboard_check: true,
+        dashboard_upsert_jsonp_legacy: true,
+        geo: true
+      }
+    });
+  }
+
   return jsonResponse_({
     ok: true,
     service: 'SPX-DV recebimento On Hold',
     sheet: SPX_DV_CONFIG.sheetName,
     dashboard: true
   });
+}
+
+function jsonpResponse_(e, value) {
+  const callback = clean_(e && e.parameter && e.parameter.callback);
+  const validCallback = /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(callback);
+  const payloadText = JSON.stringify(value);
+
+  if (validCallback) {
+    return ContentService
+      .createTextOutput(callback + '(' + payloadText + ');')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+
+  return ContentService
+    .createTextOutput(payloadText)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function dashboardCheckResponse_(e) {
+  const occurrenceKey = clean_(e && e.parameter && e.parameter.occurrence_key);
+  if (!occurrenceKey) {
+    return jsonpResponse_(e, {
+      ok: false,
+      found: false,
+      build: SPX_DV_BUILD,
+      error: 'occurrence_key obrigatória'
+    });
+  }
+
+  try {
+    const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
+    const sheet = getDashboardSheet_(spreadsheet);
+    const row = findDashboardRow_(sheet, occurrenceKey);
+
+    if (!row) {
+      return jsonpResponse_(e, {
+        ok: true,
+        found: false,
+        build: SPX_DV_BUILD,
+        occurrence_key: occurrenceKey
+      });
+    }
+
+    const record = dashboardRecordFromRow_(
+      sheet.getRange(row, 1, 1, 14).getValues()[0]
+    );
+
+    return jsonpResponse_(e, {
+      ok: true,
+      found: true,
+      build: SPX_DV_BUILD,
+      occurrence_key: record.occurrenceKey,
+      shipment_id: record.shipmentId,
+      received_day: record.receivedDay,
+      received_at: record.receivedAt,
+      status: record.status
+    });
+  } catch (error) {
+    return jsonpResponse_(e, {
+      ok: false,
+      found: false,
+      build: SPX_DV_BUILD,
+      occurrence_key: occurrenceKey,
+      error: String(error && error.message ? error.message : error)
+    });
+  }
 }
 
 function dashboardUpsertResponse_(e) {
@@ -82,7 +168,6 @@ function dashboardUpsertResponse_(e) {
 
     const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
     const dashboardSheet = getDashboardSheet_(spreadsheet);
-    cleanupOldConfirmedDashboard_(dashboardSheet);
 
     const dashboardRecord = enrichDashboardNeighborhood_(
       spreadsheet,
@@ -132,8 +217,8 @@ function doPost(e) {
     const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
     const dashboardSheet = getDashboardSheet_(spreadsheet);
 
-    cleanupOldConfirmedDashboard_(dashboardSheet);
-
+    // Não fazemos manutenção/limpeza no caminho crítico de recebimento.
+    // O upsert deve ser curto para suportar vários operadores ao mesmo tempo.
     if (action === 'dashboard_upsert') {
       const dashboardRecord = enrichDashboardNeighborhood_(
         spreadsheet,
@@ -778,43 +863,37 @@ function reconcileDashboardStatuses_(spreadsheet, dashboardSheet) {
 }
 
 function getDashboardData() {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(15000);
+  // Leitura somente: não usa ScriptLock e não faz limpeza/reconciliação.
+  // Assim o polling do Dashboard não bloqueia os upserts dos operadores.
+  const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
+  const sheet = getDashboardSheet_(spreadsheet);
 
-  try {
-    const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
-    const sheet = getDashboardSheet_(spreadsheet);
-    cleanupOldConfirmedDashboard_(sheet);
-    reconcileDashboardStatuses_(spreadsheet, sheet);
+  const today = Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
+  const lastRow = sheet.getLastRow();
+  const records = lastRow >= 2
+    ? sheet.getRange(2, 1, lastRow - 1, 14).getValues().map(dashboardRecordFromRow_)
+    : [];
 
-    const today = Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
-    const lastRow = sheet.getLastRow();
-    const records = lastRow >= 2
-      ? sheet.getRange(2, 1, lastRow - 1, 14).getValues().map(dashboardRecordFromRow_)
-      : [];
-
-    return {
-      ok: true,
-      today,
-      records: records.map(record => ({
-        occurrence_key: record.occurrenceKey,
-        received_day: record.receivedDay,
-        received_at: record.receivedAt,
-        shipment_id: record.shipmentId,
-        reason: record.reason,
-        driver_id: record.driverId,
-        driver_name: record.driverName,
-        agency: record.agency,
-        neighborhood: record.neighborhood,
-        occurrence_timestamp: record.occurrenceTimestamp,
-        flow: record.flow,
-        operator_login: record.operatorLogin,
-        status: record.status
-      }))
-    };
-  } finally {
-    lock.releaseLock();
-  }
+  return {
+    ok: true,
+    today,
+    build: SPX_DV_BUILD,
+    records: records.map(record => ({
+      occurrence_key: record.occurrenceKey,
+      received_day: record.receivedDay,
+      received_at: record.receivedAt,
+      shipment_id: record.shipmentId,
+      reason: record.reason,
+      driver_id: record.driverId,
+      driver_name: record.driverName,
+      agency: record.agency,
+      neighborhood: record.neighborhood,
+      occurrence_timestamp: record.occurrenceTimestamp,
+      flow: record.flow,
+      operator_login: record.operatorLogin,
+      status: record.status
+    }))
+  };
 }
 
 function sendPendingDashboardToData() {
@@ -998,14 +1077,19 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 <footer>Recebimentos confirmados pelo SPX ficam na fila até o envio explícito para Dados. Pendências antigas nunca são apagadas automaticamente.</footer>
 </main>
 <script>
-const state={data:null,view:'today'};
+const state={data:null,view:'today',requesting:false};
 const $=id=>document.getElementById(id);
 const esc=v=>String(v??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
 const dt=ms=>ms?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(Number(ms))):'-';
 const occ=sec=>sec?new Intl.DateTimeFormat('pt-BR',{timeZone:'America/Sao_Paulo',dateStyle:'short',timeStyle:'medium'}).format(new Date(Number(sec)*1000)):'-';
 
 function requestData(){
-  google.script.run.withSuccessHandler(data=>{state.data=data;render();}).withFailureHandler(err=>{$('warning').innerHTML='<div class="warning">Falha ao atualizar Dashboard: '+esc(err&&err.message||err)+'</div>';}).getDashboardData();
+  if(state.requesting)return;
+  state.requesting=true;
+  google.script.run
+    .withSuccessHandler(data=>{state.requesting=false;state.data=data;render();})
+    .withFailureHandler(err=>{state.requesting=false;$('warning').innerHTML='<div class="warning">Falha ao atualizar Dashboard: '+esc(err&&err.message||err)+'</div>';})
+    .getDashboardData();
 }
 
 function render(){

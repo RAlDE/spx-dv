@@ -2789,7 +2789,7 @@
     }
   }
 
-  function queueConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0) {
+  function queueConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0, receiveKey = '') {
     if (!shipmentId) return;
     const operatorSnapshot = String(operatorLogin || currentOperatorLogin || '').trim().toLowerCase();
     const receivedAtSnapshot = Number(receivedAt || Date.now());
@@ -2806,7 +2806,21 @@
         if (captured) return;
       }
 
-      console.warn('[SPX-DV] Não foi possível capturar no Dashboard após recebimento confirmado', shipmentId);
+      if (receiveKey) confirmedReceiveSeen.delete(receiveKey);
+      receiveDiagPush('receive_capture_exhausted', {
+        shipment_id: shipmentId,
+        received_at: receivedAtSnapshot
+      });
+
+      showNotice('Dashboard pendente: ' + shipmentId + '. Use D > Reenviar novos.');
+      window.setTimeout(() => {
+        const notice = document.getElementById(NOTICE_ID);
+        if (notice && String(notice.textContent || '').includes(shipmentId)) {
+          notice.remove();
+        }
+      }, 15000);
+
+      console.warn('[SPX-DV] Não foi possível confirmar no Dashboard; ficha mantida localmente', shipmentId);
     })();
   }
 
@@ -2934,7 +2948,7 @@
           received_at: receivedAt,
           operator_login: operatorLogin
         });
-        queueConfirmedReceive(shipmentId, operatorLogin, receivedAt);
+        queueConfirmedReceive(shipmentId, operatorLogin, receivedAt, receiveKey);
       });
     } catch (error) {
       receiveDiagPush('receive_handler_error', { error: String(error?.message || error || '') });

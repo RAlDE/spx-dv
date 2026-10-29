@@ -1083,3 +1083,36 @@ Esta versão passou apenas por validação estática/sintática. Antes de consid
 6. confirmar que nada foi gravado em `Dados` automaticamente;
 7. clicar `Enviar X para a planilha` e validar a gravação correta em C,D,E,F,G,I,J;
 8. validar deduplicação e preservação de pendentes antigos.
+
+
+## Atualização 1.3.37 — diagnóstico de geolocalização comprador/vendedor
+Em 28/10/2026 um vídeo real confirmou que a tela:
+`#/orderDetail/<BR>/sender_info?originUrl=%2ForderTracking&module=hubDeliveryManagement&stationType=HUB`
+exibe duas fontes de geolocalização na seção `Informações comprador/vendedor`.
+
+Regra operacional observada:
+- fluxo LMHub normal: usar o localizador superior, ligado ao destinatário/comprador;
+- fluxo Return_LMHub: usar o localizador inferior, ligado ao remetente/vendedor.
+
+Ao clicar no ícone do localizador, o próprio SPX abre um mapa no ponto das coordenadas exibidas pela página. Isso indica que latitude/longitude já estão disponíveis no frontend antes da abertura do mapa.
+
+A 1.3.37 é diagnóstica e NÃO usa geolocalização como Bairro ainda:
+- adiciona captura passiva de fetch/XHR somente na rota `orderDetail/.../sender_info`;
+- procura pares latitude/longitude em campos JSON e em strings de resposta;
+- registra somente endpoint, body técnico limitado, paths dos campos e coordenadas detectadas;
+- evita copiar nome, telefone e endereço como parte do diagnóstico;
+- adiciona botão flutuante `Geo diag` nessa rota para visualizar/copiar o resultado;
+- o diagnóstico não altera recebimento, Dashboard, recomendação, planilha ou fluxo Return.
+
+Para evitar poluir a lista de tarefas do SPX durante a investigação:
+- a geração automática da exportação de Bairro foi pausada na 1.3.37;
+- a cache já existente de bairros continua podendo ser consultada;
+- nenhuma nova tarefa de exportação é criada automaticamente por falta de Bairro nesta versão.
+
+Validação necessária:
+1. carregar a 1.3.37;
+2. abrir um BR normal em Detalhe do pedido > Informações comprador/vendedor;
+3. abrir `Geo diag` e copiar o diagnóstico;
+4. repetir com um BR Return;
+5. comparar os endpoints/paths e confirmar qual campo corresponde ao localizador superior e ao inferior;
+6. somente depois implementar conversão lat/lng -> Bairro.

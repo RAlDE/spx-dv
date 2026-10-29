@@ -39,6 +39,10 @@ function doGet(e) {
     return neighborhoodLookupResponse_(e);
   }
 
+  if (view === 'geo') {
+    return geoLookupResponse_(e);
+  }
+
   return jsonResponse_({
     ok: true,
     service: 'SPX-DV recebimento On Hold',
@@ -273,6 +277,141 @@ function neighborhoodLookupResponse_(e) {
   return ContentService
     .createTextOutput(payload)
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+
+function geoLookupResponse_(e) {
+  const callback = clean_(e && e.parameter && e.parameter.callback);
+  const validCallback = /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(callback);
+  const latitude = Number(e && e.parameter && e.parameter.lat);
+  const longitude = Number(e && e.parameter && e.parameter.lng);
+
+  let result = {
+    ok: false,
+    neighborhood: '',
+    candidates: [],
+    error: ''
+  };
+
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+      !Number.isFinite(longitude) || longitude < -180 || longitude > 180 ||
+      (latitude === 0 && longitude === 0)) {
+    result.error = 'Coordenadas inválidas';
+  } else {
+    try {
+      result = reverseGeocodeNeighborhood_(latitude, longitude);
+    } catch (error) {
+      result = {
+        ok: false,
+        neighborhood: '',
+        candidates: [],
+        error: String(error && error.message ? error.message : error)
+      };
+    }
+  }
+
+  const payload = JSON.stringify(result);
+  if (validCallback) {
+    return ContentService
+      .createTextOutput(callback + '(' + payload + ');')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+
+  return ContentService
+    .createTextOutput(payload)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function reverseGeocodeNeighborhood_(latitude, longitude) {
+  // Para Bairro, precisão de ~1 metro é mais do que suficiente e evita
+  // trabalhar com coordenadas excessivamente precisas.
+  const lat = Math.round(Number(latitude) * 100000) / 100000;
+  const lng = Math.round(Number(longitude) * 100000) / 100000;
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'SPX_DV_GEO_V1_' + lat.toFixed(5) + '_' + lng.toFixed(5);
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      if (parsed && parsed.ok) return parsed;
+    } catch (error) {}
+  }
+
+  const response = Maps
+    .newGeocoder()
+    .setLanguage('pt-BR')
+    .setRegion('br')
+    .reverseGeocode(lat, lng);
+
+  const results = response && Array.isArray(response.results)
+    ? response.results
+    : [];
+
+  const priorities = {
+    sublocality_level_1: 0,
+    neighborhood: 1,
+    sublocality: 2,
+    administrative_area_level_4: 3,
+    administrative_area_level_3: 4
+  };
+
+  const candidates = [];
+  const seen = {};
+
+  results.slice(0, 10).forEach(function(result, resultIndex) {
+    const components = result && Array.isArray(result.address_components)
+      ? result.address_components
+      : [];
+
+    components.forEach(function(component) {
+      const name = clean_(component && component.long_name);
+      const types = component && Array.isArray(component.types)
+        ? component.types
+        : [];
+
+      types.forEach(function(type) {
+        if (!Object.prototype.hasOwnProperty.call(priorities, type) || !name) return;
+        const key = type + '|' + name.toLowerCase();
+        if (seen[key]) return;
+        seen[key] = true;
+        candidates.push({
+          name: name,
+          type: type,
+          result_index: resultIndex,
+          score: priorities[type] * 100 + resultIndex
+        });
+      });
+    });
+  });
+
+  candidates.sort(function(a, b) {
+    return Number(a.score || 0) - Number(b.score || 0);
+  });
+
+  const cleanedCandidates = candidates.slice(0, 12).map(function(item) {
+    return {
+      name: item.name,
+      type: item.type,
+      result_index: item.result_index
+    };
+  });
+
+  const neighborhood = cleanedCandidates.length
+    ? clean_(cleanedCandidates[0].name)
+    : '';
+
+  const result = {
+    ok: true,
+    neighborhood: neighborhood,
+    candidates: cleanedCandidates,
+    source: 'apps_script_maps'
+  };
+
+  try {
+    cache.put(cacheKey, JSON.stringify(result), 21600);
+  } catch (error) {}
+
+  return result;
 }
 
 function importNeighborhoodCsvUrl_(spreadsheet, downloadUrl) {

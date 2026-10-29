@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-28
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.42
-Estado: desenvolvimento incremental; 1.3.42 requer validação real antes de ser chamada de estável.
+Versão atual do módulo: 1.3.43
+Estado: desenvolvimento incremental; 1.3.43 requer validação real antes de ser chamada de estável.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -255,11 +255,12 @@ A integração antiga de planilha relacionada ao cancelamento deve ocorrer apena
 - v1.3.40: geocoding antecipado/paralelo para reduzir esse atraso; teste real indicou velocidade operacional aceitável.
 - v1.3.41: remove completamente o fallback de Bairro por `show_sensitive_data`.
 - v1.3.42: se geolocalização/cache não resolverem o Bairro, usa `Atualizar base` como valor real e envia ao Dashboard/Dados.
+- v1.3.43: adiciona hook mínimo em `document_start` para capturar o recebimento real antes do SPX guardar referências nativas de `fetch`/XHR; módulo principal continua em `document_idle`.
 
 ### Próximo teste recomendado
-Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.42:
+Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.43:
 
-1. carregar v1.3.42;
+1. carregar v1.3.43;
 2. bipar/colar BR normal e observar se o Bairro já aparece junto do painel ou quanto tempo fica em `Consultando...`;
 3. repetir com Return;
 4. confirmar que o operador consegue continuar bipando sem qualquer bloqueio;
@@ -1497,3 +1498,38 @@ Validação:
 - sintaxe JavaScript validada;
 - `assistente.js` continua sem referência a `show_sensitive_data`;
 - validação real no SPX ainda pendente.
+
+
+## Atualização 1.3.43 — correção da captura real antes do carregamento do SPX
+Em 29/10/2026 foi relatado que nenhum BR recebido no dia apareceu no Dashboard, apesar de o painel/preview funcionar normalmente.
+
+Diagnóstico no código:
+- o recebimento real depende da observação da resposta de `POST /api/in-station/uni_receive/order`;
+- essa observação estava dentro do módulo principal `assistente.js`;
+- o catálogo registrava o módulo principal em `document_idle`;
+- embora rode em `world: MAIN`, nesse momento o aplicativo SPX já pode ter capturado/guardado referências nativas de `fetch` antes da extensão sobrescrevê-las;
+- isso pode fazer o painel funcionar normalmente, mas impedir que a chamada real de recebimento passe pelo interceptor instalado tarde;
+- o fato operacional observado foi **zero BR no Dashboard**, compatível com essa falha de captura.
+
+Correção:
+- novo arquivo `modules/assistente-de-devolucoes/receive-hook.js`;
+- o hook roda em `document_start`, `world: MAIN`;
+- intercepta exclusivamente respostas de `POST /api/in-station/uni_receive/order` via `fetch` e `XMLHttpRequest`;
+- respostas capturadas antes do carregamento do módulo principal ficam em buffer curto no `window`;
+- o módulo principal permanece em `document_idle` para não antecipar a UI/DOM;
+- `assistente.js` instala uma ponte que consome o buffer e eventos do hook e reaproveita `handleRealReceiveResponse`;
+- a deduplicação existente por BR + segundo de recebimento continua protegendo contra dupla captura caso o interceptor antigo também enxergue a mesma resposta;
+- nenhuma regra de Bairro, Dashboard, Dados, Return ou recomendação foi alterada;
+- Apps Script não foi alterado.
+
+Para ativar a mudança no Chrome:
+1. desativar o módulo no popup da extensão;
+2. ativar novamente;
+3. isso força o loader a registrar os dois scripts e recarregar as abas SPX;
+4. conferir que a versão exibida é 1.3.43;
+5. fazer um recebimento real e verificar o Dashboard.
+
+Validação:
+- sintaxe do hook e do módulo principal validada estaticamente;
+- validação real do recebimento e Dashboard ainda pendente;
+- não chamar 1.3.43 de estável até confirmar pelo menos um recebimento real.

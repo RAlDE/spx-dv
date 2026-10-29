@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-28
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.44
-Estado: desenvolvimento incremental; 1.3.44 requer validação real antes de ser chamada de estável.
+Versão atual do módulo: 1.3.45
+Estado: desenvolvimento incremental; 1.3.45 requer validação real antes de ser chamada de estável.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -257,19 +257,21 @@ A integração antiga de planilha relacionada ao cancelamento deve ocorrer apena
 - v1.3.42: se geolocalização/cache não resolverem o Bairro, usa `Atualizar base` como valor real e envia ao Dashboard/Dados.
 - v1.3.43: adiciona hook mínimo em `document_start` para capturar o recebimento real antes do SPX guardar referências nativas de `fetch`/XHR; módulo principal continua em `document_idle`.
 - v1.3.44: adiciona diagnóstico ponta a ponta da captura do Dashboard e fallback para extrair BR do body do POST quando a resposta de sucesso não trouxer `order_list`.
+- v1.3.45: troca o `dashboard_upsert` central para JSONP com confirmação legível do Apps Script; remove a sincronização automática gigante via `dashboard_merge` e recupera apenas registros pendentes do dia, um a um.
 
 ### Próximo teste recomendado
-Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.44:
+Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.45:
 
-1. carregar v1.3.44;
-2. bipar/colar BR normal e observar se o Bairro já aparece junto do painel ou quanto tempo fica em `Consultando...`;
-3. repetir com Return;
-4. confirmar que o operador consegue continuar bipando sem qualquer bloqueio;
-5. fazer recebimento real e verificar que somente a resposta `/uni_receive/order retcode=0` cria a ficha no Dashboard;
-6. confirmar Bairro correto no Dashboard;
-7. confirmar que nenhuma tarefa automática de exportação de Bairro foi criada;
-8. testar `Enviar X para a planilha` e confirmar o mesmo Bairro em `Dados`;
-9. somente após esses testes decidir se v1.3.40 pode ser marcada como validada ou se ainda é necessário reduzir latência.
+1. atualizar/reimplantar o Apps Script preservando a mesma URL `/exec`;
+2. carregar v1.3.45;
+3. bipar/colar BR normal e observar se o Bairro já aparece junto do painel ou quanto tempo fica em `Consultando...`;
+4. repetir com Return;
+5. confirmar que o operador consegue continuar bipando sem qualquer bloqueio;
+6. fazer recebimento real e verificar que somente a resposta `/uni_receive/order retcode=0` cria a ficha no Dashboard;
+7. confirmar Bairro correto no Dashboard;
+8. confirmar que nenhuma tarefa automática de exportação de Bairro foi criada;
+9. testar `Enviar X para a planilha` e confirmar o mesmo Bairro em `Dados`;
+10. somente após esses testes decidir se v1.3.40 pode ser marcada como validada ou se ainda é necessário reduzir latência.
 
 ### Disciplina de continuidade
 Em uma conversa nova, não pedir ao usuário para reexplicar tudo acima. Leia este arquivo e continue do estado atual. Se algo parecer contraditório em seções antigas, procure primeiro a versão mais recente documentada e o código atual antes de propor mudanças.
@@ -1574,3 +1576,54 @@ Validação:
 - sintaxe do hook e do módulo principal validada;
 - validação real ainda pendente;
 - não chamar v1.3.44 de estável.
+
+
+## Atualização 1.3.45 — confirmação real do upsert central via JSONP
+O diagnóstico da v1.3.44 mostrou com clareza que a cadeia local estava funcionando:
+- hook carregado;
+- `POST /api/in-station/uni_receive/order` interceptado;
+- `retcode=0`;
+- 1 order reconhecida;
+- BR enfileirado;
+- ocorrência montada com Bairro;
+- ficha salva localmente;
+- chamada central disparada.
+
+O problema restante estava entre navegador e Web App central. O evento `central_send_resolved` não era prova de gravação porque o envio usava `fetch(..., { mode: 'no-cors' })`. Nesse modo, redirecionamento/login/resposta opaca podem resolver a Promise sem permitir saber se `doPost` executou e gravou a ficha.
+
+Correção da v1.3.45:
+- novo endpoint de leitura/gravação controlada no Apps Script:
+  `GET ?view=dashboard_upsert&payload=<json>&callback=<jsonp>`;
+- a gravação usa o mesmo `normalizeDashboardRecord_`, `upsertDashboardRecord_`, lock e `SpreadsheetApp.flush()`;
+- o servidor responde em JSONP com:
+  - `ok`;
+  - `occurrence_key`;
+  - `status`;
+  - `received_day`;
+  - `received_at`;
+- o módulo passa a considerar sincronização central concluída somente quando recebe `ok:true`;
+- diagnóstico passa a registrar `central_send_confirmed` ou `central_send_error`;
+- o envio live de uma ocorrência não usa mais `no-cors` para `dashboard_upsert`.
+
+Recuperação local:
+- removida a tentativa automática de `dashboard_merge` com toda a fila local, que no diagnóstico tentou enviar 467 registros e falhou com `Failed to fetch`;
+- a recuperação automática passa a considerar somente registros pendentes do dia corrente;
+- esses registros são enviados individualmente por `dashboard_upsert` confirmado;
+- isso evita URL/body gigante e evita reintroduzir em massa registros legados de dias anteriores cuja origem pode não corresponder ao recebimento real atual.
+
+Importante:
+- o Apps Script mudou nesta versão;
+- atualizar o arquivo no GitHub **não atualiza a implantação**;
+- é obrigatório copiar/reimplantar a nova versão no mesmo Web App, preservando a URL `/exec`;
+- depois, desativar/ativar o módulo para carregar a v1.3.45.
+
+Validação esperada:
+1. após redeploy do Apps Script e carga da v1.3.45, o registro local do teste da v1.3.44 pode ser reenviado automaticamente se pertencer ao dia atual e estiver pendente;
+2. um novo recebimento real deve gerar `central_send_confirmed`;
+3. o BR deve aparecer no Dashboard sem depender de refresh manual;
+4. somente depois disso testar o envio em lote para `Dados`.
+
+Validação técnica:
+- sintaxe do módulo e do Apps Script validada estaticamente;
+- validação real ainda pendente;
+- não chamar v1.3.45 de estável.

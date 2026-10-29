@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-28
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.45
-Estado: desenvolvimento incremental; 1.3.45 requer validação real antes de ser chamada de estável.
+Versão atual do módulo: 1.3.46
+Estado: desenvolvimento incremental; 1.3.46 requer validação real antes de ser chamada de estável.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -258,12 +258,13 @@ A integração antiga de planilha relacionada ao cancelamento deve ocorrer apena
 - v1.3.43: adiciona hook mínimo em `document_start` para capturar o recebimento real antes do SPX guardar referências nativas de `fetch`/XHR; módulo principal continua em `document_idle`.
 - v1.3.44: adiciona diagnóstico ponta a ponta da captura do Dashboard e fallback para extrair BR do body do POST quando a resposta de sucesso não trouxer `order_list`.
 - v1.3.45: troca o `dashboard_upsert` central para JSONP com confirmação legível do Apps Script; remove a sincronização automática gigante via `dashboard_merge` e recupera apenas registros pendentes do dia, um a um.
+- v1.3.46: remove qualquer replay automático da fila local ao entrar na tela ou abrir o Dashboard e encerra imediatamente JSONP inválido, evitando o ícone da aba em carregamento contínuo.
 
 ### Próximo teste recomendado
-Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.45:
+Ao retomar este projeto, o próximo passo não é reinventar a arquitetura. É validar a v1.3.46:
 
 1. atualizar/reimplantar o Apps Script preservando a mesma URL `/exec`;
-2. carregar v1.3.45;
+2. carregar v1.3.46;
 3. bipar/colar BR normal e observar se o Bairro já aparece junto do painel ou quanto tempo fica em `Consultando...`;
 4. repetir com Return;
 5. confirmar que o operador consegue continuar bipando sem qualquer bloqueio;
@@ -1627,3 +1628,37 @@ Validação técnica:
 - sintaxe do módulo e do Apps Script validada estaticamente;
 - validação real ainda pendente;
 - não chamar v1.3.45 de estável.
+
+
+## Atualização 1.3.46 — remover replay automático e loading contínuo
+Após o teste da v1.3.45, o Dashboard ainda não exibiu os BRs e o ícone da aba ficou em looping de carregamento.
+
+Causa encontrada no módulo:
+- `syncLocalDashboardToCentral()` era chamado automaticamente ao iniciar a tela de recebimento;
+- a mesma função era chamada novamente ao abrir o Dashboard;
+- se existissem muitos registros locais do dia, o módulo enviava vários JSONPs sequenciais;
+- cada JSONP podia esperar até 9 segundos caso o Web App não chamasse o callback;
+- isso mantinha a página em estado de carregamento por tempo prolongado e interferia no uso normal do SPX.
+
+Correção:
+- removido o replay automático da fila local ao iniciar o módulo;
+- removido o replay automático ao clicar em `Dash`;
+- a fila local continua preservada e a migração local continua disponível;
+- recebimentos novos continuam sendo enviados individualmente após confirmação real do SPX;
+- `sendDashboardUpsertJsonp` agora encerra imediatamente quando o recurso termina de carregar sem executar o callback JSONP;
+- com isso, uma implantação antiga/redirecionamento/resposta incompatível não deixa o ícone da aba girando por vários segundos;
+- Apps Script não mudou nesta versão; continua sendo necessário que a implantação contenha o endpoint `view=dashboard_upsert` adicionado na 1.3.45.
+
+Teste recomendado:
+1. garantir que o Apps Script da 1.3.45+ esteja reimplantado na mesma URL `/exec`;
+2. desativar/ativar o módulo e confirmar v1.3.46;
+3. recarregar a tela SPX e verificar que a aba não permanece em loading;
+4. fazer um único recebimento real;
+5. abrir o diagnóstico `D`;
+6. esperar `central_send_confirmed`;
+7. confirmar o BR no Dashboard.
+
+Validação:
+- sintaxe do módulo validada;
+- validação real ainda pendente;
+- não chamar v1.3.46 de estável.

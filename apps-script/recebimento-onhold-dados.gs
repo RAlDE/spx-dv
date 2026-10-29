@@ -153,7 +153,16 @@ function dashboardUpsertResponse_(e) {
   };
 
   const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!lock.tryLock(1200)) {
+    return jsonpResponse_(e, {
+      ok: false,
+      dashboard: true,
+      build: SPX_DV_BUILD,
+      occurrence_key: '',
+      status: '',
+      error: 'busy'
+    });
+  }
 
   try {
     const raw = String(e && e.parameter && e.parameter.payload || '').trim();
@@ -209,7 +218,13 @@ function dashboardUpsertResponse_(e) {
 
 function doPost(e) {
   const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!lock.tryLock(1200)) {
+    return jsonResponse_({
+      ok: false,
+      busy: true,
+      error: 'Dashboard ocupado; tente novamente.'
+    });
+  }
 
   try {
     const payload = parsePayload_(e);

@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.55
-Estado: desenvolvimento incremental; 1.3.55 preserva os fluxos anteriores e ajusta o card Return para exibir Motorista + ID no mesmo padrão visual dos pedidos normais; requer validação real.
+Versão atual do módulo: 1.3.56
+Estado: desenvolvimento incremental; 1.3.56 preserva os fluxos anteriores e passa a exibir no cabeçalho o recebimento LMHub atual derivado do tracking do ciclo/ocorrência mais recente; requer validação real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -2186,3 +2186,83 @@ Validação técnica:
 - Apps Script recebe somente bump de build para compatibilidade do `health`;
 - módulo, Apps Script e catálogo alinhados em 1.3.55;
 - validação real no SPX ainda pendente.
+
+
+## Atualização 1.3.56 — data/hora de recebimento derivada do tracking
+Necessidade confirmada pelo usuário:
+- a linha `Recebido em` da caixa **Rastreio do pedido** não pode depender apenas da sessão atual de recebimento;
+- ela deve aparecer também quando o BR for consultado depois;
+- a fonte visual deve ser o próprio `tracking_info`;
+- deve representar o recebimento correspondente à ocorrência atual;
+- se o BR sair para rota novamente, gerar outra ocorrência e depois for recebido outra vez, o cabeçalho deve mudar para esse recebimento mais novo.
+
+Exemplo real informado:
+- ocorrência: `03/11/2026 11:41:47`;
+- evento posterior no tracking: `03/11/2026 17:00:25 — LMHub_Recebido — Single`;
+- o cabeçalho deve mostrar `Recebido em: 03/11/2026 17:00:25`.
+
+### Regra implementada
+Ao carregar qualquer BR:
+1. o módulo identifica a última ocorrência visível do ciclo atual;
+2. usa o timestamp dessa ocorrência como fronteira;
+3. percorre cronologicamente o `tracking_info`;
+4. procura eventos LMHub de recebimento posteriores à ocorrência;
+5. usa o recebimento mais recente encontrado depois daquela ocorrência;
+6. se não houver recebimento posterior, o cabeçalho mostra `—`.
+
+Isso impede usar um recebimento de um ciclo anterior.
+
+Se existir:
+`ocorrência A -> recebimento A -> nova rota -> ocorrência B`
+
+o recebimento A deixa de valer para a ocorrência B. Só volta a aparecer data/hora quando existir:
+`ocorrência B -> recebimento B`.
+
+### Reconhecimento do evento
+A detecção é semântica e aceita variantes reais no tracking, incluindo:
+- `LMHub_Recebido`;
+- `LM Hub_Recebido`;
+- equivalentes `Received`;
+- mensagens do tipo `Pedido chegou ao Last Mile Hub para entrega`.
+
+Não depende apenas de código numérico de status.
+
+### Persistência visual
+- ao abrir um BR antigo, o horário é reconstruído novamente pelo tracking;
+- não depende de `localStorage` ou de a aba ter ficado aberta;
+- ao receber um BR na sessão atual, o módulo faz algumas releituras leves de `tracking_info` para capturar o novo evento assim que o SPX o publicar;
+- Endereço não encontrado/cancelamento também dispara essa atualização leve.
+
+### Separação de responsabilidades
+Importante:
+- o `Recebido em` **visual da caixa** passa a ser derivado do tracking;
+- o `received_at` enviado ao **Dashboard central** continua seguindo a regra autoritativa já existente do recebimento real:
+  - fluxo normal: `receive_time` de `POST /api/in-station/uni_receive/order`;
+  - exceção controlada de Endereço não encontrado: regra documentada na 1.3.53;
+- portanto esta versão não altera a confirmação de recebimento nem a entrada no Dashboard.
+
+### O que NÃO foi alterado
+- regra `retcode=0` do recebimento normal;
+- exceção 1.3.53 de Endereço não encontrado;
+- Dashboard;
+- filtros/Top 10;
+- Bairro Principal;
+- apresentação Motorista no Return;
+- recomendação;
+- deduplicação;
+- envio para Dados.
+
+### Validação técnica
+- sintaxe do `assistente.js` validada antes do commit;
+- Apps Script recebe somente bump de build para manter o health compatível;
+- módulo, Apps Script e catálogo alinhados em 1.3.56;
+- validação real do tracking ainda pendente;
+- não chamar 1.3.56 de estável antes do teste real.
+
+### Teste recomendado
+1. reimplantar Apps Script 1.3.56 mantendo a mesma URL `/exec`;
+2. atualizar o módulo para 1.3.56;
+3. abrir o BR mostrado no exemplo depois de ele já estar recebido;
+4. confirmar `Recebido em: 03/11/2026 17:00:25`;
+5. testar um BR com nova ocorrência posterior ao último recebimento e confirmar que o horário antigo não é reutilizado;
+6. depois do novo recebimento, confirmar que o cabeçalho passa para o novo LMHub_Recebido.

@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-11-03
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.58
-Estado: desenvolvimento incremental; 1.3.58 preserva os fluxos anteriores, mantém o cabeçalho da 1.3.57 e troca o envio do Dashboard para gravação em massa por blocos na aba Dados; pendências antigas foram limpas manualmente em 03/11/2026, restando somente as de hoje; requer validação real do envio em massa.
+Versão atual do módulo: 1.3.59
+Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em ambiente real; 1.3.59 preserva esse envio e torna o Dashboard autoatualizável, com abertura leve e sem reload após enviar/limpar; requer validação real da atualização ao vivo.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -12,7 +12,7 @@ Estado: desenvolvimento incremental; 1.3.58 preserva os fluxos anteriores, mant�
 Se uma nova conversa for aberta, começar por este resumo antes de propor qualquer alteração:
 
 - repositório correto: `RAlDE/spx-dv`; não misturar com SPX OnHold;
-- versão alinhada atual: módulo `1.3.58`, `DASHBOARD_SYNC_GENERATION 1.3.58`, Apps Script build `1.3.58`, catálogo `1.3.58`;
+- versão alinhada atual: módulo `1.3.59`, `DASHBOARD_SYNC_GENERATION 1.3.59`, Apps Script build `1.3.59`, catálogo `1.3.59`;
 - captura normal continua autoritativa por `POST /api/in-station/uni_receive/order` com `retcode=0`;
 - exceção controlada: `Endereço não encontrado` entra no Dashboard somente após cancelamento confirmado, conforme v1.3.53;
 - Dashboard atual possui Top 10, filtro por login com quantidade, busca geral e filtros por coluna dentro do próprio Dash;
@@ -23,7 +23,8 @@ Se uma nova conversa for aberta, começar por este resumo antes de propor qualqu
 - Bairro: geocoder é prioridade; se não resolver, usar **Bairro Principal** da Assignment Task da ocorrência; se ainda falhar, `Atualizar base`;
 - envio atual do Dash é em massa: carrega controle uma vez, planeja linhas vazias em lote, grava C:G e I:J por matrizes, preserva A/B/H e linhas verdes, grava controle/status em blocos;
 - em 03/11/2026 foram removidos diretamente da `_SPX_DV_DASHBOARD` todos os registros anteriores a 03/11, após confirmação do usuário de que a planilha já estava atualizada: 4.149 pendências antigas + 57 confirmados antigos; ficaram 1.379 registros de 03/11;
-- alterações mais recentes ainda exigem validação real no SPX; não chamar 1.3.58 de estável sem teste real.
+- o envio em massa da 1.3.58 foi confirmado pelo usuário em ambiente real: todos os dados chegaram corretamente à planilha em bloco;
+- a 1.3.59 ainda exige validação real da abertura leve, atualização automática e pós-envio sem página branca; não chamar 1.3.59 de estável antes desse teste.
 
 Esta seção é a fonte principal para retomar o projeto em uma conversa nova. O restante deste arquivo mantém o histórico cronológico das versões e decisões anteriores. Quando houver divergência entre uma seção antiga e este resumo, **prevalece o estado atual descrito aqui**, salvo se uma versão posterior documentar explicitamente uma nova mudança.
 
@@ -2395,3 +2396,48 @@ Confirmação operacional do usuário:
 Observação:
 - se uma célula-alvo possuir fórmula, a gravação de um valor substitui o conteúdo daquela célula, como já ocorria no fluxo anterior e conforme a regra existente do projeto;
 - fora das células efetivamente preenchidas, nenhuma configuração da planilha deve ser alterada.
+
+
+## Atualização 1.3.59 — Dashboard ao vivo, abertura leve e pós-envio sem reload
+
+### Evidência real da 1.3.58
+O usuário confirmou em ambiente real que o envio em massa funcionou e que a planilha recebeu todos os dados corretamente em bloco. O mecanismo de escrita em massa da 1.3.58 fica preservado.
+
+Problemas observados:
+- Dash demora para abrir;
+- Dash aberto não acompanha recebimentos novos sem F5;
+- após envio em massa, a página ficou branca por causa de `window.location.reload()` e só voltou com F5 manual.
+
+### Solução 1.3.59
+- `doGet(view=dashboard)` entrega primeiro uma casca visual leve, sem bloquear a abertura lendo toda a fila;
+- a página carrega os dados atuais por `getDashboardLiveState()`;
+- revisão central em ScriptProperties: `SPX_DV_DASHBOARD_REVISION_V1`;
+- upserts e mudanças de status tocam a revisão;
+- cliente verifica somente a revisão a cada 2,5 s;
+- somente se a revisão mudou, baixa/renderiza os dados completos;
+- ao voltar para a aba, verifica a revisão;
+- Atualizar, Enviar em massa e Limpar deixam de usar `window.location.reload()`;
+- após enviar/limpar, os componentes são atualizados na própria página;
+- filtros atuais são preservados e reaplicados sobre as novas linhas.
+
+### Regras preservadas
+- captura real e exceção Endereço não encontrado;
+- envio em massa validado da 1.3.58;
+- somente valores / equivalente a Ctrl+Shift+V;
+- C:G e I:J, preservando A/B/H;
+- linha verde, entradas manuais e deduplicação;
+- Bairro, Return, tracking, Top 10 e filtros.
+
+### Validação
+- Apps Script e módulo passaram na validação de sintaxe;
+- módulo, sync generation, Apps Script e catálogo alinhados em 1.3.59;
+- validação real da atualização ao vivo ainda pendente.
+
+### Teste
+1. reimplantar Apps Script 1.3.59 na mesma /exec;
+2. atualizar módulo para 1.3.59;
+3. abrir Dash e confirmar abertura da estrutura antes dos dados;
+4. manter Dash aberto enquanto novos BRs são recebidos e conferir atualização sem F5;
+5. testar filtros durante atualização;
+6. enviar em massa e confirmar que a página não fica branca;
+7. testar Atualizar sem navegação completa.

@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.57';
+const SPX_DV_BUILD = '1.3.58';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -996,11 +996,10 @@ function sendPendingDashboardToData() {
     if (!dataSheet) throw new Error('Aba Dados não encontrada');
 
     cleanupOldConfirmedDashboard_(dashboardSheet);
-    reconcileDashboardStatuses_(spreadsheet, dashboardSheet);
 
     const lastRow = dashboardSheet.getLastRow();
     if (lastRow < 2) {
-      return { ok: true, pending: 0, sent: 0, duplicates: 0, failed: 0 };
+      return { ok: true, pending: 0, sent: 0, duplicates: 0, failed: 0, mode: 'bulk' };
     }
 
     const rows = dashboardSheet.getRange(2, 1, lastRow - 1, 14).getValues();
@@ -1009,36 +1008,40 @@ function sendPendingDashboardToData() {
       .filter(item => item.record.status !== 'confirmed')
       .sort((a, b) => Number(a.record.receivedAt || 0) - Number(b.record.receivedAt || 0));
 
+    if (!pending.length) {
+      return { ok: true, pending: 0, sent: 0, duplicates: 0, failed: 0, mode: 'bulk' };
+    }
+
     const controlSheet = getControlSheet_(spreadsheet);
-    let sent = 0;
-    let duplicates = 0;
-    let failed = 0;
+    const recordedKeys = loadRecordedOccurrenceKeys_(controlSheet);
+    const neighborhoodMap = loadNeighborhoodMap_(spreadsheet);
+
+    const duplicateItems = [];
+    const candidates = [];
+    const neighborhoodUpdates = [];
     const errors = [];
 
     pending.forEach(item => {
+      const dashboardRecord = item.record;
       try {
-        const dashboardRecord = item.record;
         if (!dashboardRecord.shipmentId || !dashboardRecord.occurrenceTimestamp) {
           throw new Error('Ficha incompleta');
         }
 
         if (!dashboardRecord.neighborhood &&
             clean_(dashboardRecord.flow).toLowerCase().indexOf('return') !== 0) {
-          dashboardRecord.neighborhood = lookupNeighborhood_(spreadsheet, dashboardRecord.shipmentId);
-          if (dashboardRecord.neighborhood) {
-            dashboardSheet.getRange(item.index, 9).setValue(dashboardRecord.neighborhood);
+          const cachedNeighborhood = clean_(neighborhoodMap.get(dashboardRecord.shipmentId) || '');
+          if (cachedNeighborhood) {
+            dashboardRecord.neighborhood = cachedNeighborhood;
+            neighborhoodUpdates.push({ row: item.index, value: cachedNeighborhood });
           }
         }
 
         const occurrenceKey = dashboardRecord.occurrenceKey ||
           dashboardRecord.shipmentId + '|' + dashboardRecord.occurrenceTimestamp;
 
-        if (occurrenceAlreadyRecorded_(controlSheet, occurrenceKey)) {
-          dashboardSheet.getRange(item.index, 13, 1, 2).setValues([[
-            'confirmed',
-            Date.now()
-          ]]);
-          duplicates += 1;
+        if (recordedKeys.has(occurrenceKey)) {
+          duplicateItems.push({ dashboardRow: item.index, occurrenceKey: occurrenceKey });
           return;
         }
 
@@ -1053,43 +1056,117 @@ function sendPendingDashboardToData() {
           flow: dashboardRecord.flow
         });
 
-        const row = findWritableRow_(dataSheet);
-        writeRecord_(dataSheet, row, record);
-        SpreadsheetApp.flush();
-
-        const writtenShipment = clean_(dataSheet.getRange(row, 3).getDisplayValue()).toUpperCase();
-        if (writtenShipment !== record.shipmentId) {
-          throw new Error('Falha ao confirmar gravação na linha ' + row);
-        }
-
-        rememberOccurrence_(controlSheet, occurrenceKey, row);
-        dashboardSheet.getRange(item.index, 13, 1, 2).setValues([[
-          'confirmed',
-          Date.now()
-        ]]);
-
-        PropertiesService.getScriptProperties()
-          .setProperty(SPX_DV_CONFIG.pointerProperty, String(row + 1));
-
-        sent += 1;
+        candidates.push({
+          dashboardRow: item.index,
+          occurrenceKey: occurrenceKey,
+          record: record
+        });
       } catch (error) {
-        failed += 1;
         errors.push({
-          occurrence_key: item.record.occurrenceKey,
-          shipment_id: item.record.shipmentId,
+          occurrence_key: dashboardRecord.occurrenceKey,
+          shipment_id: dashboardRecord.shipmentId,
           error: String(error && error.message ? error.message : error)
         });
       }
     });
 
+    if (neighborhoodUpdates.length) {
+      setSingleColumnValuesByRows_(dashboardSheet, 9, neighborhoodUpdates);
+    }
+
+    const successful = [];
+    if (candidates.length) {
+      const writableRows = findWritableRows_(dataSheet, candidates.length);
+      const assignments = candidates.map((item, index) => ({
+        row: writableRows[index],
+        dashboardRow: item.dashboardRow,
+        occurrenceKey: item.occurrenceKey,
+        record: item.record
+      }));
+
+      const groups = groupConsecutiveAssignments_(assignments);
+
+      groups.forEach(group => {
+        try {
+          const startRow = group[0].row;
+          const cToG = group.map(item => [
+            item.record.shipmentId,
+            item.record.reason,
+            numericIfSafe_(item.record.driverId),
+            item.record.driverName,
+            item.record.agency
+          ]);
+          const iToJ = group.map(item => [
+            item.record.neighborhood,
+            item.record.occurrenceDate
+          ]);
+
+          dataSheet.getRange(startRow, 3, group.length, 5).setValues(cToG);
+          dataSheet.getRange(startRow, 9, group.length, 2).setValues(iToJ);
+          SpreadsheetApp.flush();
+
+          const writtenShipments = dataSheet
+            .getRange(startRow, 3, group.length, 1)
+            .getDisplayValues();
+
+          const confirmedGroup = [];
+          group.forEach((item, index) => {
+            const written = clean_(writtenShipments[index] && writtenShipments[index][0]).toUpperCase();
+            if (written !== item.record.shipmentId) {
+              errors.push({
+                occurrence_key: item.occurrenceKey,
+                shipment_id: item.record.shipmentId,
+                error: 'Falha ao confirmar gravação na linha ' + item.row
+              });
+              return;
+            }
+            confirmedGroup.push(item);
+          });
+
+          if (confirmedGroup.length) {
+            appendControlAssignments_(controlSheet, confirmedGroup);
+            confirmedGroup.forEach(item => {
+              recordedKeys.add(item.occurrenceKey);
+              successful.push(item);
+            });
+          }
+        } catch (error) {
+          group.forEach(item => {
+            errors.push({
+              occurrence_key: item.occurrenceKey,
+              shipment_id: item.record.shipmentId,
+              error: String(error && error.message ? error.message : error)
+            });
+          });
+        }
+      });
+
+      if (assignments.length) {
+        const maxRow = Math.max.apply(null, assignments.map(item => Number(item.row || 0)));
+        if (maxRow > 0) {
+          PropertiesService.getScriptProperties()
+            .setProperty(SPX_DV_CONFIG.pointerProperty, String(maxRow + 1));
+        }
+      }
+    }
+
+    const confirmedDashboardRows = duplicateItems
+      .map(item => item.dashboardRow)
+      .concat(successful.map(item => item.dashboardRow));
+
+    if (confirmedDashboardRows.length) {
+      markDashboardRowsConfirmedBulk_(dashboardSheet, confirmedDashboardRows);
+    }
+
     SpreadsheetApp.flush();
 
     return {
-      ok: failed === 0,
+      ok: errors.length === 0,
+      mode: 'bulk',
       pending: pending.length,
-      sent: sent,
-      duplicates: duplicates,
-      failed: failed,
+      sent: successful.length,
+      duplicates: duplicateItems.length,
+      failed: errors.length,
       errors: errors.slice(0, 20)
     };
   } finally {
@@ -1349,7 +1426,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </style>
 </head>
 <body><main>
-<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila · <span id="buildInfo">${dashboardHtmlEscape_(serverBuildInfo)}</span></div></div><div><div class="actions"><button id="sendPending" class="primary"${allPending.length ? '' : ' disabled'}>Enviar ${allPending.length} para a planilha</button><button id="clearConfirmed" class="danger"${confirmedToday.length ? '' : ' disabled'}>Limpar já enviados</button><button id="refresh" type="button">Atualizar</button></div><div id="actionStatus" class="action-status"></div></div></header>
+<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila · <span id="buildInfo">${dashboardHtmlEscape_(serverBuildInfo)}</span></div></div><div><div class="actions"><button id="sendPending" class="primary"${allPending.length ? '' : ' disabled'}>Enviar ${allPending.length} em massa</button><button id="clearConfirmed" class="danger"${confirmedToday.length ? '' : ' disabled'}>Limpar já enviados</button><button id="refresh" type="button">Atualizar</button></div><div id="actionStatus" class="action-status"></div></div></header>
 <div id="warning">${serverWarningHtml}</div>
 <section class="metrics">
 <div class="metric"><span>Recebidos hoje</span><strong id="mTotal">${todayRecords.length}</strong></div>
@@ -1473,13 +1550,13 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
       send.addEventListener('click',function(){
         var count=Number('${allPending.length}');
         if(!count){ alert('Não há registros na fila para enviar.'); return; }
-        if(!confirm('Enviar '+count+' registro(s) da fila para a aba Dados?')) return;
+        if(!confirm('Enviar '+count+' registro(s) em massa para a aba Dados?')) return;
         if(!(window.google && google.script && google.script.run)){
           setStatus('Ação indisponível nesta página.');
           return;
         }
         send.disabled=true;
-        setStatus('Enviando para Dados...');
+        setStatus('Preparando envio em massa para Dados...');
         google.script.run
           .withSuccessHandler(function(result){
             var sent=Number(result && result.sent || 0);
@@ -1543,6 +1620,150 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </script>
 </body>
 </html>`;
+}
+
+function loadRecordedOccurrenceKeys_(controlSheet) {
+  const lastRow = controlSheet.getLastRow();
+  if (lastRow < 2) return new Set();
+
+  return new Set(
+    controlSheet.getRange(2, 1, lastRow - 1, 1)
+      .getDisplayValues()
+      .map(row => clean_(row[0]))
+      .filter(Boolean)
+  );
+}
+
+function loadNeighborhoodMap_(spreadsheet) {
+  const sheet = getNeighborhoodSheet_(spreadsheet);
+  const lastRow = sheet.getLastRow();
+  const result = new Map();
+  if (lastRow < 2) return result;
+
+  sheet.getRange(2, 1, lastRow - 1, 2)
+    .getDisplayValues()
+    .forEach(row => {
+      const shipment = clean_(row[0]).toUpperCase();
+      const neighborhood = clean_(row[1]);
+      if (shipment && neighborhood) result.set(shipment, neighborhood);
+    });
+
+  return result;
+}
+
+function findWritableRows_(sheet, needed) {
+  const amount = Math.max(0, Number(needed || 0));
+  if (!amount) return [];
+
+  let effectiveBatchStart = findRowAfterLastGreen_(sheet);
+  let cursor = Math.max(2, effectiveBatchStart);
+  const selected = [];
+
+  while (selected.length < amount) {
+    const remaining = amount - selected.length;
+    const chunkSize = Math.max(500, Math.min(5000, remaining * 3 + 200));
+    const endRow = cursor + chunkSize - 1;
+    ensureRowExists_(sheet, endRow);
+
+    const backgrounds = sheet.getRange(cursor, 1, chunkSize, 1).getBackgrounds();
+    const cValues = sheet.getRange(cursor, 3, chunkSize, 1).getDisplayValues();
+
+    for (let index = 0; index < chunkSize; index += 1) {
+      const row = cursor + index;
+
+      if (isGreenColor_(backgrounds[index][0])) {
+        effectiveBatchStart = row + 1;
+        selected.length = 0;
+        continue;
+      }
+
+      if (row < effectiveBatchStart) continue;
+      if (String(cValues[index][0] || '').trim()) continue;
+      selected.push(row);
+    }
+
+    cursor = endRow + 1;
+  }
+
+  PropertiesService.getScriptProperties()
+    .setProperty(SPX_DV_CONFIG.batchStartProperty, String(effectiveBatchStart));
+
+  return selected.slice(0, amount);
+}
+
+function groupConsecutiveAssignments_(assignments) {
+  const sorted = (Array.isArray(assignments) ? assignments.slice() : [])
+    .filter(item => Number(item && item.row || 0) > 0)
+    .sort((a, b) => Number(a.row || 0) - Number(b.row || 0));
+
+  const groups = [];
+  sorted.forEach(item => {
+    const current = groups[groups.length - 1];
+    if (!current || Number(item.row) !== Number(current[current.length - 1].row) + 1) {
+      groups.push([item]);
+    } else {
+      current.push(item);
+    }
+  });
+  return groups;
+}
+
+function appendControlAssignments_(controlSheet, assignments) {
+  if (!Array.isArray(assignments) || !assignments.length) return;
+
+  const startRow = Math.max(controlSheet.getLastRow() + 1, 2);
+  const registeredAt = new Date();
+  controlSheet.getRange(startRow, 1, assignments.length, 3).setValues(
+    assignments.map(item => [
+      item.occurrenceKey,
+      item.row,
+      registeredAt
+    ])
+  );
+}
+
+function markDashboardRowsConfirmedBulk_(dashboardSheet, rowNumbers) {
+  const unique = Array.from(new Set(
+    (Array.isArray(rowNumbers) ? rowNumbers : [])
+      .map(value => Number(value || 0))
+      .filter(value => value >= 2)
+  )).sort((a, b) => a - b);
+
+  if (!unique.length) return;
+
+  const assignments = unique.map(row => ({ row: row }));
+  const groups = groupConsecutiveAssignments_(assignments);
+  const now = Date.now();
+
+  groups.forEach(group => {
+    dashboardSheet.getRange(group[0].row, 13, group.length, 2).setValues(
+      group.map(() => ['confirmed', now])
+    );
+  });
+}
+
+function setSingleColumnValuesByRows_(sheet, column, assignments) {
+  const cleanAssignments = (Array.isArray(assignments) ? assignments.slice() : [])
+    .filter(item => Number(item && item.row || 0) >= 1)
+    .sort((a, b) => Number(a.row || 0) - Number(b.row || 0));
+
+  if (!cleanAssignments.length) return;
+
+  const groups = [];
+  cleanAssignments.forEach(item => {
+    const current = groups[groups.length - 1];
+    if (!current || Number(item.row) !== Number(current[current.length - 1].row) + 1) {
+      groups.push([item]);
+    } else {
+      current.push(item);
+    }
+  });
+
+  groups.forEach(group => {
+    sheet.getRange(group[0].row, column, group.length, 1).setValues(
+      group.map(item => [item.value])
+    );
+  });
 }
 
 function writeRecord_(sheet, row, record) {

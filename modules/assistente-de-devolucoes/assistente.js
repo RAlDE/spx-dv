@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.55';
+  const MODULE_VERSION = '1.3.56';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -34,7 +34,7 @@
   const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.55';
+  const DASHBOARD_SYNC_GENERATION = '1.3.56';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
@@ -121,6 +121,7 @@
   const dashboardOccurrenceInFlight = new Set();
   const addressDashboardSnapshots = new Map();
   const receivedAtByShipment = new Map();
+  const latestOccurrenceByShipment = new Map();
   const RECEIVE_CAPTURE_RETRY_DELAYS = [600, 1400, 2800, 5000];
 
   function readCancelledAddressState() {
@@ -1955,11 +1956,15 @@
 
   function rememberReceivedAt(shipmentId, receivedAt) {
     const shipment = String(shipmentId || '').trim().toUpperCase();
-    const value = Number(receivedAt || 0);
-    if (!shipment || !value) return;
+    if (!shipment) return;
 
-    const millis = value < 1000000000000 ? value * 1000 : value;
-    receivedAtByShipment.set(shipment, millis);
+    const value = Number(receivedAt || 0);
+    const millis = value > 0
+      ? (value < 1000000000000 ? value * 1000 : value)
+      : 0;
+
+    if (millis) receivedAtByShipment.set(shipment, millis);
+    else receivedAtByShipment.delete(shipment);
 
     const panel = document.getElementById(PANEL_ID);
     if (!panel || String(panel.dataset.shipmentId || '').toUpperCase() !== shipment) return;
@@ -2455,6 +2460,90 @@
       .sort((a, b) => Number(a.ctime) - Number(b.ctime) || a.index - b.index);
   }
 
+  function nodeRepresentsLmHubReceived(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+
+    const values = primitiveEntries(node).map(([, value]) => String(value || ''));
+    const statusTexts = values.map(trackingStatusText);
+
+    if (statusTexts.some(text =>
+      text.includes('lmhub_recebido') ||
+      text.includes('lm_hub_recebido') ||
+      text.includes('lmhub_received') ||
+      text.includes('lm_hub_received') ||
+      text.includes('last_mile_hub_received')
+    )) return true;
+
+    const text = normalize([
+      node?.message,
+      node?.description,
+      node?.title,
+      node?.remark,
+      ...values
+    ].filter(Boolean).join(' '));
+
+    return (
+      /lm\s*hub.*recebid/.test(text) ||
+      /last\s*mile\s*hub.*recebid/.test(text) ||
+      /last\s*mile\s*hub.*received/.test(text) ||
+      /pedido.*chegou.*last\s*mile\s*hub.*entrega/.test(text)
+    );
+  }
+
+  function latestLmHubReceivedAfterOccurrence(tracking, occurrenceTimestamp) {
+    const occurrenceTime = Number(occurrenceTimestamp || 0);
+    if (!occurrenceTime) return 0;
+
+    const matches = trackingEventsChronological(tracking)
+      .filter(item =>
+        Number(item?.ctime || 0) > occurrenceTime &&
+        nodeRepresentsLmHubReceived(item?.node)
+      );
+
+    return matches.length
+      ? Number(matches[matches.length - 1]?.ctime || 0)
+      : 0;
+  }
+
+  function syncReceivedAtFromTracking(shipmentId, tracking, occurrenceTimestamp) {
+    const shipment = String(shipmentId || '').trim().toUpperCase();
+    const occurrenceTime = Number(occurrenceTimestamp || 0);
+    if (!shipment || !occurrenceTime) return 0;
+
+    latestOccurrenceByShipment.set(shipment, occurrenceTime);
+    const receivedSeconds = latestLmHubReceivedAfterOccurrence(tracking, occurrenceTime);
+    rememberReceivedAt(shipment, receivedSeconds ? receivedSeconds * 1000 : 0);
+    return receivedSeconds;
+  }
+
+  async function refreshReceivedAtFromTracking(shipmentId) {
+    const shipment = String(shipmentId || '').trim().toUpperCase();
+    const occurrenceTime = Number(latestOccurrenceByShipment.get(shipment) || 0);
+    if (!shipment || !occurrenceTime) return false;
+
+    for (const delay of [350, 900, 1800, 3200, 5200]) {
+      if (delay) await sleep(delay);
+      try {
+        const tracking = await fetchJson(
+          'https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=' +
+          encodeURIComponent(shipment)
+        );
+        const receivedSeconds = latestLmHubReceivedAfterOccurrence(tracking, occurrenceTime);
+        if (!receivedSeconds) continue;
+
+        rememberReceivedAt(shipment, receivedSeconds * 1000);
+        receiveDiagPush('tracking_received_at_found', {
+          shipment_id: shipment,
+          occurrence_timestamp: occurrenceTime,
+          received_at: receivedSeconds * 1000
+        });
+        return true;
+      } catch {}
+    }
+
+    return false;
+  }
+
   function nodeEndsPendingOnhold(node) {
     if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
     if (nodeIsAnyOnhold(node)) return false;
@@ -2806,7 +2895,6 @@
 
     const operatorLogin = await refreshCurrentOperatorLogin();
     const receivedAt = Number(snapshot.received_at || Date.now());
-    rememberReceivedAt(shipment, receivedAt);
 
     receiveDiagPush('address_cancel_dashboard_start', {
       shipment_id: shipment,
@@ -3096,7 +3184,7 @@
 
         const receiveSeconds = Number(order?.receive_time || 0);
         const receivedAt = receiveSeconds > 0 ? receiveSeconds * 1000 : Date.now();
-        rememberReceivedAt(shipmentId, receivedAt);
+        void refreshReceivedAtFromTracking(shipmentId);
         const receiveKey = shipmentId + '|' + Math.floor(receiveSeconds || receivedAt / 1000);
         if (confirmedReceiveSeen.has(receiveKey)) {
           receiveDiagPush('receive_duplicate_ignored', { shipment_id: shipmentId, receive_key: receiveKey });
@@ -3367,6 +3455,7 @@
       markAddressCancelled(shipmentId);
       void sendCancelledAddressToSheet(shipmentId);
       void captureCancelledAddressToDashboard(shipmentId);
+      void refreshReceivedAtFromTracking(shipmentId);
       actions.querySelectorAll('button').forEach(item => item.remove());
       if (result) {
         result.textContent = 'Cancelado';
@@ -3515,6 +3604,13 @@
       }
 
       const latestVisibleOccurrence = visibleAttempts.at(-1);
+      const latestVisibleOccurrenceTime = Number(latestVisibleOccurrence?.ctime || 0);
+      if (latestVisibleOccurrenceTime) {
+        syncReceivedAtFromTracking(shipmentId, tracking, latestVisibleOccurrenceTime);
+      } else {
+        rememberReceivedAt(shipmentId, 0);
+      }
+
       const assignmentNeighborhoodFallback = String(
         latestVisibleOccurrence?.assignment_main_neighborhood || ''
       ).trim();
@@ -3628,6 +3724,7 @@
         markAddressCancelled(shipmentId);
         void sendCancelledAddressToSheet(shipmentId);
         void captureCancelledAddressToDashboard(shipmentId);
+        void refreshReceivedAtFromTracking(shipmentId);
       }
       if (result) result.textContent = action === 'confirm' ? 'Motivo confirmado.' : 'Cancelado';
       button.blur();
@@ -3649,6 +3746,7 @@
     if (isNewValue) {
       autoCancelledAddress.delete(value);
       currentShipment = value;
+      rememberReceivedAt(value, 0);
 
       const scanUnix = Math.floor(Date.now() / 1000);
       setTimeout(() => {

@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.53
-Estado: desenvolvimento incremental; 1.3.53 preserva o fluxo normal validado e adiciona ao Dashboard o caso especial de Endereço não encontrado confirmado pelo sucesso do cancelamento automático/manual; requer validação real desse fluxo.
+Versão atual do módulo: 1.3.54
+Estado: desenvolvimento incremental; 1.3.54 preserva os fluxos anteriores e ajusta apresentação do painel, fallback de Bairro Principal da AT e formatação do operador Return; requer validação real desses ajustes.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -2071,3 +2071,91 @@ Se a gravação central falhar depois do cancelamento:
 5. abrir o Dash e localizar o mesmo BR;
 6. confirmar Motivo = `Endereço não encontrado`, motorista, Driver ID, 3PL, Bairro e login;
 7. se não aparecer, abrir `D` e procurar as etapas `address_cancel_dashboard_*`.
+
+
+## Atualização 1.3.54 — cabeçalho BR/recebimento, fallback Bairro Principal e operador Return
+Solicitações operacionais:
+- remover o texto `Shipment ID` da caixa **Rastreio do pedido**;
+- exibir o BR diretamente;
+- abaixo do BR, mostrar data e hora do recebimento;
+- se a fonte geográfica atual não resolver Bairro, usar como fallback o **Bairro Principal** da mesma resposta de Assignment Task usada para obter a transportadora/3PL;
+- ajustar a apresentação de ocorrências Return que vinham como `Operador: [2900390]SCHAIANE DE LIMA WERNER`.
+
+### Cabeçalho da caixa
+Antes:
+`Shipment ID: BR...`
+
+Agora:
+- `BR: BR...`;
+- logo abaixo: `Recebido em: dd/mm/aaaa hh:mm:ss`;
+- o horário é preenchido somente quando existe confirmação operacional:
+  - fluxo normal: usa `receive_time` retornado por `POST /api/in-station/uni_receive/order`;
+  - caso especial Endereço não encontrado/cancelamento: usa o `received_at` já preservado pelo fluxo 1.3.53;
+- enquanto ainda não existe confirmação, o campo mostra `—`;
+- isso não transforma preview/Enter em recebimento.
+
+### Bairro Principal como fallback
+A fonte principal continua inalterada:
+`trade_info -> coordenadas buyer/seller -> Apps Script ?view=geo -> reverse geocoding`.
+
+Nova prioridade de fallback:
+1. Bairro resolvido pelo geocoder;
+2. se o resultado estiver vazio ou for `Atualizar base`, tentar o **Bairro Principal** da AT correspondente à ocorrência;
+3. para fluxo normal, a cache central antiga continua disponível dentro da função geográfica atual;
+4. se nenhuma fonte resolver, permanece `Atualizar base`.
+
+Implementação:
+- a mesma resposta de `POST /spx_delivery/admin/assignment/assignment_task/search/v2` usada para Agência/3PL agora também procura semanticamente o campo da coluna **Bairro Principal**;
+- são reconhecidas chaves equivalentes contendo:
+  - `bairro + principal/main/primary`;
+  - `neighborhood/neighbourhood + principal/main/primary`;
+  - `district + principal/main/primary`;
+- o valor é anexado à ocorrência como `assignment_main_neighborhood`;
+- o fallback é aplicado tanto na exibição do painel quanto no payload que segue para Dashboard/Dados;
+- não é feita nova chamada de rede para esse fallback;
+- não reativa exportação CSV nem `show_sensitive_data`.
+
+### Return — operador no mesmo padrão visual
+Antes, quando o tracking trazia:
+`[2900390]SCHAIANE DE LIMA WERNER`
+
+a caixa mostrava tudo junto:
+`Operador: [2900390]SCHAIANE DE LIMA WERNER`.
+
+Agora o módulo separa a identidade:
+- `Operador: SCHAIANE DE LIMA WERNER`;
+- `ID: 2900390`.
+
+A ocorrência continua semanticamente sendo **Operador de Return**, não motorista:
+- não inventar transportadora para Return;
+- não preencher driver/3PL no payload central de ocorrência sintética Return;
+- a alteração é visual/estrutural no painel.
+
+### O que NÃO foi alterado
+- confirmação normal por `retcode=0`;
+- regra especial 1.3.53 de Endereço não encontrado;
+- receive-hook;
+- Dashboard/filtros/Top 10;
+- lógica de recomendação;
+- separação Normal x Return;
+- escrita em Dados;
+- deduplicação.
+
+### Validação técnica
+- sintaxe do `assistente.js` validada antes do commit;
+- sintaxe do Apps Script validada;
+- Apps Script recebe apenas bump de build para manter o `health` compatível;
+- módulo, Apps Script e catálogo alinhados em 1.3.54;
+- validação real no SPX ainda pendente;
+- não chamar 1.3.54 de estável antes do teste real.
+
+### Teste recomendado
+1. reimplantar o Apps Script 1.3.54 na mesma implantação e URL `/exec`;
+2. desativar/ativar o módulo e confirmar 1.3.54;
+3. bipar um BR normal e confirmar no cabeçalho:
+   - `BR: <BR>`;
+   - `Recebido em: <data/hora>` após confirmação real;
+4. testar um caso em que o geocoder não resolva Bairro e conferir se aparece o Bairro Principal da AT;
+5. abrir um BR Return cujo operador venha no formato `[ID]NOME` e conferir:
+   - `Operador: NOME`;
+   - `ID: ID`.

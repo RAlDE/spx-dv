@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.58';
+const SPX_DV_BUILD = '1.3.59';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -24,6 +24,7 @@ const SPX_DV_CONFIG = Object.freeze({
   dashboardSheetName: '_SPX_DV_DASHBOARD',
   neighborhoodSheetName: '_SPX_DV_BAIRROS',
   dashboardCleanupProperty: 'SPX_DV_DASHBOARD_CLEAN_DAY_V1',
+  dashboardRevisionProperty: 'SPX_DV_DASHBOARD_REVISION_V1',
   pointerProperty: 'SPX_DV_NEXT_ROW_V1',
   batchStartProperty: 'SPX_DV_BATCH_START_V1',
   timezone: 'America/Sao_Paulo'
@@ -32,20 +33,15 @@ const SPX_DV_CONFIG = Object.freeze({
 function doGet(e) {
   const view = clean_(e && e.parameter && e.parameter.view).toLowerCase();
   if (view === 'dashboard') {
-    let initialData;
-    try {
-      initialData = getDashboardData();
-    } catch (error) {
-      initialData = {
-        ok: false,
-        today: Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd'),
-        build: SPX_DV_BUILD,
-        records: [],
-        today_records: [],
-        old_pending: [],
-        error: String(error && error.message ? error.message : error)
-      };
-    }
+    const initialData = {
+      ok: true,
+      loading: true,
+      today: Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd'),
+      build: SPX_DV_BUILD,
+      records: [],
+      today_records: [],
+      old_pending: []
+    };
 
     return HtmlService
       .createHtmlOutput(
@@ -845,6 +841,7 @@ function upsertDashboardRecord_(sheet, incoming) {
 
   const targetRow = row || Math.max(sheet.getLastRow() + 1, 2);
   sheet.getRange(targetRow, 1, 1, 14).setValues(dashboardRowValues_(merged));
+  touchDashboardRevision_();
   return merged;
 }
 
@@ -983,6 +980,121 @@ function getDashboardData() {
     today_records: todayRecords,
     old_pending: oldPending
   };
+}
+
+function dashboardRevisionValue_() {
+  return Number(
+    PropertiesService.getScriptProperties()
+      .getProperty(SPX_DV_CONFIG.dashboardRevisionProperty) || 0
+  );
+}
+
+function touchDashboardRevision_() {
+  const revision = Date.now();
+  PropertiesService.getScriptProperties()
+    .setProperty(SPX_DV_CONFIG.dashboardRevisionProperty, String(revision));
+  return revision;
+}
+
+function getDashboardRevision() {
+  return {
+    ok: true,
+    build: SPX_DV_BUILD,
+    revision: dashboardRevisionValue_()
+  };
+}
+
+function dashboardLiveState_(data) {
+  const source = data && typeof data === 'object' ? data : {};
+  const records = Array.isArray(source.records) ? source.records : [];
+  const todayRecords = Array.isArray(source.today_records) ? source.today_records : [];
+  const oldPending = Array.isArray(source.old_pending) ? source.old_pending : [];
+  const pendingToday = todayRecords.filter(record =>
+    clean_(record && record.status).toLowerCase() !== 'confirmed'
+  );
+  const confirmedToday = todayRecords.filter(record =>
+    clean_(record && record.status).toLowerCase() === 'confirmed'
+  );
+  const allPending = records.filter(record =>
+    clean_(record && record.status).toLowerCase() !== 'confirmed'
+  );
+
+  const operatorCounts = {};
+  todayRecords.forEach(record => {
+    const login = clean_(record && record.operator_login).toLowerCase();
+    if (!login) return;
+    operatorCounts[login] = Number(operatorCounts[login] || 0) + 1;
+  });
+
+  const sortedToday = todayRecords.slice().sort((a, b) =>
+    Number(b && b.received_at || 0) - Number(a && a.received_at || 0)
+  );
+
+  const rowsHtml = sortedToday.map(record =>
+    '<tr>' +
+      '<td>' + dashboardHtmlEscape_(dashboardFormatMillis_(record.received_at)) + '</td>' +
+      '<td><strong>' + dashboardHtmlEscape_(record.shipment_id) + '</strong></td>' +
+      '<td>' + dashboardHtmlEscape_(record.reason) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(record.driver_id) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(record.driver_name) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(record.agency) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(record.neighborhood) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(dashboardFormatSeconds_(record.occurrence_timestamp)) + '</td>' +
+      '<td>' + dashboardHtmlEscape_(record.operator_login || 'Não identificado') + '</td>' +
+    '</tr>'
+  ).join('');
+
+  const operatorOptionsHtml = Object.keys(operatorCounts)
+    .sort()
+    .map(login =>
+      '<option value="' + dashboardHtmlEscape_(login) + '" data-count="' +
+      operatorCounts[login] + '">' +
+      dashboardHtmlEscape_(login) + ' (' + operatorCounts[login] + ')' +
+      '</option>'
+    ).join('');
+
+  const warningHtml = source.ok === false && source.error
+    ? '<div class="warning">Falha ao carregar dados do Dashboard: ' +
+        dashboardHtmlEscape_(source.error) +
+      '</div>'
+    : (oldPending.length
+        ? '<div class="warning">⚠ ' + oldPending.length +
+          ' pendência(s) de dias anteriores.</div>'
+        : '');
+
+  return {
+    ok: source.ok !== false,
+    error: clean_(source.error),
+    build: SPX_DV_BUILD,
+    revision: dashboardRevisionValue_(),
+    build_info:
+      'servidor ' + SPX_DV_BUILD +
+      ' · base ' + records.length +
+      ' · hoje ' + todayRecords.length,
+    rows_html: rowsHtml,
+    top_html: dashboardTopDriversHtml_(todayRecords),
+    operator_options_html: operatorOptionsHtml,
+    warning_html: warningHtml,
+    today_count: todayRecords.length,
+    pending_today_count: pendingToday.length,
+    old_pending_count: oldPending.length,
+    operators_count: Object.keys(operatorCounts).length,
+    all_pending_count: allPending.length,
+    confirmed_today_count: confirmedToday.length
+  };
+}
+
+function getDashboardLiveState() {
+  try {
+    return dashboardLiveState_(getDashboardData());
+  } catch (error) {
+    return {
+      ok: false,
+      build: SPX_DV_BUILD,
+      revision: dashboardRevisionValue_(),
+      error: String(error && error.message ? error.message : error)
+    };
+  }
 }
 
 function sendPendingDashboardToData() {
@@ -1197,6 +1309,7 @@ function clearConfirmedDashboard() {
       }
     }
 
+    if (removed) touchDashboardRevision_();
     return { ok: true, removed };
   } finally {
     lock.releaseLock();
@@ -1392,10 +1505,11 @@ function dashboardHtml_(initialData) {
     .join('');
 
   const serverTopDriversHtml = dashboardTopDriversHtml_(todayRecords);
-  const serverBuildInfo =
-    'servidor ' + SPX_DV_BUILD +
-    ' · base ' + records.length +
-    ' · hoje ' + todayRecords.length;
+  const serverBuildInfo = data.loading
+    ? 'servidor ' + SPX_DV_BUILD + ' · carregando dados atuais...'
+    : 'servidor ' + SPX_DV_BUILD +
+      ' · base ' + records.length +
+      ' · hoje ' + todayRecords.length;
 
   const serverWarningHtml = data.ok === false && data.error
     ? '<div class="warning">Falha ao carregar dados do Dashboard: ' +
@@ -1426,7 +1540,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </style>
 </head>
 <body><main>
-<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila · <span id="buildInfo">${dashboardHtmlEscape_(serverBuildInfo)}</span></div></div><div><div class="actions"><button id="sendPending" class="primary"${allPending.length ? '' : ' disabled'}>Enviar ${allPending.length} em massa</button><button id="clearConfirmed" class="danger"${confirmedToday.length ? '' : ' disabled'}>Limpar já enviados</button><button id="refresh" type="button">Atualizar</button></div><div id="actionStatus" class="action-status"></div></div></header>
+<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila · <span id="buildInfo">${dashboardHtmlEscape_(serverBuildInfo)}</span></div></div><div><div class="actions"><button id="sendPending" class="primary" data-count="${allPending.length}"${allPending.length ? '' : ' disabled'}>Enviar ${allPending.length} em massa</button><button id="clearConfirmed" class="danger" data-count="${confirmedToday.length}"${confirmedToday.length ? '' : ' disabled'}>Limpar já enviados</button><button id="refresh" type="button">Atualizar</button></div><div id="actionStatus" class="action-status"></div></div></header>
 <div id="warning">${serverWarningHtml}</div>
 <section class="metrics">
 <div class="metric"><span>Recebidos hoje</span><strong id="mTotal">${todayRecords.length}</strong></div>
@@ -1536,19 +1650,122 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     if(el) el.textContent=String(message || '');
   }
 
+  var liveRevision=0;
+  var liveLoading=false;
+  var revisionLoading=false;
+
+  function applyLiveState(state){
+    if(!state || state.ok===false){
+      setStatus('Falha ao atualizar: '+String(state && state.error || 'resposta inválida'));
+      return;
+    }
+
+    liveRevision=Number(state.revision || liveRevision || 0);
+
+    var buildInfo=byId('buildInfo');
+    if(buildInfo) buildInfo.textContent=String(state.build_info || 'servidor '+String(state.build || ''));
+
+    var rowsBody=byId('rows');
+    if(rowsBody) rowsBody.innerHTML=String(state.rows_html || '');
+
+    var top=byId('topDrivers');
+    if(top) top.innerHTML=String(state.top_html || '');
+
+    var warning=byId('warning');
+    if(warning) warning.innerHTML=String(state.warning_html || '');
+
+    var total=Number(state.today_count || 0);
+    var pending=Number(state.pending_today_count || 0);
+    var oldPending=Number(state.old_pending_count || 0);
+    var operators=Number(state.operators_count || 0);
+    var allPending=Number(state.all_pending_count || 0);
+    var confirmed=Number(state.confirmed_today_count || 0);
+
+    if(byId('mTotal')) byId('mTotal').textContent=String(total);
+    if(byId('mPending')) byId('mPending').textContent=String(pending);
+    if(byId('mOld')) byId('mOld').textContent=String(oldPending);
+    if(byId('mOperators')) byId('mOperators').textContent=String(operators);
+
+    var operator=byId('operator');
+    if(operator){
+      var selected=operator.value;
+      operator.innerHTML='<option value="" data-count="'+total+'">Todos os operadores ('+total+')</option>'+
+        String(state.operator_options_html || '');
+      if(selected && Array.prototype.some.call(operator.options,function(option){ return option.value===selected; })){
+        operator.value=selected;
+      }
+    }
+
+    var send=byId('sendPending');
+    if(send){
+      send.setAttribute('data-count',String(allPending));
+      send.textContent='Enviar '+allPending+' em massa';
+      send.disabled=allPending===0;
+    }
+
+    var clear=byId('clearConfirmed');
+    if(clear){
+      clear.setAttribute('data-count',String(confirmed));
+      clear.disabled=confirmed===0;
+    }
+
+    applyFilters();
+  }
+
+  function refreshDashboardLive(showStatus){
+    if(liveLoading) return;
+    if(!(window.google && google.script && google.script.run)){
+      setStatus('Atualização automática indisponível nesta página.');
+      return;
+    }
+
+    liveLoading=true;
+    if(showStatus) setStatus('Atualizando dados atuais...');
+
+    google.script.run
+      .withSuccessHandler(function(state){
+        liveLoading=false;
+        applyLiveState(state);
+        if(showStatus && state && state.ok!==false) setStatus('Atualizado.');
+      })
+      .withFailureHandler(function(error){
+        liveLoading=false;
+        setStatus('Falha ao atualizar: '+String(error && error.message || error));
+      })
+      .getDashboardLiveState();
+  }
+
+  function pollDashboardRevision(){
+    if(document.hidden || revisionLoading || liveLoading) return;
+    if(!(window.google && google.script && google.script.run)) return;
+
+    revisionLoading=true;
+    google.script.run
+      .withSuccessHandler(function(result){
+        revisionLoading=false;
+        var revision=Number(result && result.revision || 0);
+        if(!liveRevision || (revision && revision!==liveRevision)){
+          refreshDashboardLive(false);
+        }
+      })
+      .withFailureHandler(function(){
+        revisionLoading=false;
+      })
+      .getDashboardRevision();
+  }
+
   function bindActionButtons(){
     var refresh=byId('refresh');
     if(refresh){
       refresh.addEventListener('click',function(){
-        setStatus('Atualizando...');
-        window.location.reload();
+        refreshDashboardLive(true);
       });
     }
 
     var send=byId('sendPending');
     if(send){
       send.addEventListener('click',function(){
-        var count=Number('${allPending.length}');
+        var count=Number(send.getAttribute('data-count') || 0);
         if(!count){ alert('Não há registros na fila para enviar.'); return; }
         if(!confirm('Enviar '+count+' registro(s) em massa para a aba Dados?')) return;
         if(!(window.google && google.script && google.script.run)){
@@ -1562,9 +1779,9 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
             var sent=Number(result && result.sent || 0);
             var duplicates=Number(result && result.duplicates || 0);
             var failed=Number(result && result.failed || 0);
-            setStatus('Concluído: '+sent+' gravados, '+duplicates+' já existentes, '+failed+' falhas.');
+            setStatus('Concluído: '+sent+' gravados, '+duplicates+' já existentes, '+failed+' falhas. Atualizando Dash...');
             alert('Envio concluído.\\nGravados: '+sent+'\\nJá existentes: '+duplicates+'\\nFalhas: '+failed);
-            window.location.reload();
+            refreshDashboardLive(false);
           })
           .withFailureHandler(function(error){
             send.disabled=false;
@@ -1577,7 +1794,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     var clear=byId('clearConfirmed');
     if(clear){
       clear.addEventListener('click',function(){
-        var count=Number('${confirmedToday.length}');
+        var count=Number(clear.getAttribute('data-count') || 0);
         if(!count){ alert('Não há registros já enviados para limpar hoje.'); return; }
         if(!confirm('Limpar '+count+' registro(s) já enviado(s) de hoje?\\n\\nPendências não serão apagadas.')) return;
         if(!(window.google && google.script && google.script.run)){
@@ -1589,8 +1806,8 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
         google.script.run
           .withSuccessHandler(function(result){
             var removed=Number(result && result.removed || 0);
-            setStatus('Limpeza concluída: '+removed+' removidos.');
-            window.location.reload();
+            setStatus('Limpeza concluída: '+removed+' removidos. Atualizando Dash...');
+            refreshDashboardLive(false);
           })
           .withFailureHandler(function(error){
             clear.disabled=false;
@@ -1600,7 +1817,6 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
       });
     }
   }
-
   try{
     var operator=byId('operator');
     var general=byId('generalSearch');
@@ -1613,6 +1829,12 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     if(clearFiltersButton) clearFiltersButton.addEventListener('click',clearFilters);
     bindActionButtons();
     applyFilters();
+    setStatus('Carregando dados atuais...');
+    refreshDashboardLive(false);
+    window.setInterval(pollDashboardRevision,2500);
+    document.addEventListener('visibilitychange',function(){
+      if(!document.hidden) pollDashboardRevision();
+    });
   }catch(error){
     setStatus('Falha ao iniciar controles: '+String(error && error.message || error));
   }
@@ -1740,6 +1962,7 @@ function markDashboardRowsConfirmedBulk_(dashboardSheet, rowNumbers) {
       group.map(() => ['confirmed', now])
     );
   });
+  touchDashboardRevision_();
 }
 
 function setSingleColumnValuesByRows_(sheet, column, assignments) {

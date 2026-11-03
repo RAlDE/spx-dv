@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.56
-Estado: desenvolvimento incremental; 1.3.56 preserva os fluxos anteriores e passa a exibir no cabeçalho o recebimento LMHub atual derivado do tracking do ciclo/ocorrência mais recente; requer validação real.
+Versão atual do módulo: 1.3.57
+Estado: desenvolvimento incremental; 1.3.57 preserva os fluxos anteriores e remove apenas o prefixo visual `BR:` do cabeçalho, mantendo o código do BR e o recebimento derivado do tracking; requer validação real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -2266,3 +2266,17 @@ Importante:
 4. confirmar `Recebido em: 03/11/2026 17:00:25`;
 5. testar um BR com nova ocorrência posterior ao último recebimento e confirmar que o horário antigo não é reutilizado;
 6. depois do novo recebimento, confirmar que o cabeçalho passa para o novo LMHub_Recebido.
+
+
+## Atualização 1.3.57 — remover prefixo BR: do cabeçalho
+Ajuste visual solicitado:
+- na caixa **Rastreio do pedido**, não mostrar o texto `BR:` antes do código;
+- mostrar somente o próprio código do pedido, por exemplo `BR123...`;
+- manter `Recebido em: <data/hora>` logo abaixo;
+- nenhuma lógica de rastreio, recebimento, Dashboard, Return, Bairro ou Dados foi alterada.
+
+Validação técnica:
+- sintaxe do `assistente.js` validada;
+- Apps Script recebe apenas bump de build para compatibilidade do health;
+- módulo, Apps Script e catálogo alinhados em 1.3.57;
+- validação visual real ainda pendente.

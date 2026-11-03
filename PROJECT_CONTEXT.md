@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-11-03
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.59
-Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em ambiente real; 1.3.59 preserva esse envio e torna o Dashboard autoatualizável, com abertura leve e sem reload após enviar/limpar; requer validação real da atualização ao vivo.
+Versão atual do módulo: 1.3.60
+Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em ambiente real; 1.3.60 preserva a arquitetura ao vivo da 1.3.59 e reorganiza visualmente o Top 10 para leitura horizontal, com números brancos e destaque leve nos 3 primeiros; requer validação visual real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -12,7 +12,7 @@ Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em am
 Se uma nova conversa for aberta, começar por este resumo antes de propor qualquer alteração:
 
 - repositório correto: `RAlDE/spx-dv`; não misturar com SPX OnHold;
-- versão alinhada atual: módulo `1.3.59`, `DASHBOARD_SYNC_GENERATION 1.3.59`, Apps Script build `1.3.59`, catálogo `1.3.59`;
+- versão alinhada atual: módulo `1.3.60`, `DASHBOARD_SYNC_GENERATION 1.3.60`, Apps Script build `1.3.60`, catálogo `1.3.60`;
 - captura normal continua autoritativa por `POST /api/in-station/uni_receive/order` com `retcode=0`;
 - exceção controlada: `Endereço não encontrado` entra no Dashboard somente após cancelamento confirmado, conforme v1.3.53;
 - Dashboard atual possui Top 10, filtro por login com quantidade, busca geral e filtros por coluna dentro do próprio Dash;
@@ -24,7 +24,7 @@ Se uma nova conversa for aberta, começar por este resumo antes de propor qualqu
 - envio atual do Dash é em massa: carrega controle uma vez, planeja linhas vazias em lote, grava C:G e I:J por matrizes, preserva A/B/H e linhas verdes, grava controle/status em blocos;
 - em 03/11/2026 foram removidos diretamente da `_SPX_DV_DASHBOARD` todos os registros anteriores a 03/11, após confirmação do usuário de que a planilha já estava atualizada: 4.149 pendências antigas + 57 confirmados antigos; ficaram 1.379 registros de 03/11;
 - o envio em massa da 1.3.58 foi confirmado pelo usuário em ambiente real: todos os dados chegaram corretamente à planilha em bloco;
-- a 1.3.59 ainda exige validação real da abertura leve, atualização automática e pós-envio sem página branca; não chamar 1.3.59 de estável antes desse teste.
+- a arquitetura ao vivo da 1.3.59 e o novo visual do Top 10 da 1.3.60 ainda exigem validação real; não chamar 1.3.60 de estável antes desses testes.
 
 Esta seção é a fonte principal para retomar o projeto em uma conversa nova. O restante deste arquivo mantém o histórico cronológico das versões e decisões anteriores. Quando houver divergência entre uma seção antiga e este resumo, **prevalece o estado atual descrito aqui**, salvo se uma versão posterior documentar explicitamente uma nova mudança.
 
@@ -2441,3 +2441,42 @@ Problemas observados:
 5. testar filtros durante atualização;
 6. enviar em massa e confirmar que a página não fica branca;
 7. testar Atualizar sem navegação completa.
+
+
+## Atualização 1.3.60 — redesign do Top 10
+
+Ajuste visual aprovado pelo usuário antes da implementação:
+- remover cabeçalhos de ocorrências inclinados/verticais;
+- deixar cada nome de ocorrência em leitura horizontal, com quebra natural em 2 ou mais linhas dentro da própria coluna;
+- deixar os nomes das ocorrências em branco;
+- deixar o valor de Total em branco;
+- deixar os números das ocorrências em branco e negrito;
+- usar laranja apenas como detalhe visual de borda/identidade;
+- destacar somente a célula de Ranking dos 3 primeiros com vermelho bem leve, sem pintar a linha inteira.
+
+### Implementação
+- cabeçalho do Top 10 usa fundo escuro uniforme e borda superior discreta laranja;
+- colunas de ocorrência passam a ter aproximadamente 112–145 px, com texto centralizado e quebra de linha;
+- removido `transform: rotate(-52deg)`;
+- `.reason-count` agora usa branco;
+- `.total-col` agora usa branco;
+- `.reason-head>span` agora usa branco;
+- os 3 primeiros recebem classe `top-three-rank` apenas na célula Ranking;
+- o destaque usa vermelho translúcido leve, mantendo o número branco;
+- Driver, ID e 3PL mantêm o padrão existente.
+
+### O que NÃO mudou
+- cálculo do Top 10;
+- motivos e contagens;
+- Dashboard ao vivo da 1.3.59;
+- filtros;
+- envio em massa;
+- captura/recebimento;
+- Bairro/Return/tracking;
+- planilha Dados.
+
+### Validação
+- sintaxe do Apps Script validada;
+- sintaxe do módulo validada;
+- módulo, sync generation, Apps Script e catálogo alinhados em 1.3.60;
+- validação visual real ainda pendente.

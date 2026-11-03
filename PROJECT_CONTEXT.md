@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-11-03
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.57
-Estado: desenvolvimento incremental; 1.3.57 preserva os fluxos anteriores e remove apenas o prefixo visual `BR:` do cabeçalho, mantendo o código do BR e o recebimento derivado do tracking; requer validação real.
+Versão atual do módulo: 1.3.58
+Estado: desenvolvimento incremental; 1.3.58 preserva os fluxos anteriores, mantém o cabeçalho da 1.3.57 e troca o envio do Dashboard para gravação em massa por blocos na aba Dados; pendências antigas foram limpas manualmente em 03/11/2026, restando somente as de hoje; requer validação real do envio em massa.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -12,7 +12,7 @@ Estado: desenvolvimento incremental; 1.3.57 preserva os fluxos anteriores e remo
 Se uma nova conversa for aberta, começar por este resumo antes de propor qualquer alteração:
 
 - repositório correto: `RAlDE/spx-dv`; não misturar com SPX OnHold;
-- versão alinhada atual: módulo `1.3.57`, `DASHBOARD_SYNC_GENERATION 1.3.57`, Apps Script build `1.3.57`, catálogo `1.3.57`;
+- versão alinhada atual: módulo `1.3.58`, `DASHBOARD_SYNC_GENERATION 1.3.58`, Apps Script build `1.3.58`, catálogo `1.3.58`;
 - captura normal continua autoritativa por `POST /api/in-station/uni_receive/order` com `retcode=0`;
 - exceção controlada: `Endereço não encontrado` entra no Dashboard somente após cancelamento confirmado, conforme v1.3.53;
 - Dashboard atual possui Top 10, filtro por login com quantidade, busca geral e filtros por coluna dentro do próprio Dash;
@@ -21,7 +21,9 @@ Se uma nova conversa for aberta, começar por este resumo antes de propor qualqu
 - o `received_at` do Dashboard normal continua vindo do `receive_time` da API real, separado da informação visual do cabeçalho;
 - Return no painel deve aparecer como `Motorista: NOME` + `ID: ID`; internamente continua Return e não recebe 3PL inventada;
 - Bairro: geocoder é prioridade; se não resolver, usar **Bairro Principal** da Assignment Task da ocorrência; se ainda falhar, `Atualizar base`;
-- alterações mais recentes ainda exigem validação real no SPX; não chamar 1.3.57 de estável sem teste real.
+- envio atual do Dash é em massa: carrega controle uma vez, planeja linhas vazias em lote, grava C:G e I:J por matrizes, preserva A/B/H e linhas verdes, grava controle/status em blocos;
+- em 03/11/2026 foram removidos diretamente da `_SPX_DV_DASHBOARD` todos os registros anteriores a 03/11, após confirmação do usuário de que a planilha já estava atualizada: 4.149 pendências antigas + 57 confirmados antigos; ficaram 1.379 registros de 03/11;
+- alterações mais recentes ainda exigem validação real no SPX; não chamar 1.3.58 de estável sem teste real.
 
 Esta seção é a fonte principal para retomar o projeto em uma conversa nova. O restante deste arquivo mantém o histórico cronológico das versões e decisões anteriores. Quando houver divergência entre uma seção antiga e este resumo, **prevalece o estado atual descrito aqui**, salvo se uma versão posterior documentar explicitamente uma nova mudança.
 
@@ -2302,3 +2304,79 @@ Validação técnica:
 - Apps Script recebe apenas bump de build para compatibilidade do health;
 - módulo, Apps Script e catálogo alinhados em 1.3.57;
 - validação visual real ainda pendente.
+
+
+## Atualização 1.3.58 — envio em massa do Dashboard + limpeza das pendências antigas
+
+Solicitação operacional:
+- o botão do Dash deve enviar muitos BRs como um bloco, equivalente ao efeito de copiar uma tabela inteira e colar de uma vez, e não ficar processando célula por célula/BR por BR;
+- limpar as pendências antigas porque a aba Dados já foi atualizada manualmente;
+- deixar no Dashboard somente as pendências de 03/11/2026.
+
+### Limpeza real executada antes da mudança de código
+Leitura direta da aba oculta `_SPX_DV_DASHBOARD` confirmou:
+- 5.585 registros totais antes da limpeza;
+- 4.149 pendências antigas;
+- 57 registros antigos já confirmados;
+- 1.379 pendências de 03/11/2026;
+- 0 confirmados de 03/11 no momento da leitura.
+
+Distribuição das pendências antigas:
+- 28/10: 38;
+- 29/10: 747;
+- 30/10: 813;
+- 31/10: 1.137;
+- 01/11: 790;
+- 02/11: 624.
+
+Como o usuário confirmou que Dados já estava atualizado, foram removidas as linhas anteriores a 03/11 da fila central.
+Verificação pós-limpeza:
+- 1.379 registros restantes;
+- 1.379 de 03/11/2026;
+- 0 registros antigos.
+
+Essa foi uma limpeza operacional explícita solicitada pelo usuário, não uma mudança automática da regra histórica de retenção.
+
+### Causa da lentidão antiga
+`sendPendingDashboardToData()` processava cada ficha individualmente e fazia várias chamadas ao Google Sheets para cada BR:
+- busca individual de duplicidade;
+- busca de linha gravável;
+- escrita C:G;
+- escrita I:J;
+- `SpreadsheetApp.flush()`;
+- leitura de confirmação da coluna C;
+- gravação individual no controle;
+- alteração individual de status no Dashboard.
+
+### Novo envio em massa
+A função continua `sendPendingDashboardToData()`, mas agora:
+1. carrega as chaves de `_SPX_DV_CONTROLE` uma única vez;
+2. carrega a cache de Bairro uma única vez;
+3. classifica duplicados/válidos/falhas em memória;
+4. recalcula o início do lote pelo último separador verde;
+5. localiza todas as linhas vazias necessárias em scans de blocos;
+6. agrupa destinos consecutivos;
+7. grava C:G por matriz e I:J por matriz para cada grupo consecutivo;
+8. confirma a coluna C do grupo em uma leitura única;
+9. grava o controle em bloco;
+10. atualiza os status do Dashboard em blocos consecutivos.
+
+### Regras preservadas
+- C continua sendo a referência de ocupação;
+- linha verde continua sendo separador e nunca recebe BR;
+- nova linha verde encontrada durante o scan invalida vagas anteriores;
+- entradas manuais com C preenchida são preservadas;
+- A, B e H não são escritas;
+- duplicidade continua sendo occurrence_key BR + timestamp via `_SPX_DV_CONTROLE`;
+- filtros, Top 10, tracking, Return, Bairro e regras de recebimento não foram alterados.
+
+### Interface
+O botão passa a exibir `Enviar X em massa`.
+
+### Validação
+- sintaxe do Apps Script validada antes do commit;
+- sintaxe do módulo validada;
+- módulo, sync generation, Apps Script e catálogo alinhados em 1.3.58;
+- a limpeza da fila antiga foi validada diretamente na planilha;
+- o envio em massa ainda requer teste real pelo botão do Dashboard;
+- não chamar 1.3.58 de estável antes desse teste.

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.54';
+  const MODULE_VERSION = '1.3.55';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -34,7 +34,7 @@
   const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.54';
+  const DASHBOARD_SYNC_GENERATION = '1.3.55';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
@@ -3289,13 +3289,13 @@
           id: String(attempt?.return_operator_id || '').trim(),
           name: String(attempt?.return_operator_name || '').trim()
         };
-        const operatorLine = identity.name
-          ? '<b>Operador:</b> ' + escapeHtml(identity.name) +
+        const driverLine = identity.name
+          ? '<b>Motorista:</b> ' + escapeHtml(identity.name) +
             (identity.id
               ? '<br><span class="driver-code"><b>ID:</b> ' + escapeHtml(identity.id) + '</span>'
               : '')
-          : 'Ocorrência do retorno';
-        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${operatorLine}${neighborhoodLine}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
+          : 'Motorista não identificado';
+        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${driverLine}${neighborhoodLine}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
       }
       const agency = String(attempt?.assignment_agency || '').trim();
       const agencyInline = agency ? ` <span class="driver-code">${escapeHtml(agency)}</span>` : '';

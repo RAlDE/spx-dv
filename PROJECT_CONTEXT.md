@@ -2380,3 +2380,18 @@ O botão passa a exibir `Enviar X em massa`.
 - a limpeza da fila antiga foi validada diretamente na planilha;
 - o envio em massa ainda requer teste real pelo botão do Dashboard;
 - não chamar 1.3.58 de estável antes desse teste.
+
+
+### Regra de colagem em massa — equivalente a Ctrl+Shift+V
+Confirmação operacional do usuário:
+- o envio em massa deve equivaler a **colar somente valores** (`Ctrl+Shift+V`);
+- não deve copiar formatação de origem;
+- não deve limpar ou substituir cores, bordas, validações, largura de coluna, filtros ou demais configurações da aba `Dados`;
+- a escrita deve alterar apenas o conteúdo das células-alvo em C:G e I:J;
+- A, B e H permanecem intocadas;
+- não usar `copyPaste`/cópia completa de células para esse fluxo;
+- manter `setValues()` como mecanismo de escrita em massa, pois ele grava os valores sem transportar formatação.
+
+Observação:
+- se uma célula-alvo possuir fórmula, a gravação de um valor substitui o conteúdo daquela célula, como já ocorria no fluxo anterior e conforme a regra existente do projeto;
+- fora das células efetivamente preenchidas, nenhuma configuração da planilha deve ser alterada.

@@ -2,8 +2,8 @@
 
 Atualizado em: 2026-10-29
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.54
-Estado: desenvolvimento incremental; 1.3.54 preserva os fluxos anteriores e ajusta apresentação do painel, fallback de Bairro Principal da AT e formatação do operador Return; requer validação real desses ajustes.
+Versão atual do módulo: 1.3.55
+Estado: desenvolvimento incremental; 1.3.55 preserva os fluxos anteriores e ajusta o card Return para exibir Motorista + ID no mesmo padrão visual dos pedidos normais; requer validação real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
 
@@ -2159,3 +2159,30 @@ A ocorrência continua semanticamente sendo **Operador de Return**, não motoris
 5. abrir um BR Return cujo operador venha no formato `[ID]NOME` e conferir:
    - `Operador: NOME`;
    - `ID: ID`.
+
+
+## Atualização 1.3.55 — Return exibido como Motorista no painel
+Correção de entendimento da v1.3.54:
+- o usuário confirmou que, na caixa **Rastreio do pedido**, ocorrências Return não devem aparecer como `Operador`;
+- devem seguir o mesmo padrão visual dos pedidos normais.
+
+Agora, quando o tracking Return traz:
+`[2900390]SCHAIANE DE LIMA WERNER`
+
+o painel mostra:
+- `Motorista: SCHAIANE DE LIMA WERNER`;
+- `ID: 2900390`.
+
+A separação do valor bruto `[ID]NOME` continua sendo feita pela lógica introduzida na 1.3.54.
+
+Importante:
+- esta mudança é de apresentação do card Return;
+- o fluxo interno continua classificado como Return;
+- não foi adicionada 3PL/transportadora inventada para ocorrência sintética Return;
+- não foi alterada a captura, Dashboard, deduplicação, recomendação, Bairro ou envio para Dados.
+
+Validação técnica:
+- sintaxe do `assistente.js` validada antes do commit;
+- Apps Script recebe somente bump de build para compatibilidade do `health`;
+- módulo, Apps Script e catálogo alinhados em 1.3.55;
+- validação real no SPX ainda pendente.

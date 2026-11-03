@@ -1,11 +1,27 @@
 # PROJECT_CONTEXT — SPX-DV
 
-Atualizado em: 2026-10-29
+Atualizado em: 2026-11-03
 Repositório: RAlDE/spx-dv
 Versão atual do módulo: 1.3.57
 Estado: desenvolvimento incremental; 1.3.57 preserva os fluxos anteriores e remove apenas o prefixo visual `BR:` do cabeçalho, mantendo o código do BR e o recebimento derivado do tracking; requer validação real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
+
+
+### Handoff atual — resumo obrigatório para nova conversa (v1.3.57)
+Se uma nova conversa for aberta, começar por este resumo antes de propor qualquer alteração:
+
+- repositório correto: `RAlDE/spx-dv`; não misturar com SPX OnHold;
+- versão alinhada atual: módulo `1.3.57`, `DASHBOARD_SYNC_GENERATION 1.3.57`, Apps Script build `1.3.57`, catálogo `1.3.57`;
+- captura normal continua autoritativa por `POST /api/in-station/uni_receive/order` com `retcode=0`;
+- exceção controlada: `Endereço não encontrado` entra no Dashboard somente após cancelamento confirmado, conforme v1.3.53;
+- Dashboard atual possui Top 10, filtro por login com quantidade, busca geral e filtros por coluna dentro do próprio Dash;
+- cabeçalho da caixa mostra **somente o código BR**; abaixo mostra `Recebido em`;
+- o `Recebido em` visual vem do `tracking_info`: LMHub_Recebido posterior à última ocorrência do ciclo atual; se houver nova ocorrência sem novo recebimento, mostrar `—`;
+- o `received_at` do Dashboard normal continua vindo do `receive_time` da API real, separado da informação visual do cabeçalho;
+- Return no painel deve aparecer como `Motorista: NOME` + `ID: ID`; internamente continua Return e não recebe 3PL inventada;
+- Bairro: geocoder é prioridade; se não resolver, usar **Bairro Principal** da Assignment Task da ocorrência; se ainda falhar, `Atualizar base`;
+- alterações mais recentes ainda exigem validação real no SPX; não chamar 1.3.57 de estável sem teste real.
 
 Esta seção é a fonte principal para retomar o projeto em uma conversa nova. O restante deste arquivo mantém o histórico cronológico das versões e decisões anteriores. Quando houver divergência entre uma seção antiga e este resumo, **prevalece o estado atual descrito aqui**, salvo se uma versão posterior documentar explicitamente uma nova mudança.
 
@@ -33,8 +49,9 @@ Regras que não podem ser quebradas:
   `POST /api/in-station/uni_receive/order`
 - somente considerar recebido quando `retcode = 0`;
 - a resposta real fornece `data.task_operator` e `data.order_list[]` com `shipment_id` e `receive_time`;
-- `received_at` deve vir do `receive_time` do próprio SPX;
-- o Dashboard recebe somente ocorrências realmente recebidas;
+- no fluxo normal, `received_at` deve vir do `receive_time` do próprio SPX;
+- exceção controlada: `Endereço não encontrado` cancelado com sucesso segue a regra documentada na v1.3.53;
+- o Dashboard recebe somente ocorrências realmente recebidas ou a exceção controlada de Endereço não encontrado após cancelamento confirmado;
 - a aba `Dados` não recebe automaticamente por bip/Enter; a gravação é feita pelo botão explícito do Dashboard.
 
 ### Dashboard central e Apps Script
@@ -158,7 +175,7 @@ A AT é consultada por:
 Payload:
 `{ assignment_task_id, pageno: 1, count: 20, search_type: 0 }`
 
-A resposta fornece AT, motorista/Driver ID e agência/3PL. O módulo usa cache de AT e valida Driver ID. Em ocorrência sintética de Return, mostrar Operador quando disponível; não inventar motorista/3PL.
+A resposta fornece AT, motorista/Driver ID e agência/3PL. O módulo usa cache de AT e valida Driver ID. No painel, ocorrência sintética de Return deve aparecer no mesmo padrão visual dos demais cards, como `Motorista: NOME` e `ID: ID`, extraindo `[ID]NOME` quando necessário. Internamente o fluxo continua sendo Return e não se deve inventar 3PL/transportadora para ele.
 
 ### Bairro — arquitetura atual
 A solução por exportação CSV foi uma etapa intermediária e **não é mais a fonte principal**.
@@ -186,11 +203,13 @@ Conversão atual:
 
 O geocoder recebe somente latitude/longitude arredondadas; não recebe BR, nome, telefone ou endereço. O SPX-DV não persiste/cacheia o resultado do Google Maps no Apps Script.
 
-Fallback atual a partir da v1.3.41:
-- normal: pode tentar a cache central antiga `_SPX_DV_BAIRROS` se geolocalização/geocoder falhar;
-- Return: **não usa mais `show_sensitive_data` nem qualquer campo sensível como fallback**;
-- se o Bairro não for resolvido, o valor operacional passa a ser `Atualizar base`;
-- `Atualizar base` segue normalmente para Dashboard e para `Dados`, como qualquer outro valor de Bairro;
+Fallback atual:
+- fonte principal continua sendo `trade_info -> coordenadas -> ?view=geo -> reverse geocoding`;
+- normal: a função geográfica ainda pode aproveitar a cache central antiga `_SPX_DV_BAIRROS`;
+- desde a v1.3.54, se o resultado final vier vazio ou `Atualizar base`, tentar o **Bairro Principal** da mesma Assignment Task usada para obter motorista/3PL;
+- o campo é detectado semanticamente na resposta de `assignment_task/search/v2` e anexado à ocorrência como `assignment_main_neighborhood`;
+- Return continua sem usar `show_sensitive_data` nem qualquer campo sensível;
+- se nenhuma fonte resolver, o valor operacional permanece `Atualizar base`;
 - a exportação automática de Bairro está **DESLIGADA** (`NEIGHBOR_EXPORT_AUTO_ENABLED = false`);
 - não criar tarefas de exportação de Bairro automaticamente.
 
@@ -225,8 +244,8 @@ Para evitar regressões, cada fonte tem um papel específico:
 
 - `POST /api/in-station/uni_receive/order` -> **recebimento real**.
 - `recipient_info` -> histórico `On_Hold`.
-- `tracking_info` -> ciclo normal/Return, eventos, ATs e contexto operacional.
-- `assignment_task/search/v2` -> motorista/Driver ID/agência da ocorrência.
+- `tracking_info` -> ciclo normal/Return, eventos, ATs, contexto operacional e o `Recebido em` visual da caixa, associado à última ocorrência do ciclo atual.
+- `assignment_task/search/v2` -> motorista/Driver ID/agência da ocorrência e fallback de Bairro Principal.
 - `trade_info` -> coordenadas buyer/seller para Bairro.
 - Apps Script `?view=geo` -> reverse geocoding das coordenadas para nome do Bairro.
 - Dashboard + botão explícito -> única passagem operacional da fila para `Dados`.
@@ -240,7 +259,7 @@ Parâmetros:
 - `reason_id = ER40`
 - `reason_desc = Onhold with Delivery Address Issue`
 
-A integração antiga de planilha relacionada ao cancelamento deve ocorrer apenas após cancelamento real bem-sucedido. Não usar esse fluxo para representar recebimento.
+A integração antiga de planilha relacionada ao cancelamento deve ocorrer apenas após cancelamento real bem-sucedido. Desde a v1.3.53 existe uma exceção controlada para o Dashboard: se a ocorrência real for `Endereço não encontrado`, o módulo guarda o snapshot da ocorrência e somente após `cancel_eo_reason` retornar sucesso reutiliza `captureConfirmedOccurrenceToDashboard()`. Isso não autoriza aceitar genericamente `retcode != 0` como recebimento.
 
 ### Estado das versões mais recentes
 - v1.3.17: separação Return validada em ambiente real.
@@ -263,24 +282,27 @@ A integração antiga de planilha relacionada ao cancelamento deve ocorrer apena
 - v1.3.48: mantém intacta a captura/gravação central validada e simplifica a camada visual: o servidor classifica os registros de hoje, o HTML usa essa classificação pronta e o botão Dash força recarga da versão atual.
 - v1.3.49: elimina `google.script.run` do carregamento de dados do Dashboard; o `doGet(view=dashboard)` já entrega o HTML com o estado inicial embutido e as atualizações usam `dashboard_data` por JSONP.
 - v1.3.50: renderiza no servidor os contadores, operadores e linhas de `Recebimentos de hoje`, para que os dados apareçam mesmo se o JavaScript do Dashboard falhar completamente.
+- v1.3.51: tentativa de filtros server-side por navegação do Web App; causou regressão `script.google.com foi recusada` e foi substituída.
+- v1.3.52: Top 10 e filtros ficam dentro do Dash; filtro por login com quantidade, busca geral e filtros por coluna, sem navegação externa.
+- v1.3.53: inclui no Dashboard o caso especial de `Endereço não encontrado` após cancelamento automático/manual confirmado.
+- v1.3.54: cabeçalho da caixa passa a mostrar código do BR + linha de recebimento; adiciona fallback Bairro Principal da AT e separação de identidade Return.
+- v1.3.55: no painel, Return passa a exibir `Motorista: NOME` + `ID: ID`, no mesmo padrão visual dos pedidos normais.
+- v1.3.56: `Recebido em` visual passa a ser reconstruído do `tracking_info`, usando o LMHub_Recebido posterior à ocorrência atual; novo ciclo invalida recebimento anterior.
+- v1.3.57: remove somente o prefixo visual `BR:`; o cabeçalho mostra apenas o código BR e, abaixo, `Recebido em`.
 
 ### Próximo teste recomendado
-O próximo teste deve validar somente a entrada no Dashboard da v1.3.47, sem ainda alterar retenção mensal nem a regra de envio por dia:
+A referência atual é **v1.3.57**. Antes de qualquer novo desenvolvimento, validar no SPX real os ajustes mais recentes já publicados no Git:
 
-1. atualizar o código do Apps Script com a versão 1.3.47 e **reimplantar a mesma implantação**, preservando a URL `/exec`;
-2. desativar/ativar o módulo e confirmar v1.3.47;
-3. recarregar a tela SPX e verificar que o ícone da aba não fica em loading contínuo;
-4. abrir `D` antes do primeiro recebimento e confirmar que aparece `central_health_ok` com build 1.3.47; se aparecer `central_health_error`, o deploy ativo está antigo/incompatível e não adianta testar recebimento ainda;
-5. fazer um único recebimento real;
-6. confirmar no diagnóstico, em ordem aproximada: `bridge_event` -> `receive_response_seen` -> `receive_success_recognized` -> `receive_queued` -> `process_occurrence_ready` -> `local_saved` -> `central_send_start` -> `central_send_confirmed`;
-7. confirmar o BR no Dashboard com `received_at` do SPX, Login SPX, motivo, motorista/3PL e Bairro;
-8. fazer mais alguns recebimentos rápidos e, se possível, com outro login/perfil, verificando que todos entram no mesmo Dashboard em ordem de horário;
-9. somente depois validar o botão de envio para `Dados`.
-
-Não marcar v1.3.47 como estável até esse teste real.
-
-### Disciplina de continuidade
-Em uma conversa nova, não pedir ao usuário para reexplicar tudo acima. Leia este arquivo e continue do estado atual. Se algo parecer contraditório em seções antigas, procure primeiro a versão mais recente documentada e o código atual antes de propor mudanças.
+1. reimplantar o Apps Script 1.3.57 na **mesma implantação**, preservando a URL `/exec`;
+2. desativar/ativar o módulo e confirmar v1.3.57;
+3. abrir um BR já recebido e confirmar no cabeçalho apenas o código `BR...`, sem o prefixo `BR:`;
+4. confirmar logo abaixo `Recebido em: <data/hora>` reconstruído do tracking;
+5. usar um caso conhecido com `LMHub_Recebido / Single` posterior à ocorrência e conferir a data/hora;
+6. testar um BR que tenha nova ocorrência após um recebimento antigo e confirmar que o horário antigo não é reutilizado;
+7. testar Return no formato bruto `[ID]NOME` e confirmar `Motorista: NOME` + `ID: ID`;
+8. testar Bairro: geocoder como prioridade e Bairro Principal da AT como fallback;
+9. testar `Endereço não encontrado` com cancelamento confirmado e conferir entrada no Dashboard;
+10. não chamar 1.3.57 de estável até esses testes reais passarem.
 
 ## Objetivo
 Extensão Chrome modular usada no fluxo de recebimento/devoluções da SPX. O módulo principal exibe o histórico de tentativas de entrega de um BR, traduz os motivos, mostra motorista/ID/data/hora/foto e gera uma recomendação operacional. Também possui tratamento especial para "Endereço não encontrado".

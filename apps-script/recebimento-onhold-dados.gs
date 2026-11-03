@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.54';
+const SPX_DV_BUILD = '1.3.55';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',

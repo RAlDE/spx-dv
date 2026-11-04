@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-11-03
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.62
+Versão atual do módulo: 1.3.63
 Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em ambiente real; 1.3.60 preserva a arquitetura ao vivo da 1.3.59 e reorganiza visualmente o Top 10 para leitura horizontal, com números brancos e destaque leve nos 3 primeiros; requer validação visual real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
@@ -12,7 +12,7 @@ Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em am
 Se uma nova conversa for aberta, começar por este resumo antes de propor qualquer alteração:
 
 - repositório correto: `RAlDE/spx-dv`; não misturar com SPX OnHold;
-- versão alinhada atual: módulo `1.3.62`, `DASHBOARD_SYNC_GENERATION 1.3.62`, Apps Script build `1.3.62`, catálogo `1.3.62`;
+- versão alinhada atual: módulo `1.3.63`, `DASHBOARD_SYNC_GENERATION 1.3.63`, Apps Script build `1.3.63`, catálogo `1.3.63`;
 - captura normal continua autoritativa por `POST /api/in-station/uni_receive/order` com `retcode=0`;
 - exceção controlada: `Endereço não encontrado` entra no Dashboard somente após cancelamento confirmado, conforme v1.3.53;
 - Dashboard atual possui Top 10, filtro por login com quantidade, busca geral e filtros por coluna dentro do próprio Dash;
@@ -24,7 +24,7 @@ Se uma nova conversa for aberta, começar por este resumo antes de propor qualqu
 - envio atual do Dash é em massa: carrega controle uma vez, planeja linhas vazias em lote, grava C:G e I:J por matrizes, preserva A/B/H e linhas verdes, grava controle/status em blocos;
 - em 03/11/2026 foram removidos diretamente da `_SPX_DV_DASHBOARD` todos os registros anteriores a 03/11, após confirmação do usuário de que a planilha já estava atualizada: 4.149 pendências antigas + 57 confirmados antigos; ficaram 1.379 registros de 03/11;
 - o envio em massa da 1.3.58 foi confirmado pelo usuário em ambiente real: todos os dados chegaram corretamente à planilha em bloco;
-- o parser de Bairro Principal/3PL da AT da 1.3.62 foi validado em ambiente real no BR de referência; a arquitetura ao vivo da 1.3.59 e o visual do Top 10 da 1.3.60 ainda exigem validação real completa antes de chamar a versão corrente de estável.
+- o parser de Bairro Principal/3PL da AT da 1.3.62 foi validado em ambiente real; a 1.3.63 altera a resolução por geolocalização e busca de bairro próximo e ainda exige validação real antes de chamar a versão corrente de estável.
 
 Esta seção é a fonte principal para retomar o projeto em uma conversa nova. O restante deste arquivo mantém o histórico cronológico das versões e decisões anteriores. Quando houver divergência entre uma seção antiga e este resumo, **prevalece o estado atual descrito aqui**, salvo se uma versão posterior documentar explicitamente uma nova mudança.
 
@@ -2604,3 +2604,59 @@ Decisão:
 - não voltar à dependência exclusiva de geolocalização;
 - não reintroduzir a regra que descartava Agência/Bairro por divergência de motorista;
 - sem bump de versão, pois esta atualização registra apenas evidência de validação real, sem alteração de código.
+
+
+## Atualização 1.3.63 — geolocalização confiável + busca de bairro próximo
+
+### Problema observado
+O reverse geocoding podia retornar valores que não são bairros reais, como `Casa 11`, porque a regra antiga priorizava `sublocality_level_1` antes de `neighborhood` e aceitava o primeiro componente sem validar o nome.
+
+### Regra solicitada
+- havendo latitude/longitude válida, procurar um bairro real na coordenada;
+- se não houver, verificar bairros próximos;
+- rejeitar rótulos de unidade/endereço interno;
+- evitar `Atualizar base` quando existe uma alternativa geográfica útil;
+- preservar Bairro Principal da AT como fallback confiável.
+
+### Nova resolução geográfica
+1. `neighborhood` na coordenada exata: confiança alta;
+2. sem neighborhood exato, procurar em quatro direções a 120 m;
+3. se necessário, ampliar para 300 m;
+4. bairro repetido em pelo menos duas direções: confiança média (`nearby_consensus`);
+5. sublocality/resultado próximo isolado: baixa confiança;
+6. área administrativa: último fallback geográfico de baixa confiança.
+
+O Google documenta reverse geocoding como estimativa da localização endereçável mais próxima; por isso a busca próxima usa consenso em vez de aceitar cegamente um único ponto.
+
+### Anti-falso-bairro
+Rejeitar automaticamente padrões como:
+- Casa 11;
+- Apto 12;
+- Bloco A;
+- Lote 5;
+- Quadra 7;
+- Torre B;
+- Unidade 3;
+- números isolados.
+
+### Integração com AT
+O módulo preserva `source` e `confidence`:
+- geo alta/média: usa o bairro geográfico;
+- base central: mantém como fallback confiável;
+- geo baixa: se houver Bairro Principal da AT, a AT substitui;
+- geo baixa sem AT: usa o melhor resultado geográfico em vez de `Atualizar base`;
+- `Atualizar base` fica apenas para falha total/indisponibilidade/zero resultados de todas as fontes.
+
+### Diagnóstico
+Evento `geo_neighborhood_lookup` registra source, confidence, bairro e candidatos com tipo/distância.
+
+### Evidência preservada
+1.3.62 validada em ambiente real no `BR266776089724S`:
+- 3PL `SPXOWNFLEET`;
+- Bairro Principal `Gravata`.
+
+### Validação
+- sintaxe do módulo validada;
+- sintaxe do Apps Script validada;
+- versões alinhadas em 1.3.63;
+- busca espacial e filtro anti-`Casa 11` ainda requerem validação real.

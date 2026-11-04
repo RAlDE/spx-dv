@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.61';
+  const MODULE_VERSION = '1.3.62';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -34,7 +34,7 @@
   const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.61';
+  const DASHBOARD_SYNC_GENERATION = '1.3.62';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
@@ -2319,38 +2319,98 @@
     return beforeAttempt[beforeAttempt.length - 1];
   }
 
+  function assignmentPrimitiveEntriesWithPath(item) {
+    const entries = [];
+    const seen = new WeakSet();
+
+    const walk = (value, path = [], depth = 0) => {
+      if (value === null || value === undefined || depth > 8) return;
+
+      if (Array.isArray(value)) {
+        value.forEach((child, index) => walk(child, path.concat(String(index)), depth + 1));
+        return;
+      }
+
+      if (typeof value === 'object') {
+        if (seen.has(value)) return;
+        seen.add(value);
+        Object.entries(value).forEach(([rawKey, child]) => {
+          walk(child, path.concat(rawKey), depth + 1);
+        });
+        return;
+      }
+
+      const normalizedPath = path
+        .map(part => normalize(part).replace(/[\s_-]+/g, ' ').trim())
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      const leafKey = path.length
+        ? normalize(path[path.length - 1]).replace(/[\s_-]+/g, ' ').trim()
+        : '';
+
+      const text = String(value || '').trim();
+      if (!text) return;
+
+      entries.push({
+        key: leafKey,
+        path: normalizedPath,
+        rawPath: path.join('.'),
+        value: text
+      });
+    };
+
+    walk(item || {});
+    return entries;
+  }
+
   function assignmentPrimitiveValue(item, predicate) {
-    const objects = collectAllObjects(item || {});
-    for (const object of objects) {
-      for (const [rawKey, rawValue] of Object.entries(object || {})) {
-        if (rawValue === null || rawValue === undefined || (rawValue && typeof rawValue === 'object')) continue;
-        const key = normalize(rawKey).replace(/[\\s_-]+/g, ' ').trim();
-        const value = String(rawValue || '').trim();
-        if (!value) continue;
-        if (predicate(key, value, rawKey)) return value;
+    const entries = assignmentPrimitiveEntriesWithPath(item);
+    for (const entry of entries) {
+      if (predicate(entry.key, entry.value, entry.rawPath, entry.path)) {
+        return entry.value;
       }
     }
     return '';
   }
 
   function assignmentMainNeighborhood(item) {
-    return assignmentPrimitiveValue(item, function(key) {
-      return (
-        key === 'bairro principal' ||
-        key === 'main district' ||
-        key === 'main district name' ||
-        key === 'primary district' ||
-        key === 'primary district name' ||
-        key === 'sort code name' ||
-        key === 'main sort code name' ||
-        key === 'primary sort code name' ||
-        (key.includes('bairro') && /principal|main|primary/.test(key)) ||
-        (key.includes('neighborhood') && /principal|main|primary/.test(key)) ||
-        (key.includes('neighbourhood') && /principal|main|primary/.test(key)) ||
-        (key.includes('district') && /principal|main|primary/.test(key)) ||
-        (key.includes('sort code') && /name|principal|main|primary/.test(key))
-      );
-    });
+    const entries = assignmentPrimitiveEntriesWithPath(item);
+    const forbidden = /(?:^| )(city|cidade|municipio|municipality|station|estacao|hub|agency|agencia|driver|motorista)(?: |$)/;
+
+    const score = entry => {
+      const key = String(entry.key || '');
+      const path = String(entry.path || '');
+      if (!entry.value || forbidden.test(path)) return -1;
+
+      if (path === 'bairro principal' || path.endsWith(' bairro principal')) return 100;
+      if (/\b(main|primary|principal) (district|neighborhood|neighbourhood|bairro)( name)?\b/.test(path)) return 95;
+      if (/\b(district|neighborhood|neighbourhood|bairro) (main|primary|principal)( name)?\b/.test(path)) return 94;
+      if (/\b(main|primary|principal) (sort code|sorting code)( name)?\b/.test(path)) return 92;
+      if (/\b(sort code|sorting code) (main|primary|principal)( name)?\b/.test(path)) return 91;
+      if (/\b(sort code name|sorting code name)\b/.test(path)) return 88;
+
+      // Suporta estruturas aninhadas, por exemplo:
+      // main_area: { name: "Gravata" } / district: { name: "Gravata" }.
+      if (/\b(main|primary|principal) (area|zone|region) (name|label|description)\b/.test(path)) return 84;
+      if (/\b(delivery|route) (district|neighborhood|neighbourhood|bairro) (name|label)\b/.test(path)) return 82;
+      if (/\b(district|neighborhood|neighbourhood|bairro) (name|label)\b/.test(path)) return 78;
+
+      // Fallback controlado: não aceita cidade/estação/agency/driver.
+      if (/\b(bairro|district|neighborhood|neighbourhood)\b/.test(path)) return 72;
+      if (key === 'main area' || key === 'primary area' || key === 'principal area') return 68;
+
+      return -1;
+    };
+
+    const ranked = entries
+      .map(entry => ({ entry, score: score(entry) }))
+      .filter(item => item.score >= 0)
+      .sort((a, b) => b.score - a.score);
+
+    return ranked.length ? ranked[0].entry.value : '';
   }
 
   function assignmentAgencyValue(item) {
@@ -2481,7 +2541,13 @@
         assignment_task_id: key,
         agency: result.agency,
         main_neighborhood: result.mainNeighborhood,
-        driver_id: result.driverId
+        driver_id: result.driverId,
+        neighborhood_candidates: result.mainNeighborhood
+          ? []
+          : assignmentPrimitiveEntriesWithPath(item)
+              .filter(entry => /bairro|district|neigh|sort|area|zone|region/i.test(entry.path))
+              .slice(0, 20)
+              .map(entry => ({ path: entry.path, value: entry.value }))
       });
 
       assignmentAgencyCache.set(key, result);

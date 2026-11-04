@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-11-03
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.61
+Versão atual do módulo: 1.3.62
 Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em ambiente real; 1.3.60 preserva a arquitetura ao vivo da 1.3.59 e reorganiza visualmente o Top 10 para leitura horizontal, com números brancos e destaque leve nos 3 primeiros; requer validação visual real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
@@ -12,7 +12,7 @@ Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em am
 Se uma nova conversa for aberta, começar por este resumo antes de propor qualquer alteração:
 
 - repositório correto: `RAlDE/spx-dv`; não misturar com SPX OnHold;
-- versão alinhada atual: módulo `1.3.61`, `DASHBOARD_SYNC_GENERATION 1.3.61`, Apps Script build `1.3.61`, catálogo `1.3.61`;
+- versão alinhada atual: módulo `1.3.62`, `DASHBOARD_SYNC_GENERATION 1.3.62`, Apps Script build `1.3.62`, catálogo `1.3.62`;
 - captura normal continua autoritativa por `POST /api/in-station/uni_receive/order` com `retcode=0`;
 - exceção controlada: `Endereço não encontrado` entra no Dashboard somente após cancelamento confirmado, conforme v1.3.53;
 - Dashboard atual possui Top 10, filtro por login com quantidade, busca geral e filtros por coluna dentro do próprio Dash;
@@ -24,7 +24,7 @@ Se uma nova conversa for aberta, começar por este resumo antes de propor qualqu
 - envio atual do Dash é em massa: carrega controle uma vez, planeja linhas vazias em lote, grava C:G e I:J por matrizes, preserva A/B/H e linhas verdes, grava controle/status em blocos;
 - em 03/11/2026 foram removidos diretamente da `_SPX_DV_DASHBOARD` todos os registros anteriores a 03/11, após confirmação do usuário de que a planilha já estava atualizada: 4.149 pendências antigas + 57 confirmados antigos; ficaram 1.379 registros de 03/11;
 - o envio em massa da 1.3.58 foi confirmado pelo usuário em ambiente real: todos os dados chegaram corretamente à planilha em bloco;
-- a arquitetura ao vivo da 1.3.59, o visual do Top 10 da 1.3.60 e o fallback AT de Bairro/3PL da 1.3.61 ainda exigem validação real completa; não chamar 1.3.61 de estável antes desses testes.
+- a arquitetura ao vivo da 1.3.59, o visual do Top 10 da 1.3.60 e o parser de Bairro Principal da AT da 1.3.62 ainda exigem validação real completa; não chamar 1.3.62 de estável antes desses testes.
 
 Esta seção é a fonte principal para retomar o projeto em uma conversa nova. O restante deste arquivo mantém o histórico cronológico das versões e decisões anteriores. Quando houver divergência entre uma seção antiga e este resumo, **prevalece o estado atual descrito aqui**, salvo se uma versão posterior documentar explicitamente uma nova mudança.
 
@@ -2538,3 +2538,53 @@ Também havia parser rígido para `response.data.list`/campo `agency`, e diverg�
 - sintaxe do Apps Script validada;
 - versões alinhadas em 1.3.61;
 - validação real da AT ainda pendente.
+
+
+## Atualização 1.3.62 — Bairro Principal aninhado na resposta da AT
+
+### Evidência real da 1.3.61
+Teste real com `BR266776089724S`:
+- módulo 1.3.61 carregado;
+- Motorista correto;
+- Agência/3PL correta: `SPXOWNFLEET`;
+- Bairro ainda aparecia como `Atualizar base`.
+
+Isso confirma que tracking -> AT e seleção da linha da AT estão corretos. O problema restante é somente a leitura do campo Bairro Principal.
+
+### Correção
+O parser anterior percorria objetos recursivamente, mas avaliava apenas a chave folha. Em estruturas como `main_district: { name: "Gravata" }`, ele via apenas `name`.
+
+A 1.3.62 adiciona `assignmentPrimitiveEntriesWithPath()`, preservando o caminho completo de propriedades aninhadas.
+
+Prioridade do Bairro:
+1. Bairro Principal explícito;
+2. main/primary/principal district/neighborhood;
+3. main/primary sort code;
+4. sort code name;
+5. main/primary area/zone/region aninhado;
+6. district/neighborhood name como fallback controlado.
+
+São excluídos de propósito caminhos de cidade/city/município, station/estação/hub, agency/agência e driver/motorista, para não confundir `Penha` com `Gravata`.
+
+Se ainda não houver Bairro, o diagnóstico `assignment_lookup_resolved` passa a registrar `neighborhood_candidates` com caminhos/valores relacionados para identificar o campo real sem nova adivinhação.
+
+### Resultado esperado
+`BR266776089724S` / `AT20261102C36Z9`:
+- 3PL: `SPXOWNFLEET`;
+- Bairro: `Gravata`.
+
+### Preservado
+- 3PL validada na 1.3.61;
+- geocoder quando houver coordenadas válidas;
+- Dashboard ao vivo;
+- envio em massa;
+- Top 10;
+- Return;
+- tracking Recebido em;
+- captura normal e Endereço não encontrado.
+
+### Validação
+- sintaxe do módulo validada;
+- sintaxe do Apps Script validada;
+- versões alinhadas em 1.3.62;
+- validação real pendente no mesmo BR.

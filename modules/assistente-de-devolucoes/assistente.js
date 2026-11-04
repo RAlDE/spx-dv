@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.63';
+  const MODULE_VERSION = '1.3.64';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -34,7 +34,7 @@
   const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.63';
+  const DASHBOARD_SYNC_GENERATION = '1.3.64';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
@@ -681,35 +681,59 @@
   async function syncLocalDashboardToCentral(limit = 10) {
     try {
       const store = await readDashboardQueue();
+      const today = saoPauloDay();
+      const maxRecords = Math.max(1, Math.min(50, Number(limit) || 10));
+
       const records = Object.values(store.records || {})
-        .filter(record =>
-          record &&
-          typeof record === 'object' &&
-          record.sync_generation === DASHBOARD_SYNC_GENERATION &&
-          record.central_sync === 'pending'
-        )
+        .filter(record => {
+          if (!record || typeof record !== 'object' || record.central_sync !== 'pending') return false;
+
+          const receivedAt = Number(record.received_at || record.captured_at || 0);
+          const recordDay = String(
+            record.received_day ||
+            (receivedAt > 0 ? saoPauloDay(receivedAt) : '')
+          );
+
+          return recordDay === today;
+        })
         .sort((a, b) => Number(a.received_at || a.captured_at || 0) - Number(b.received_at || b.captured_at || 0))
-        .slice(0, Math.max(1, Math.min(20, Number(limit) || 10)));
+        .slice(0, maxRecords);
 
       if (!records.length) {
-        receiveDiagPush('local_resync_empty', { generation: DASHBOARD_SYNC_GENERATION });
+        receiveDiagPush('local_resync_empty', {
+          generation: DASHBOARD_SYNC_GENERATION,
+          day: today
+        });
         return true;
       }
+
       if (!await ensureCentralHealth(true)) return false;
 
-      receiveDiagPush('local_resync_start', { records: records.length, generation: DASHBOARD_SYNC_GENERATION });
+      receiveDiagPush('local_resync_start', {
+        records: records.length,
+        generation: DASHBOARD_SYNC_GENERATION,
+        original_generations: [...new Set(records.map(record => String(record?.sync_generation || 'legacy')))],
+        day: today
+      });
 
       for (const record of records) {
         const sent = await sendCentralDashboard(record, 'dashboard_upsert');
         if (!sent) {
           await markLocalDashboardCentralSync(record, false);
-          receiveDiagPush('local_resync_stopped', { shipment_id: record.shipment_id || '' });
+          receiveDiagPush('local_resync_stopped', {
+            shipment_id: record.shipment_id || '',
+            original_generation: String(record?.sync_generation || 'legacy')
+          });
           return false;
         }
         await markLocalDashboardCentralSync(record, true);
       }
 
-      receiveDiagPush('local_resync_done', { records: records.length, ok: true });
+      receiveDiagPush('local_resync_done', {
+        records: records.length,
+        ok: true,
+        day: today
+      });
       return true;
     } catch (error) {
       receiveDiagPush('local_resync_error', { error: String(error?.message || error || '') });
@@ -2618,6 +2642,84 @@
     });
   }
 
+
+  async function enrichReturnOccurrencesWithAssignmentAgency(returnOccurrences, tracking, version) {
+    if (!Array.isArray(returnOccurrences) || !returnOccurrences.length || !tracking) {
+      return returnOccurrences || [];
+    }
+
+    const cycles = extractAssignmentDeliveryCycles(tracking);
+    if (!cycles.length) return returnOccurrences;
+
+    const assignmentIds = [...new Set(cycles
+      .map(item => String(item?.assignmentId || '').trim().toUpperCase())
+      .filter(Boolean))];
+
+    if (!assignmentIds.length) return returnOccurrences;
+
+    const results = await Promise.all(assignmentIds.map(async assignmentId => [
+      assignmentId,
+      await fetchAssignmentAgency(assignmentId)
+    ]));
+
+    if (version !== null && version !== undefined && version !== currentRequest) {
+      return returnOccurrences;
+    }
+
+    const byAssignment = new Map(results);
+
+    return returnOccurrences.map(attempt => {
+      const occurrenceTime = Number(attempt?.ctime || 0);
+      const returnDriverId = String(attempt?.return_operator_id || '').trim();
+      if (!occurrenceTime || !returnDriverId) return attempt;
+
+      const candidates = cycles
+        .filter(item => Number(item?.ctime || 0) <= occurrenceTime)
+        .slice()
+        .sort((a, b) => Number(b?.ctime || 0) - Number(a?.ctime || 0));
+
+      let matchedCycle = null;
+      let matchedDetails = null;
+
+      for (const cycle of candidates) {
+        const assignmentId = String(cycle?.assignmentId || '').trim().toUpperCase();
+        if (!assignmentId) continue;
+
+        const details = byAssignment.get(assignmentId);
+        if (!details) continue;
+
+        const cycleDriverId = String(cycle?.driverId || '').trim();
+        const detailsDriverId = String(details?.driverId || '').trim();
+
+        if (
+          cycleDriverId === returnDriverId ||
+          detailsDriverId === returnDriverId
+        ) {
+          matchedCycle = cycle;
+          matchedDetails = details;
+          break;
+        }
+      }
+
+      if (!matchedCycle || !matchedDetails) {
+        return {
+          ...attempt,
+          assignment_agency_return_match: false
+        };
+      }
+
+      return {
+        ...attempt,
+        assignment_task_id: String(matchedCycle.assignmentId || '').trim(),
+        assignment_agency: String(matchedDetails.agency || '').trim(),
+        assignment_agency_id: String(matchedDetails.agencyId || '').trim(),
+        assignment_driver_lookup_name: String(matchedDetails.driverName || '').trim(),
+        assignment_main_neighborhood: String(matchedDetails.mainNeighborhood || '').trim(),
+        assignment_agency_return_match: true
+      };
+    });
+  }
+
   function nodeIsAnyOnhold(node) {
     if (!node || typeof node !== 'object') return false;
     if (String(node?.status ?? '').trim() === '5') return true;
@@ -3088,22 +3190,87 @@
 
   function currentOccurrenceSheetPayload(shipmentId, attempt, returnFlow, neighborhood, operatorLogin = '', receivedAt = 0) {
     const reason = translateReason(attempt?.on_hold_reason__desc);
-    const normalAttempt = !attempt?.return_occurrence;
-    const rawDriverId = normalAttempt ? getDriverId(attempt) : '';
+    const isReturnAttempt = Boolean(attempt?.return_occurrence);
+
+    const rawDriverId = isReturnAttempt
+      ? String(attempt?.return_operator_id || '').trim()
+      : getDriverId(attempt);
+
     const driverId = rawDriverId === 'Não informado' ? '' : rawDriverId;
+    const driverName = isReturnAttempt
+      ? String(attempt?.return_operator_name || '').trim()
+      : String(attempt?.driver_name || '').trim();
+
+    const agency = isReturnAttempt
+      ? (
+          attempt?.assignment_agency_return_match
+            ? String(attempt?.assignment_agency || '').trim()
+            : ''
+        )
+      : String(attempt?.assignment_agency || '').trim();
 
     return {
       shipment_id: String(shipmentId || '').trim().toUpperCase(),
       reason: String(reason || '').trim(),
       driver_id: String(driverId || '').trim(),
-      driver_name: normalAttempt ? String(attempt?.driver_name || '').trim() : '',
-      agency: normalAttempt ? String(attempt?.assignment_agency || '').trim() : '',
+      driver_name: driverName,
+      agency: agency,
       neighborhood: String(neighborhood || '').trim(),
       occurrence_timestamp: Number(attempt?.ctime || 0),
       flow: returnFlow ? 'Return_LMHub' : 'LMHub',
       operator_login: String(operatorLogin || '').trim().toLowerCase(),
       received_at: Number(receivedAt || Date.now())
     };
+  }
+
+
+  async function repairExistingDashboardOccurrence(shipmentId, attempt, returnFlow, neighborhood) {
+    const shipment = String(shipmentId || '').trim().toUpperCase();
+    const occurrenceKey = dataSheetOccurrenceKey(shipment, attempt?.ctime);
+    if (!shipment || !occurrenceKey || !attempt) return false;
+
+    try {
+      const check = await checkCentralDashboardOccurrence(occurrenceKey);
+      if (
+        !check?.ok ||
+        !check?.found ||
+        String(check?.shipment_id || '').trim().toUpperCase() !== shipment
+      ) {
+        return false;
+      }
+
+      const payload = currentOccurrenceSheetPayload(
+        shipment,
+        attempt,
+        returnFlow,
+        neighborhood,
+        '',
+        Number(check?.received_at || Date.now())
+      );
+
+      if (!payload.occurrence_timestamp || !payload.reason) return false;
+
+      const repaired = await sendCentralDashboard(payload, 'dashboard_upsert');
+      if (repaired) {
+        receiveDiagPush('dashboard_existing_repaired', {
+          shipment_id: shipment,
+          occurrence_key: occurrenceKey,
+          flow: payload.flow,
+          driver_id: payload.driver_id,
+          driver_name: payload.driver_name,
+          agency: payload.agency,
+          neighborhood: payload.neighborhood
+        });
+      }
+      return Boolean(repaired);
+    } catch (error) {
+      receiveDiagPush('dashboard_existing_repair_error', {
+        shipment_id: shipment,
+        occurrence_key: occurrenceKey,
+        error: String(error?.message || error || '')
+      });
+      return false;
+    }
   }
 
   async function captureConfirmedOccurrenceToDashboard(shipmentId, attempt, returnFlow, operatorLogin = '', receivedAt = 0, tradeInfo = null, preloadedNeighborhood = '') {
@@ -3278,8 +3445,12 @@
         null
       );
 
+      const returnOccurrencesWithAgency = cycleStart
+        ? await enrichReturnOccurrencesWithAssignmentAgency(returnOccurrences, tracking, null)
+        : returnOccurrences;
+
       const merged = cycleStart
-        ? [...attemptsWithAgency, ...returnOccurrences]
+        ? [...attemptsWithAgency, ...returnOccurrencesWithAgency]
         : attemptsWithAgency;
 
       const visibleAttempts = merged
@@ -3873,10 +4044,15 @@
       const attemptsWithAgency = await enrichAttemptsWithAssignmentAgency(currentAttempts, tracking, version);
       if (version !== currentRequest || shipmentId !== currentShipment) return;
 
+      const returnOccurrencesWithAgency = cycleStart
+        ? await enrichReturnOccurrencesWithAssignmentAgency(returnOccurrences, tracking, version)
+        : returnOccurrences;
+      if (version !== currentRequest || shipmentId !== currentShipment) return;
+
       // Em BR de retorno, juntamos apenas as ocorrências do ciclo iniciado em
       // Retorno_LMHub_Em_Espera / Return_LMHub_Onhold. O histórico normal anterior some.
       // Se houver mais de uma ocorrência de retorno, todas permanecem visíveis.
-      const merged = cycleStart ? [...attemptsWithAgency, ...returnOccurrences] : attemptsWithAgency;
+      const merged = cycleStart ? [...attemptsWithAgency, ...returnOccurrencesWithAgency] : attemptsWithAgency;
       const visibleAttempts = merged
         .filter((item, index, list) => {
           const key = String(item?.ctime || 0) + '|' + normalize(translateReason(item?.on_hold_reason__desc));
@@ -3925,6 +4101,15 @@
           assignmentNeighborhoodFallback
         );
         updatePanelNeighborhood(shipmentId, resolvedNeighborhood);
+
+        if (latestVisibleOccurrence) {
+          void repairExistingDashboardOccurrence(
+            shipmentId,
+            latestVisibleOccurrence,
+            Boolean(cycleStart),
+            resolvedNeighborhood
+          );
+        }
       });
 
       if (address.pending && normalize(latestReason) === 'endereco nao encontrado') {
@@ -4112,10 +4297,10 @@
 
     if (!authorized || !isTargetRoute()) return;
 
-    // Migração local continua válida, mas não dispara replay automático da fila.
-    // Recebimentos novos são enviados individualmente assim que confirmados pelo SPX.
+    // Recupera automaticamente pendências de HOJE, inclusive se foram
+    // criadas por uma geração anterior durante troca de build/rede.
     void ensureDashboardMigration();
-    void ensureCentralHealth();
+    void syncLocalDashboardToCentral(50);
     showPanel('', '<div class="message">Aguardando leitura do BR...</div>');
     checkShipment();
 

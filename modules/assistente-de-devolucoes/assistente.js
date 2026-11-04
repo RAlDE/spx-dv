@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.60';
+  const MODULE_VERSION = '1.3.61';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -34,7 +34,7 @@
   const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.60';
+  const DASHBOARD_SYNC_GENERATION = '1.3.61';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
@@ -2267,7 +2267,17 @@
 
     for (const event of events) {
       const at = assignmentTaskId(event.node?.message);
-      if (at) currentAssignmentId = at;
+
+      if (at) {
+        currentAssignmentId = at;
+        cycles.push({
+          assignmentId: currentAssignmentId,
+          ctime: Number(event.ctime),
+          driverId: '',
+          driverName: '',
+          source: 'tracking_assignment_marker'
+        });
+      }
 
       if (!currentAssignmentId || !nodeRepresentsDelivering(event.node)) continue;
 
@@ -2276,11 +2286,18 @@
         assignmentId: currentAssignmentId,
         ctime: Number(event.ctime),
         driverId: driver.id,
-        driverName: driver.name
+        driverName: driver.name,
+        source: 'tracking_delivering'
       });
     }
 
-    return cycles;
+    return cycles.filter((item, index, list) =>
+      list.findIndex(other =>
+        other.assignmentId === item.assignmentId &&
+        Number(other.ctime || 0) === Number(item.ctime || 0) &&
+        String(other.source || '') === String(item.source || '')
+      ) === index
+    );
   }
 
   function assignmentCycleForAttempt(attempt, cycles) {
@@ -2302,31 +2319,128 @@
     return beforeAttempt[beforeAttempt.length - 1];
   }
 
-  function assignmentMainNeighborhood(item) {
+  function assignmentPrimitiveValue(item, predicate) {
     const objects = collectAllObjects(item || {});
-    const candidates = [];
+    for (const object of objects) {
+      for (const [rawKey, rawValue] of Object.entries(object || {})) {
+        if (rawValue === null || rawValue === undefined || (rawValue && typeof rawValue === 'object')) continue;
+        const key = normalize(rawKey).replace(/[\\s_-]+/g, ' ').trim();
+        const value = String(rawValue || '').trim();
+        if (!value) continue;
+        if (predicate(key, value, rawKey)) return value;
+      }
+    }
+    return '';
+  }
 
-    objects.forEach(function(object) {
-      Object.entries(object || {}).forEach(function(entry) {
-        const key = String(entry[0] || '');
-        const value = entry[1];
-        if (value === null || value === undefined || (value && typeof value === 'object')) return;
-
-        const normalizedKey = normalize(key).replace(/[\s_-]+/g, ' ');
-        const isMainNeighborhood =
-          normalizedKey === 'bairro principal' ||
-          (normalizedKey.includes('bairro') && /principal|main|primary/.test(normalizedKey)) ||
-          (normalizedKey.includes('neighborhood') && /principal|main|primary/.test(normalizedKey)) ||
-          (normalizedKey.includes('neighbourhood') && /principal|main|primary/.test(normalizedKey)) ||
-          (normalizedKey.includes('district') && /principal|main|primary/.test(normalizedKey));
-
-        if (!isMainNeighborhood) return;
-        const text = String(value || '').trim();
-        if (text) candidates.push(text);
-      });
+  function assignmentMainNeighborhood(item) {
+    return assignmentPrimitiveValue(item, function(key) {
+      return (
+        key === 'bairro principal' ||
+        key === 'main district' ||
+        key === 'main district name' ||
+        key === 'primary district' ||
+        key === 'primary district name' ||
+        key === 'sort code name' ||
+        key === 'main sort code name' ||
+        key === 'primary sort code name' ||
+        (key.includes('bairro') && /principal|main|primary/.test(key)) ||
+        (key.includes('neighborhood') && /principal|main|primary/.test(key)) ||
+        (key.includes('neighbourhood') && /principal|main|primary/.test(key)) ||
+        (key.includes('district') && /principal|main|primary/.test(key)) ||
+        (key.includes('sort code') && /name|principal|main|primary/.test(key))
+      );
     });
+  }
 
-    return candidates[0] || '';
+  function assignmentAgencyValue(item) {
+    return assignmentPrimitiveValue(item, function(key) {
+      if (/\\bid\\b/.test(key)) return false;
+      return (
+        key === 'agency' ||
+        key === 'agency name' ||
+        key === 'agency 3pl' ||
+        key === 'agencia' ||
+        key === 'agencia 3pl' ||
+        key === '3pl' ||
+        key === '3pl name' ||
+        (key.includes('agency') && !key.includes('id')) ||
+        (key.includes('agencia') && !key.includes('id'))
+      );
+    });
+  }
+
+  function assignmentAgencyIdValue(item) {
+    return assignmentPrimitiveValue(item, function(key) {
+      return key === 'agency id' || key === 'agencia id' || key === '3pl id';
+    });
+  }
+
+  function assignmentDriverIdValue(item) {
+    return assignmentPrimitiveValue(item, function(key) {
+      return key === 'driver id' || key === 'motorista id' || key === 'courier id';
+    });
+  }
+
+  function assignmentDriverNameValue(item) {
+    return assignmentPrimitiveValue(item, function(key) {
+      if (key.includes('station') || key.includes('estacao')) return false;
+      return (
+        key === 'driver name' ||
+        key === 'motorista' ||
+        key === 'motorista nome' ||
+        key === 'courier name'
+      );
+    });
+  }
+
+  function assignmentRowIdValue(item) {
+    return assignmentPrimitiveValue(item, function(key) {
+      return (
+        key === 'assignment task id' ||
+        key === 'assignment id' ||
+        key === 'id da at' ||
+        key === 'at id'
+      );
+    });
+  }
+
+  function assignmentSearchItem(response, assignmentId) {
+    const key = String(assignmentId || '').trim().toUpperCase();
+    const data = response && response.data !== undefined ? response.data : response;
+
+    const directLists = [
+      data?.list,
+      data?.rows,
+      data?.items,
+      data?.data,
+      response?.list,
+      response?.rows,
+      response?.items
+    ].filter(Array.isArray);
+
+    const directCandidates = directLists.flat().filter(item => item && typeof item === 'object');
+    const allObjects = collectAllObjects(data || {});
+    const candidates = [...directCandidates, ...allObjects];
+
+    const exact = candidates.filter(item =>
+      String(assignmentRowIdValue(item) || '').trim().toUpperCase() === key
+    );
+
+    const score = item => {
+      let value = 0;
+      if (assignmentAgencyValue(item)) value += 4;
+      if (assignmentMainNeighborhood(item)) value += 4;
+      if (assignmentDriverIdValue(item)) value += 2;
+      if (assignmentDriverNameValue(item)) value += 2;
+      return value;
+    };
+
+    if (exact.length) {
+      return exact.sort((a, b) => score(b) - score(a))[0];
+    }
+
+    return directCandidates[0] || null;
   }
 
   async function fetchAssignmentAgency(assignmentId) {
@@ -2346,25 +2460,37 @@
         })
       });
 
-      const list = Array.isArray(response?.data?.list) ? response.data.list : [];
-      const item = list.find(row =>
-        String(row?.assignment_task_id || '').trim().toUpperCase() === key
-      ) || list[0] || null;
-
-      if (!item) return null;
+      const item = assignmentSearchItem(response, key);
+      if (!item) {
+        receiveDiagPush('assignment_lookup_empty', {
+          assignment_task_id: key
+        });
+        return null;
+      }
 
       const result = {
-        assignmentId: String(item?.assignment_task_id || key).trim(),
-        agency: String(item?.agency || '').trim(),
-        agencyId: String(item?.agency_id ?? '').trim(),
-        driverId: String(item?.driver_id ?? '').trim(),
-        driverName: String(item?.driver_name || '').trim(),
-        mainNeighborhood: assignmentMainNeighborhood(item)
+        assignmentId: String(assignmentRowIdValue(item) || key).trim(),
+        agency: String(assignmentAgencyValue(item) || '').trim(),
+        agencyId: String(assignmentAgencyIdValue(item) || '').trim(),
+        driverId: String(assignmentDriverIdValue(item) || '').trim(),
+        driverName: String(assignmentDriverNameValue(item) || '').trim(),
+        mainNeighborhood: String(assignmentMainNeighborhood(item) || '').trim()
       };
+
+      receiveDiagPush('assignment_lookup_resolved', {
+        assignment_task_id: key,
+        agency: result.agency,
+        main_neighborhood: result.mainNeighborhood,
+        driver_id: result.driverId
+      });
 
       assignmentAgencyCache.set(key, result);
       return result;
     } catch (error) {
+      receiveDiagPush('assignment_lookup_error', {
+        assignment_task_id: key,
+        error: String(error?.message || error || '')
+      });
       console.warn('[SPX-DV] Falha ao consultar Agência (3PL) da AT', key, error);
       return null;
     }
@@ -2409,19 +2535,19 @@
       const attemptDriverId = getDriverId(attempt);
       const knownAttemptDriver = attemptDriverId && attemptDriverId !== 'Não informado';
       const agencyDriverId = String(details.driverId || '').trim();
-
-      // A AT deve apontar para o mesmo motorista da ocorrência. Se ambos os IDs
-      // estiverem disponíveis e forem diferentes, não mostramos uma 3PL incorreta.
-      if (knownAttemptDriver && agencyDriverId && String(attemptDriverId).trim() !== agencyDriverId) {
-        return { ...attempt, assignment_agency_mismatch: true };
-      }
+      const driverMismatch = Boolean(
+        knownAttemptDriver &&
+        agencyDriverId &&
+        String(attemptDriverId).trim() !== agencyDriverId
+      );
 
       return {
         ...attempt,
         assignment_agency: details.agency,
         assignment_agency_id: details.agencyId,
         assignment_driver_lookup_name: details.driverName,
-        assignment_main_neighborhood: details.mainNeighborhood
+        assignment_main_neighborhood: details.mainNeighborhood,
+        assignment_agency_mismatch: driverMismatch
       };
     });
   }

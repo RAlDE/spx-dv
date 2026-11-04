@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-11-03
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.63
+Versão atual do módulo: 1.3.64
 Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em ambiente real; 1.3.60 preserva a arquitetura ao vivo da 1.3.59 e reorganiza visualmente o Top 10 para leitura horizontal, com números brancos e destaque leve nos 3 primeiros; requer validação visual real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
@@ -12,7 +12,7 @@ Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em am
 Se uma nova conversa for aberta, começar por este resumo antes de propor qualquer alteração:
 
 - repositório correto: `RAlDE/spx-dv`; não misturar com SPX OnHold;
-- versão alinhada atual: módulo `1.3.63`, `DASHBOARD_SYNC_GENERATION 1.3.63`, Apps Script build `1.3.63`, catálogo `1.3.63`;
+- versão alinhada atual: módulo `1.3.64`, `DASHBOARD_SYNC_GENERATION 1.3.64`, Apps Script build `1.3.64`, catálogo `1.3.64`;
 - captura normal continua autoritativa por `POST /api/in-station/uni_receive/order` com `retcode=0`;
 - exceção controlada: `Endereço não encontrado` entra no Dashboard somente após cancelamento confirmado, conforme v1.3.53;
 - Dashboard atual possui Top 10, filtro por login com quantidade, busca geral e filtros por coluna dentro do próprio Dash;
@@ -24,7 +24,7 @@ Se uma nova conversa for aberta, começar por este resumo antes de propor qualqu
 - envio atual do Dash é em massa: carrega controle uma vez, planeja linhas vazias em lote, grava C:G e I:J por matrizes, preserva A/B/H e linhas verdes, grava controle/status em blocos;
 - em 03/11/2026 foram removidos diretamente da `_SPX_DV_DASHBOARD` todos os registros anteriores a 03/11, após confirmação do usuário de que a planilha já estava atualizada: 4.149 pendências antigas + 57 confirmados antigos; ficaram 1.379 registros de 03/11;
 - o envio em massa da 1.3.58 foi confirmado pelo usuário em ambiente real: todos os dados chegaram corretamente à planilha em bloco;
-- o parser de Bairro Principal/3PL da AT da 1.3.62 foi validado em ambiente real; a 1.3.63 altera a resolução por geolocalização e busca de bairro próximo e ainda exige validação real antes de chamar a versão corrente de estável.
+- o parser de Bairro Principal/3PL da AT da 1.3.62 foi validado em ambiente real; 1.3.63/1.3.64 alteram geolocalização, recuperação de pendências e dados de Return no Dashboard e ainda exigem validação real antes de chamar a versão corrente de estável.
 
 Esta seção é a fonte principal para retomar o projeto em uma conversa nova. O restante deste arquivo mantém o histórico cronológico das versões e decisões anteriores. Quando houver divergência entre uma seção antiga e este resumo, **prevalece o estado atual descrito aqui**, salvo se uma versão posterior documentar explicitamente uma nova mudança.
 
@@ -2660,3 +2660,73 @@ Evento `geo_neighborhood_lookup` registra source, confidence, bairro e candidato
 - sintaxe do Apps Script validada;
 - versões alinhadas em 1.3.63;
 - busca espacial e filtro anti-`Casa 11` ainda requerem validação real.
+
+
+## Atualização 1.3.64 — recuperar diferença do Dashboard + dados reais de Return
+
+### Evidência central em 03/11/2026
+Leitura direta de `_SPX_DV_DASHBOARD`:
+- 1.379 registros centrais;
+- 1.357 `LMHub`;
+- 22 `Return_LMHub`;
+- os 22 Returns estavam com `driver_name` vazio;
+- 192 registros estavam sem Agência/3PL;
+- 417 registros ainda continham `Atualizar base`;
+- último `received_at` central observado: 03/11/2026 17:23:01;
+- atualização central mais recente observada: aproximadamente 18:59.
+O usuário informou 1.409 recebimentos no SPX/outra base, diferença de 30 em relação ao central.
+
+### Recuperação das pendências
+Antes, `syncLocalDashboardToCentral()` só aceitava pendências cuja `sync_generation` fosse exatamente a versão atual. Uma pendência local criada durante troca de build/rede podia ser ignorada depois do próximo bump.
+
+A 1.3.64:
+- recupera registros `central_sync=pending` de **hoje**, independentemente da geração original;
+- nunca ressuscita automaticamente dias anteriores;
+- ao entrar no Recebimento, tenta reenviar até 50 pendências de hoje;
+- mantém deduplicação por `occurrence_key`;
+- registra a geração original no diagnóstico.
+
+Se parte dos 30 faltantes estiver salva localmente nos navegadores que fizeram os recebimentos, a atualização/reabertura do Recebimento pode recuperar essas fichas.
+
+### Return
+Causa dos campos vazios:
+o payload zerava `driver_id`, `driver_name` e `agency` sempre que `return_occurrence=true`.
+
+Nova regra:
+- Motorista do Return usa `return_operator_id` + `return_operator_name`, já validados para o painel visual;
+- Agência/3PL só é preenchida quando uma AT anterior à ocorrência puder ser compatibilizada pelo mesmo driver ID;
+- sem vínculo real, 3PL permanece vazia; não inventar;
+- Bairro Principal dessa AT compatível também fica disponível como fallback.
+
+Caso de referência visto no central:
+`BR267968453158B` está como `Return_LMHub`, Bairro `Volta Grande`, mas motorista/3PL vazios na versão anterior.
+
+### Reparação segura de linhas já existentes
+Ao abrir um BR:
+- consulta simples continua sem criar recebimento;
+- módulo calcula a `occurrence_key` e consulta `dashboard_check`;
+- somente se a ocorrência já existir no central, faz upsert de reparo;
+- pode corrigir Motorista/3PL/Bairro;
+- preserva received_at/status/operador já existentes.
+
+Assim, reabrir `BR267968453158B` na 1.3.64 pode reparar a linha já existente.
+
+### Correções recentes de Bairro/3PL no Dashboard
+- registros novos passam a usar os dados corrigidos;
+- registros antigos não mudam sozinhos;
+- na 1.3.64, consultar um BR que já está no central permite reparar sua linha sem criar ficha nova.
+
+### Preservado
+- normal somente após POST real com retcode=0;
+- Endereço não encontrado conforme regra já validada;
+- envio em massa;
+- dedupe;
+- Top 10;
+- Dashboard ao vivo;
+- geolocalização 1.3.63.
+
+### Validação
+- sintaxe módulo: OK;
+- sintaxe Apps Script: OK;
+- versões alinhadas em 1.3.64;
+- recuperação dos 30, Return no Dash e reparo de linha existente ainda requerem teste real.

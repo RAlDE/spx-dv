@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.62';
+  const MODULE_VERSION = '1.3.63';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -34,7 +34,7 @@
   const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.62';
+  const DASHBOARD_SYNC_GENERATION = '1.3.63';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
@@ -2963,16 +2963,26 @@
     return { latitude, longitude };
   }
 
-  async function fetchOccurrenceNeighborhood(shipmentId, returnFlow, tradeInfo = null) {
+  async function fetchOccurrenceNeighborhoodDetails(shipmentId, returnFlow, tradeInfo = null) {
     const shipment = String(shipmentId || '').trim().toUpperCase();
-    if (!shipment) return '';
+    if (!shipment) {
+      return {
+        neighborhood: '',
+        source: 'invalid_shipment',
+        confidence: 'none',
+        coordinates: false
+      };
+    }
+
+    let coordinates = null;
+    let lowConfidenceGeo = null;
 
     try {
       const info = tradeInfo || await fetchJson(
         'https://spx.shopee.com.br/api/fleet_order/order/detail/trade_info?shipment_id=' +
         encodeURIComponent(shipment)
       );
-      const coordinates = tradeInfoCoordinates(info, returnFlow);
+      coordinates = tradeInfoCoordinates(info, returnFlow);
 
       if (coordinates) {
         const geo = await fetchGeoNeighborhood(
@@ -2980,21 +2990,100 @@
           coordinates.longitude
         );
         const neighborhood = String(geo?.ok ? geo?.neighborhood || '' : '').trim();
-        if (neighborhood) return neighborhood;
+        const confidence = String(geo?.confidence || (neighborhood ? 'medium' : 'none')).trim().toLowerCase();
+        const source = String(geo?.source || 'geo').trim();
+
+        receiveDiagPush('geo_neighborhood_lookup', {
+          shipment_id: shipment,
+          source,
+          confidence,
+          neighborhood,
+          candidates: Array.isArray(geo?.candidates)
+            ? geo.candidates.slice(0, 12).map(item => ({
+                name: String(item?.name || ''),
+                type: String(item?.type || ''),
+                distance_m: Number(item?.distance_m || 0),
+                source: String(item?.source || '')
+              }))
+            : []
+        });
+
+        if (neighborhood && (confidence === 'high' || confidence === 'medium')) {
+          return {
+            neighborhood,
+            source,
+            confidence,
+            coordinates: true
+          };
+        }
+
+        if (neighborhood) {
+          lowConfidenceGeo = {
+            neighborhood,
+            source,
+            confidence: confidence || 'low',
+            coordinates: true
+          };
+        }
       }
     } catch (error) {
       console.warn('[SPX-DV] Geolocalização não resolveu o bairro', error);
     }
 
-    // Sem consulta a campo sensível. No fluxo normal ainda podemos aproveitar
-    // a cache central já existente. Se nenhuma fonte resolver, "Atualizar base"
-    // vira o valor operacional do Bairro e segue para Dashboard/Dados.
     if (!returnFlow) {
       const cached = await fetchNeighborhoodFromCentralCache(shipment).catch(() => '');
-      if (cached) return cached;
+      if (cached) {
+        return {
+          neighborhood: String(cached).trim(),
+          source: 'central_cache',
+          confidence: 'medium',
+          coordinates: Boolean(coordinates)
+        };
+      }
     }
 
-    return 'Atualizar base';
+    if (lowConfidenceGeo) return lowConfidenceGeo;
+
+    return {
+      neighborhood: 'Atualizar base',
+      source: coordinates ? 'geo_unresolved' : 'no_coordinates',
+      confidence: 'none',
+      coordinates: Boolean(coordinates)
+    };
+  }
+
+  function resolveOccurrenceNeighborhood(details, assignmentNeighborhood = '') {
+    const info = details && typeof details === 'object'
+      ? details
+      : {
+          neighborhood: String(details || '').trim(),
+          source: 'legacy',
+          confidence: 'medium',
+          coordinates: false
+        };
+
+    const neighborhood = String(info?.neighborhood || '').trim();
+    const assignment = String(assignmentNeighborhood || '').trim();
+    const confidence = String(info?.confidence || '').trim().toLowerCase();
+
+    if (
+      assignment &&
+      (
+        !neighborhood ||
+        normalize(neighborhood) === 'atualizar base' ||
+        confidence === 'low' ||
+        confidence === 'none'
+      )
+    ) {
+      return assignment;
+    }
+
+    return neighborhood || assignment || 'Atualizar base';
+  }
+
+  async function fetchOccurrenceNeighborhood(shipmentId, returnFlow, tradeInfo = null) {
+    const details = await fetchOccurrenceNeighborhoodDetails(shipmentId, returnFlow, tradeInfo);
+    return String(details?.neighborhood || '').trim() || 'Atualizar base';
   }
 
   function currentOccurrenceSheetPayload(shipmentId, attempt, returnFlow, neighborhood, operatorLogin = '', receivedAt = 0) {
@@ -3027,16 +3116,22 @@
     dashboardOccurrenceInFlight.add(occurrenceKey);
 
     try {
+      const assignmentNeighborhood = String(attempt?.assignment_main_neighborhood || '').trim();
       let neighborhood = String(preloadedNeighborhood || '').trim();
+
       if (!neighborhood) {
         try {
-          neighborhood = await fetchOccurrenceNeighborhood(shipmentId, returnFlow, tradeInfo);
+          const details = await fetchOccurrenceNeighborhoodDetails(
+            shipmentId,
+            returnFlow,
+            tradeInfo
+          );
+          neighborhood = resolveOccurrenceNeighborhood(details, assignmentNeighborhood);
         } catch (error) {
           console.warn('[SPX-DV] Não foi possível obter o bairro da ocorrência', error);
         }
       }
 
-      const assignmentNeighborhood = String(attempt?.assignment_main_neighborhood || '').trim();
       if (
         assignmentNeighborhood &&
         (!String(neighborhood || '').trim() || normalize(neighborhood) === 'atualizar base')
@@ -3157,11 +3252,16 @@
       const cycleStart = returnOccurrences.length
         ? Number(returnOccurrences[0].ctime || 0)
         : 0;
-      const neighborhoodPromise = fetchOccurrenceNeighborhood(
+      const neighborhoodPromise = fetchOccurrenceNeighborhoodDetails(
         shipmentId,
         Boolean(cycleStart),
         tradeInfo
-      ).catch(() => '');
+      ).catch(() => ({
+        neighborhood: '',
+        source: 'error',
+        confidence: 'none',
+        coordinates: false
+      }));
 
       const history = await historyPromise;
       const attempts = Array.isArray(history?.data?.recipient?.On_Hold)
@@ -3204,11 +3304,17 @@
         return false;
       }
 
-      const neighborhood = await neighborhoodPromise;
+      const neighborhoodDetails = await neighborhoodPromise;
+      const neighborhood = resolveOccurrenceNeighborhood(
+        neighborhoodDetails,
+        currentOccurrence?.assignment_main_neighborhood
+      );
       receiveDiagPush('process_occurrence_ready', {
         shipment_id: shipmentId,
         occurrence_timestamp: Number(currentOccurrence?.ctime || 0),
-        neighborhood: String(neighborhood || '')
+        neighborhood: String(neighborhood || ''),
+        neighborhood_source: String(neighborhoodDetails?.source || ''),
+        neighborhood_confidence: String(neighborhoodDetails?.confidence || '')
       });
       return await captureConfirmedOccurrenceToDashboard(
         shipmentId,
@@ -3738,13 +3844,18 @@
 
       // Começa o geocoding imediatamente. Enquanto ele resolve o Bairro,
       // o histórico e os dados da AT continuam sendo montados abaixo.
-      const neighborhoodPromise = fetchOccurrenceNeighborhood(
+      const neighborhoodPromise = fetchOccurrenceNeighborhoodDetails(
         shipmentId,
         Boolean(cycleStart),
         tradeInfo
       ).catch(error => {
         console.warn('[SPX-DV] Não foi possível obter o bairro para exibição', error);
-        return '';
+        return {
+          neighborhood: '',
+          source: 'error',
+          confidence: 'none',
+          coordinates: false
+        };
       });
 
       const history = await historyPromise;
@@ -3807,13 +3918,12 @@
         latestVisibleOccurrence?.assignment_main_neighborhood || ''
       ).trim();
 
-      void neighborhoodPromise.then(neighborhood => {
+      void neighborhoodPromise.then(details => {
         if (version !== currentRequest || shipmentId !== currentShipment || diagnosticView) return;
-        const resolvedNeighborhood =
-          assignmentNeighborhoodFallback &&
-          (!String(neighborhood || '').trim() || normalize(neighborhood) === 'atualizar base')
-            ? assignmentNeighborhoodFallback
-            : neighborhood;
+        const resolvedNeighborhood = resolveOccurrenceNeighborhood(
+          details,
+          assignmentNeighborhoodFallback
+        );
         updatePanelNeighborhood(shipmentId, resolvedNeighborhood);
       });
 

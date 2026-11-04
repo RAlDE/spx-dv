@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.64';
+  const MODULE_VERSION = '1.3.65';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -34,11 +34,13 @@
   const DASHBOARD_DB_NAME = 'spxdv-dashboard-v1';
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.64';
+  const RECEIVE_INBOX_KEY = 'spxdv:confirmed-receive-inbox-v1';
+  const DASHBOARD_SYNC_GENERATION = '1.3.65';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
   let centralHealthCache = { checkedAt: 0, ok: false, build: '' };
+  let receiveInboxReplayTimer = null;
 
   if (document.documentElement.dataset[APP_MARKER] === 'true') return;
   document.documentElement.dataset[APP_MARKER] = 'true';
@@ -122,7 +124,7 @@
   const addressDashboardSnapshots = new Map();
   const receivedAtByShipment = new Map();
   const latestOccurrenceByShipment = new Map();
-  const RECEIVE_CAPTURE_RETRY_DELAYS = [600, 1400, 2800, 5000];
+  const RECEIVE_CAPTURE_RETRY_DELAYS = [600, 1400, 2800, 5000, 10000];
 
   function readCancelledAddressState() {
     try {
@@ -298,6 +300,127 @@
     }
   }
 
+
+  function readConfirmedReceiveInbox() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(RECEIVE_INBOX_KEY) || '{}');
+      const records = parsed && typeof parsed === 'object' ? parsed : {};
+      const clean = {};
+      const now = Date.now();
+
+      for (const [key, record] of Object.entries(records)) {
+        if (!record || typeof record !== 'object') continue;
+        const receivedAt = Number(record.received_at || record.created_at || 0);
+        if (!receivedAt || now - receivedAt > 3 * 24 * 60 * 60 * 1000) continue;
+        clean[key] = record;
+      }
+
+      if (Object.keys(clean).length !== Object.keys(records).length) {
+        localStorage.setItem(RECEIVE_INBOX_KEY, JSON.stringify(clean));
+      }
+
+      return clean;
+    } catch {
+      return {};
+    }
+  }
+
+  function writeConfirmedReceiveInbox(records) {
+    try {
+      localStorage.setItem(RECEIVE_INBOX_KEY, JSON.stringify(records || {}));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function persistConfirmedReceiveReceipt(receiveKey, shipmentId, operatorLogin, receivedAt) {
+    const key = String(receiveKey || '').trim();
+    const shipment = String(shipmentId || '').trim().toUpperCase();
+    if (!key || !shipment) return false;
+
+    const timestamp = Number(receivedAt || Date.now());
+    const records = readConfirmedReceiveInbox();
+    const previous = records[key] && typeof records[key] === 'object' ? records[key] : {};
+
+    records[key] = {
+      ...previous,
+      receive_key: key,
+      shipment_id: shipment,
+      operator_login: String(operatorLogin || previous.operator_login || '').trim().toLowerCase(),
+      received_at: Number(previous.received_at || timestamp),
+      received_day: String(previous.received_day || saoPauloDay(timestamp)),
+      created_at: Number(previous.created_at || Date.now()),
+      last_seen_at: Date.now()
+    };
+
+    const saved = writeConfirmedReceiveInbox(records);
+    if (saved) {
+      receiveDiagPush('receive_receipt_persisted', {
+        shipment_id: shipment,
+        receive_key: key,
+        received_at: records[key].received_at
+      });
+    }
+    return saved;
+  }
+
+  function removeConfirmedReceiveReceipt(receiveKey) {
+    const key = String(receiveKey || '').trim();
+    if (!key) return false;
+
+    const records = readConfirmedReceiveInbox();
+    if (!records[key]) return true;
+    delete records[key];
+    return writeConfirmedReceiveInbox(records);
+  }
+
+  function confirmedReceiveInboxToday(limit = 50) {
+    const today = saoPauloDay();
+    return Object.values(readConfirmedReceiveInbox())
+      .filter(record => {
+        if (!record || typeof record !== 'object') return false;
+        const receivedAt = Number(record.received_at || 0);
+        const day = String(record.received_day || (receivedAt ? saoPauloDay(receivedAt) : ''));
+        return day === today;
+      })
+      .sort((a, b) => Number(a.received_at || 0) - Number(b.received_at || 0))
+      .slice(0, Math.max(1, Math.min(100, Number(limit) || 50)));
+  }
+
+  function replayConfirmedReceiveInbox(limit = 50) {
+    const records = confirmedReceiveInboxToday(limit);
+    if (!records.length) {
+      receiveDiagPush('receive_inbox_replay_empty', { day: saoPauloDay() });
+      return 0;
+    }
+
+    let queued = 0;
+    records.forEach(record => {
+      const shipmentId = String(record?.shipment_id || '').trim().toUpperCase();
+      const receiveKey = String(record?.receive_key || '').trim();
+      if (!shipmentId || !receiveKey || confirmedReceiveSeen.has(receiveKey)) return;
+
+      confirmedReceiveSeen.add(receiveKey);
+      queued += 1;
+
+      receiveDiagPush('receive_inbox_replay_queued', {
+        shipment_id: shipmentId,
+        receive_key: receiveKey,
+        received_at: Number(record?.received_at || 0)
+      });
+
+      queueConfirmedReceive(
+        shipmentId,
+        String(record?.operator_login || '').trim().toLowerCase(),
+        Number(record?.received_at || Date.now()),
+        receiveKey
+      );
+    });
+
+    return queued;
+  }
+
   function receiveDiagRead() {
     try {
       const parsed = JSON.parse(localStorage.getItem(RECEIVE_DIAG_STORAGE_KEY) || '[]');
@@ -318,7 +441,8 @@
   function receiveDiagText() {
     let hook = {};
     try { hook = JSON.parse(localStorage.getItem('spxdv:receive-hook-diag-v1') || '{}') || {}; } catch {}
-    return JSON.stringify({ version: MODULE_VERSION, page: location.href, hook, main: receiveDiagRead() }, null, 2);
+    const inbox = confirmedReceiveInboxToday(100);
+    return JSON.stringify({ version: MODULE_VERSION, page: location.href, hook, inbox, main: receiveDiagRead() }, null, 2);
   }
 
   function renderReceiveDiagnostics() {
@@ -3520,16 +3644,25 @@
           delay,
           captured: Boolean(captured)
         });
-        if (captured) return;
+        if (captured) {
+          if (receiveKey) removeConfirmedReceiveReceipt(receiveKey);
+          receiveDiagPush('receive_receipt_completed', {
+            shipment_id: shipmentId,
+            receive_key: receiveKey
+          });
+          return;
+        }
       }
 
       if (receiveKey) confirmedReceiveSeen.delete(receiveKey);
       receiveDiagPush('receive_capture_exhausted', {
         shipment_id: shipmentId,
-        received_at: receivedAtSnapshot
+        received_at: receivedAtSnapshot,
+        receive_key: receiveKey,
+        durable_receipt: Boolean(receiveKey && readConfirmedReceiveInbox()[receiveKey])
       });
 
-      showNotice('Dashboard pendente: ' + shipmentId + '. Use D > Reenviar novos.');
+      showNotice('Dashboard pendente: ' + shipmentId + '. O módulo continuará tentando.');
       window.setTimeout(() => {
         const notice = document.getElementById(NOTICE_ID);
         if (notice && String(notice.textContent || '').includes(shipmentId)) {
@@ -3537,7 +3670,7 @@
         }
       }, 15000);
 
-      console.warn('[SPX-DV] Não foi possível confirmar no Dashboard; ficha mantida localmente', shipmentId);
+      console.warn('[SPX-DV] Ficha ainda não montada; recibo bruto preservado para nova tentativa', shipmentId);
     })();
   }
 
@@ -3655,6 +3788,14 @@
         const receivedAt = receiveSeconds > 0 ? receiveSeconds * 1000 : Date.now();
         void refreshReceivedAtFromTracking(shipmentId);
         const receiveKey = shipmentId + '|' + Math.floor(receiveSeconds || receivedAt / 1000);
+
+        persistConfirmedReceiveReceipt(
+          receiveKey,
+          shipmentId,
+          operatorLogin,
+          receivedAt
+        );
+
         if (confirmedReceiveSeen.has(receiveKey)) {
           receiveDiagPush('receive_duplicate_ignored', { shipment_id: shipmentId, receive_key: receiveKey });
           return;
@@ -3664,7 +3805,8 @@
         receiveDiagPush('receive_queued', {
           shipment_id: shipmentId,
           received_at: receivedAt,
-          operator_login: operatorLogin
+          operator_login: operatorLogin,
+          durable_receipt: true
         });
         queueConfirmedReceive(shipmentId, operatorLogin, receivedAt, receiveKey);
       });
@@ -4275,6 +4417,8 @@
     document.getElementById(NOTICE_ID)?.remove();
     if (monitor) clearInterval(monitor);
     monitor = null;
+    if (receiveInboxReplayTimer) clearInterval(receiveInboxReplayTimer);
+    receiveInboxReplayTimer = null;
     currentShipment = '';
     diagnosticView = false;
   }
@@ -4297,14 +4441,22 @@
 
     if (!authorized || !isTargetRoute()) return;
 
-    // Recupera automaticamente pendências de HOJE, inclusive se foram
-    // criadas por uma geração anterior durante troca de build/rede.
+    // Recupera automaticamente tanto fichas locais já montadas quanto
+    // recibos brutos retcode=0 cuja ficha ainda não conseguiu ser montada.
     void ensureDashboardMigration();
     void syncLocalDashboardToCentral(50);
+    replayConfirmedReceiveInbox(50);
+
     showPanel('', '<div class="message">Aguardando leitura do BR...</div>');
     checkShipment();
 
     if (!monitor) monitor = setInterval(checkShipment, 300);
+    if (!receiveInboxReplayTimer) {
+      receiveInboxReplayTimer = window.setInterval(() => {
+        if (!isTargetRoute() || !authorized) return;
+        replayConfirmedReceiveInbox(20);
+      }, 60000);
+    }
     ensureShipmentKeyListener();
   }
 

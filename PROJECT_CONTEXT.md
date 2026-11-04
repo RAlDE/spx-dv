@@ -24,7 +24,7 @@ Se uma nova conversa for aberta, começar por este resumo antes de propor qualqu
 - envio atual do Dash é em massa: carrega controle uma vez, planeja linhas vazias em lote, grava C:G e I:J por matrizes, preserva A/B/H e linhas verdes, grava controle/status em blocos;
 - em 03/11/2026 foram removidos diretamente da `_SPX_DV_DASHBOARD` todos os registros anteriores a 03/11, após confirmação do usuário de que a planilha já estava atualizada: 4.149 pendências antigas + 57 confirmados antigos; ficaram 1.379 registros de 03/11;
 - o envio em massa da 1.3.58 foi confirmado pelo usuário em ambiente real: todos os dados chegaram corretamente à planilha em bloco;
-- a arquitetura ao vivo da 1.3.59, o visual do Top 10 da 1.3.60 e o parser de Bairro Principal da AT da 1.3.62 ainda exigem validação real completa; não chamar 1.3.62 de estável antes desses testes.
+- o parser de Bairro Principal/3PL da AT da 1.3.62 foi validado em ambiente real no BR de referência; a arquitetura ao vivo da 1.3.59 e o visual do Top 10 da 1.3.60 ainda exigem validação real completa antes de chamar a versão corrente de estável.
 
 Esta seção é a fonte principal para retomar o projeto em uma conversa nova. O restante deste arquivo mantém o histórico cronológico das versões e decisões anteriores. Quando houver divergência entre uma seção antiga e este resumo, **prevalece o estado atual descrito aqui**, salvo se uma versão posterior documentar explicitamente uma nova mudança.
 
@@ -2587,4 +2587,20 @@ Se ainda não houver Bairro, o diagnóstico `assignment_lookup_resolved` passa a
 - sintaxe do módulo validada;
 - sintaxe do Apps Script validada;
 - versões alinhadas em 1.3.62;
-- validação real pendente no mesmo BR.
+- validação real concluída no mesmo BR: 3PL e Bairro Principal apareceram corretamente no painel.
+
+
+### Validação real concluída — Bairro/3PL AT 1.3.62
+
+Confirmação do usuário em ambiente real:
+- `BR266776089724S` carregado com a 1.3.62;
+- Agência/3PL exibida corretamente: `SPXOWNFLEET`;
+- Bairro Principal exibido corretamente: `Gravata`;
+- deixou de aparecer `Atualizar base` nesse caso;
+- portanto o fluxo tracking -> AT -> Agência + Bairro Principal está validado para o caso de referência sem geolocalização útil.
+
+Decisão:
+- preservar o parser de caminho aninhado introduzido na 1.3.62;
+- não voltar à dependência exclusiva de geolocalização;
+- não reintroduzir a regra que descartava Agência/Bairro por divergência de motorista;
+- sem bump de versão, pois esta atualização registra apenas evidência de validação real, sem alteração de código.

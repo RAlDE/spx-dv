@@ -2,7 +2,7 @@
 
 Atualizado em: 2026-11-03
 Repositório: RAlDE/spx-dv
-Versão atual do módulo: 1.3.60
+Versão atual do módulo: 1.3.61
 Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em ambiente real; 1.3.60 preserva a arquitetura ao vivo da 1.3.59 e reorganiza visualmente o Top 10 para leitura horizontal, com números brancos e destaque leve nos 3 primeiros; requer validação visual real.
 
 ## LEIA PRIMEIRO — estado operacional atual e handoff para nova conversa
@@ -12,7 +12,7 @@ Estado: desenvolvimento incremental; envio em massa da 1.3.58 foi validado em am
 Se uma nova conversa for aberta, começar por este resumo antes de propor qualquer alteração:
 
 - repositório correto: `RAlDE/spx-dv`; não misturar com SPX OnHold;
-- versão alinhada atual: módulo `1.3.60`, `DASHBOARD_SYNC_GENERATION 1.3.60`, Apps Script build `1.3.60`, catálogo `1.3.60`;
+- versão alinhada atual: módulo `1.3.61`, `DASHBOARD_SYNC_GENERATION 1.3.61`, Apps Script build `1.3.61`, catálogo `1.3.61`;
 - captura normal continua autoritativa por `POST /api/in-station/uni_receive/order` com `retcode=0`;
 - exceção controlada: `Endereço não encontrado` entra no Dashboard somente após cancelamento confirmado, conforme v1.3.53;
 - Dashboard atual possui Top 10, filtro por login com quantidade, busca geral e filtros por coluna dentro do próprio Dash;
@@ -24,7 +24,7 @@ Se uma nova conversa for aberta, começar por este resumo antes de propor qualqu
 - envio atual do Dash é em massa: carrega controle uma vez, planeja linhas vazias em lote, grava C:G e I:J por matrizes, preserva A/B/H e linhas verdes, grava controle/status em blocos;
 - em 03/11/2026 foram removidos diretamente da `_SPX_DV_DASHBOARD` todos os registros anteriores a 03/11, após confirmação do usuário de que a planilha já estava atualizada: 4.149 pendências antigas + 57 confirmados antigos; ficaram 1.379 registros de 03/11;
 - o envio em massa da 1.3.58 foi confirmado pelo usuário em ambiente real: todos os dados chegaram corretamente à planilha em bloco;
-- a arquitetura ao vivo da 1.3.59 e o novo visual do Top 10 da 1.3.60 ainda exigem validação real; não chamar 1.3.60 de estável antes desses testes.
+- a arquitetura ao vivo da 1.3.59, o visual do Top 10 da 1.3.60 e o fallback AT de Bairro/3PL da 1.3.61 ainda exigem validação real completa; não chamar 1.3.61 de estável antes desses testes.
 
 Esta seção é a fonte principal para retomar o projeto em uma conversa nova. O restante deste arquivo mantém o histórico cronológico das versões e decisões anteriores. Quando houver divergência entre uma seção antiga e este resumo, **prevalece o estado atual descrito aqui**, salvo se uma versão posterior documentar explicitamente uma nova mudança.
 
@@ -2480,3 +2480,61 @@ Ajuste visual aprovado pelo usuário antes da implementação:
 - sintaxe do módulo validada;
 - módulo, sync generation, Apps Script e catálogo alinhados em 1.3.60;
 - validação visual real ainda pendente.
+
+
+## Atualização 1.3.61 — Bairro Principal e Agência (3PL) diretamente da AT do tracking
+
+### Evidência do vídeo correto
+BR: `BR266776089724S`.
+
+No pedido:
+- Geolocalização útil do recebedor: `-`;
+- painel SPX-DV mostrava `Bairro: Atualizar base`;
+- Agência/3PL não aparecia.
+
+No tracking:
+- `Pedido em processamento na Assignment Task [AT20261102C36Z9]`;
+- `Pedido adicionado à Assignment Task [AT20261102C36Z9]`.
+
+Na tela `Entrega > Atribuição de Entrega`, pesquisando a AT:
+- Agência (3PL): `SPXOWNFLEET`;
+- Cidade: `Penha`;
+- Bairro Principal: `Gravata`;
+- motorista: `[4453118] DIEGO RODRIGUES ANTUNES`.
+
+Regra confirmada:
+- sem geolocalização válida do destinatário, usar Bairro Principal da AT ligada à ocorrência;
+- Agência (3PL) deve vir da mesma AT.
+
+### Causa
+O código exigia que, após encontrar a referência da AT no tracking, algum evento fosse reconhecido como `Delivering`. A referência explícita da AT podia ser perdida.
+Também havia parser rígido para `response.data.list`/campo `agency`, e divergência de motorista podia descartar Agência e Bairro.
+
+### Correção
+- referência explícita `Assignment Task [AT...]` passa a ser válida por si só;
+- Delivering continua sendo usado quando existir, mas não é obrigatório;
+- busca da AT aceita list/rows/items/data e busca recursiva;
+- Agência extraída semanticamente de agency/agência/3PL;
+- Bairro Principal extraído de Bairro Principal, main/primary district e sort code name quando aplicável;
+- divergência de motorista não apaga Agência/Bairro;
+- diagnósticos: `assignment_lookup_resolved`, `assignment_lookup_empty`, `assignment_lookup_error`.
+
+### Resultado esperado para o BR de teste
+`BR266776089724S` / `AT20261102C36Z9`:
+- Transportadora/3PL: `SPXOWNFLEET`;
+- Bairro: `Gravata` se a geolocalização do destinatário estiver indisponível.
+
+### Preservado
+- geocoder continua prioritário quando há coordenadas válidas;
+- Dashboard ao vivo;
+- envio em massa;
+- Return;
+- tracking Recebido em;
+- Top 10;
+- captura normal e exceção Endereço não encontrado.
+
+### Validação
+- sintaxe do módulo validada;
+- sintaxe do Apps Script validada;
+- versões alinhadas em 1.3.61;
+- validação real da AT ainda pendente.

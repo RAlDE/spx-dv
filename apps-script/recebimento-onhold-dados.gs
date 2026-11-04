@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.62';
+const SPX_DV_BUILD = '1.3.63';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -527,10 +527,28 @@ function geoLookupResponse_(e) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function reverseGeocodeNeighborhood_(latitude, longitude) {
-  // Para Bairro, precisão de ~1 metro é mais do que suficiente e evita
-  // trabalhar com coordenadas excessivamente precisas. O resultado do geocoder
-  // não é persistido/cacheado pelo SPX-DV.
+function normalizeNeighborhoodName_(value) {
+  let text = clean_(value).toLowerCase();
+  try {
+    text = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  } catch (error) {}
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function isPlausibleNeighborhoodName_(value) {
+  const text = clean_(value);
+  const normalized = normalizeNeighborhoodName_(text);
+  if (!normalized || normalized.length < 2) return false;
+  if (/^\d+[a-z]?$/.test(normalized)) return false;
+
+  if (/^(casa|apto|apartamento|bloco|lote|quadra|torre|unidade)\s*(n[ºo.]?\s*)?[\w.-]+$/i.test(normalized)) {
+    return false;
+  }
+
+  return true;
+}
+
+function reverseGeocodeCandidatesAt_(latitude, longitude, distanceMeters, source) {
   const lat = Math.round(Number(latitude) * 100000) / 100000;
   const lng = Math.round(Number(longitude) * 100000) / 100000;
 
@@ -545,11 +563,11 @@ function reverseGeocodeNeighborhood_(latitude, longitude) {
     : [];
 
   const priorities = {
-    sublocality_level_1: 0,
-    neighborhood: 1,
-    sublocality: 2,
-    administrative_area_level_4: 3,
-    administrative_area_level_3: 4
+    neighborhood: 0,
+    sublocality_level_1: 10,
+    sublocality: 20,
+    administrative_area_level_4: 40,
+    administrative_area_level_3: 50
   };
 
   const candidates = [];
@@ -568,14 +586,19 @@ function reverseGeocodeNeighborhood_(latitude, longitude) {
 
       types.forEach(function(type) {
         if (!Object.prototype.hasOwnProperty.call(priorities, type) || !name) return;
-        const key = type + '|' + name.toLowerCase();
+        if (!isPlausibleNeighborhoodName_(name)) return;
+
+        const key = type + '|' + normalizeNeighborhoodName_(name);
         if (seen[key]) return;
         seen[key] = true;
+
         candidates.push({
           name: name,
           type: type,
           result_index: resultIndex,
-          score: priorities[type] * 100 + resultIndex
+          score: priorities[type] * 100 + resultIndex,
+          distance_m: Number(distanceMeters || 0),
+          source: source || 'exact'
         });
       });
     });
@@ -585,23 +608,188 @@ function reverseGeocodeNeighborhood_(latitude, longitude) {
     return Number(a.score || 0) - Number(b.score || 0);
   });
 
-  const cleanedCandidates = candidates.slice(0, 12).map(function(item) {
-    return {
-      name: item.name,
-      type: item.type,
-      result_index: item.result_index
-    };
+  return candidates;
+}
+
+function offsetCoordinate_(latitude, longitude, northMeters, eastMeters) {
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  const metersPerDegreeLat = 111320;
+  const cosLat = Math.max(0.2, Math.cos(lat * Math.PI / 180));
+  const metersPerDegreeLng = metersPerDegreeLat * cosLat;
+
+  return {
+    latitude: lat + Number(northMeters || 0) / metersPerDegreeLat,
+    longitude: lng + Number(eastMeters || 0) / metersPerDegreeLng
+  };
+}
+
+function bestStrongNeighborhoodCandidate_(candidates) {
+  const list = Array.isArray(candidates) ? candidates : [];
+  return list.find(function(item) {
+    return item.type === 'neighborhood';
+  }) || list.find(function(item) {
+    return item.type === 'sublocality_level_1';
+  }) || list.find(function(item) {
+    return item.type === 'sublocality';
+  }) || null;
+}
+
+function nearbyNeighborhoodConsensus_(hits) {
+  const groups = {};
+
+  (hits || []).forEach(function(hit) {
+    if (!hit || !hit.name) return;
+    const key = normalizeNeighborhoodName_(hit.name);
+    if (!key) return;
+
+    if (!groups[key]) {
+      groups[key] = {
+        name: hit.name,
+        count: 0,
+        min_distance_m: Number(hit.distance_m || 0),
+        types: {}
+      };
+    }
+
+    groups[key].count += 1;
+    groups[key].min_distance_m = Math.min(
+      Number(groups[key].min_distance_m || 0),
+      Number(hit.distance_m || 0)
+    );
+    groups[key].types[hit.type] = true;
   });
 
-  const neighborhood = cleanedCandidates.length
-    ? clean_(cleanedCandidates[0].name)
-    : '';
+  const ranked = Object.keys(groups)
+    .map(function(key) { return groups[key]; })
+    .sort(function(a, b) {
+      return Number(b.count || 0) - Number(a.count || 0) ||
+        Number(a.min_distance_m || 0) - Number(b.min_distance_m || 0);
+    });
+
+  return ranked.length ? ranked[0] : null;
+}
+
+function reverseGeocodeNeighborhood_(latitude, longitude) {
+  const lat = Math.round(Number(latitude) * 100000) / 100000;
+  const lng = Math.round(Number(longitude) * 100000) / 100000;
+
+  const exactCandidates = reverseGeocodeCandidatesAt_(lat, lng, 0, 'exact');
+  const exactNeighborhood = exactCandidates.find(function(item) {
+    return item.type === 'neighborhood';
+  });
+
+  if (exactNeighborhood) {
+    return {
+      ok: true,
+      neighborhood: clean_(exactNeighborhood.name),
+      confidence: 'high',
+      source: 'exact_neighborhood',
+      candidates: exactCandidates.slice(0, 12)
+    };
+  }
+
+  const exactSublocality = exactCandidates.find(function(item) {
+    return item.type === 'sublocality_level_1' || item.type === 'sublocality';
+  }) || null;
+
+  const probes = [
+    { north: 120, east: 0, distance: 120 },
+    { north: 0, east: 120, distance: 120 },
+    { north: -120, east: 0, distance: 120 },
+    { north: 0, east: -120, distance: 120 },
+    { north: 300, east: 0, distance: 300 },
+    { north: 0, east: 300, distance: 300 },
+    { north: -300, east: 0, distance: 300 },
+    { north: 0, east: -300, distance: 300 }
+  ];
+
+  const nearbyHits = [];
+  const nearbyCandidates = [];
+  let consensus = null;
+
+  for (let index = 0; index < probes.length; index += 1) {
+    const probe = probes[index];
+    const point = offsetCoordinate_(lat, lng, probe.north, probe.east);
+    const candidates = reverseGeocodeCandidatesAt_(
+      point.latitude,
+      point.longitude,
+      probe.distance,
+      'nearby'
+    );
+
+    candidates.slice(0, 6).forEach(function(item) {
+      nearbyCandidates.push(item);
+    });
+
+    const best = bestStrongNeighborhoodCandidate_(candidates);
+    if (best) nearbyHits.push(best);
+
+    consensus = nearbyNeighborhoodConsensus_(nearbyHits);
+    if (consensus && Number(consensus.count || 0) >= 2) break;
+  }
+
+  if (consensus && Number(consensus.count || 0) >= 2) {
+    return {
+      ok: true,
+      neighborhood: clean_(consensus.name),
+      confidence: 'medium',
+      source: 'nearby_consensus',
+      nearby_count: Number(consensus.count || 0),
+      nearby_distance_m: Number(consensus.min_distance_m || 0),
+      candidates: exactCandidates.concat(nearbyCandidates).slice(0, 20)
+    };
+  }
+
+  if (exactSublocality) {
+    return {
+      ok: true,
+      neighborhood: clean_(exactSublocality.name),
+      confidence: 'low',
+      source: 'exact_sublocality',
+      candidates: exactCandidates.concat(nearbyCandidates).slice(0, 20)
+    };
+  }
+
+  const nearestSingle = nearbyHits
+    .slice()
+    .sort(function(a, b) {
+      return Number(a.distance_m || 0) - Number(b.distance_m || 0) ||
+        Number(a.score || 0) - Number(b.score || 0);
+    })[0];
+
+  if (nearestSingle) {
+    return {
+      ok: true,
+      neighborhood: clean_(nearestSingle.name),
+      confidence: 'low',
+      source: 'nearby_single',
+      nearby_distance_m: Number(nearestSingle.distance_m || 0),
+      candidates: exactCandidates.concat(nearbyCandidates).slice(0, 20)
+    };
+  }
+
+  const broadFallback = exactCandidates.find(function(item) {
+    return item.type === 'administrative_area_level_4' ||
+      item.type === 'administrative_area_level_3';
+  });
+
+  if (broadFallback) {
+    return {
+      ok: true,
+      neighborhood: clean_(broadFallback.name),
+      confidence: 'low',
+      source: 'administrative_fallback',
+      candidates: exactCandidates.slice(0, 12)
+    };
+  }
 
   return {
     ok: true,
-    neighborhood: neighborhood,
-    candidates: cleanedCandidates,
-    source: 'apps_script_maps'
+    neighborhood: '',
+    confidence: 'none',
+    source: 'no_match',
+    candidates: exactCandidates.concat(nearbyCandidates).slice(0, 20)
   };
 }
 

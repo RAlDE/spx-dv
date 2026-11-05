@@ -542,6 +542,10 @@ function isPlausibleNeighborhoodName_(value) {
   const normalized = normalizeNeighborhoodName_(text);
   if (!normalized || normalized.length < 2) return false;
   if (/^\d+[a-z]?$/.test(normalized)) return false;
+  // Evita aceitar bairro visivelmente truncado, como "Volta De C".
+  // Google segue primeira fonte; se nenhum candidato confiável restar,
+  // o módulo recorre ao Bairro Principal da AT.
+  if (/\b(?:de|da|do|dos|das)\s+[a-z]$/i.test(normalized)) return false;
 
   if (/^(casa|apto|apartamento|bloco|lote|quadra|torre|unidade)\s*(n[ºo.]?\s*)?[\w.-]+$/i.test(normalized)) {
     return false;
@@ -1934,6 +1938,10 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     }catch(error){setStatus('Filtro indisponível: '+String(error&&error.message||error));}
   }
   function clearFilters(){
+    var day=byId('dayFilter');
+    if(day && day.options.length) day.selectedIndex=0;
+    rebuildOperatorOptions();
+    rebuildColumnOptions();
     if(byId('operator'))byId('operator').value='';
     if(byId('generalSearch'))byId('generalSearch').value='';
     Array.prototype.forEach.call(document.querySelectorAll('.column-filter'),function(x){x.value='';});

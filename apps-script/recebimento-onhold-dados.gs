@@ -1483,8 +1483,9 @@ function clearConfirmedDashboard() {
 }
 
 function changeOldPendingDashboardEntries(occurrenceKeys, action) {
-  const keys = Array.from(new Set((Array.isArray(occurrenceKeys) ? occurrenceKeys : [])
-    .map(key => clean_(key)).filter(Boolean))).slice(0, 100);
+  const requested = Array.isArray(occurrenceKeys) ? occurrenceKeys : [];
+  if (requested.length > 100) return { ok: false, error: 'Máximo de 100 pendências antigas por operação.' };
+  const keys = Array.from(new Set(requested.map(key => clean_(key)).filter(Boolean)));
   if (!keys.length) return { ok: false, error: 'Selecione pelo menos um BR antigo.' };
   if (action !== 'cancel') return { ok: false, error: 'Ação não autorizada.' };
 
@@ -1503,6 +1504,8 @@ function changeOldPendingDashboardEntries(occurrenceKeys, action) {
     let cancelled = 0;
     let alreadySent = 0;
     let skipped = 0;
+    const cancelledRows = [];
+    const sentRows = [];
 
     values.forEach(function(row, index) {
       const record = dashboardRecordFromRow_(row);
@@ -1515,14 +1518,26 @@ function changeOldPendingDashboardEntries(occurrenceKeys, action) {
         return;
       }
       if (known.has(record.occurrenceKey)) {
-        sheet.getRange(index + 2, 13, 1, 2).setValues([['confirmed', Date.now()]]);
+        sentRows.push(index + 2);
         alreadySent++;
       } else {
-        sheet.getRange(index + 2, 13, 1, 2).setValues([['cancelled', Date.now()]]);
+        cancelledRows.push(index + 2);
         cancelled++;
       }
     });
     skipped += wanted.size;
+    // Grava em grupos contíguos, evitando centenas de setValues sob o mesmo lock.
+    const now = Date.now();
+    function writeStatusGroup(rowNumbers, status) {
+      const unique = Array.from(new Set(rowNumbers)).sort((a,b)=>a-b);
+      groupConsecutiveAssignments_(unique.map(row=>({row}))).forEach(group=>{
+        sheet.getRange(group[0].row, 13, group.length, 2).setValues(
+          group.map(()=>[status, now])
+        );
+      });
+    }
+    writeStatusGroup(sentRows, 'confirmed');
+    writeStatusGroup(cancelledRows, 'cancelled');
     if (cancelled || alreadySent) {
       SpreadsheetApp.flush();
       touchDashboardRevision_();

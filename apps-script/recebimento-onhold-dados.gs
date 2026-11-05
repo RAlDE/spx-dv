@@ -1964,6 +1964,88 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
         select.appendChild(option);
       });
       if(Array.prototype.some.call(select.options,function(o){return o.value===selected;}))select.value=selected;
+      updateFilterTrigger(select);
+    });
+  }
+  var openFilterSelect=null;
+  function updateFilterTrigger(select){
+    if(!select)return;
+    var col=select.getAttribute('data-col');
+    var button=Array.prototype.find.call(document.querySelectorAll('.column-filter-open'),function(x){
+      return x.getAttribute('data-col')===col;
+    });
+    if(!button)return;
+    var selected=select.options[select.selectedIndex];
+    button.textContent=(selected&&select.value ? selected.textContent : 'Todos')+' ▾';
+    button.classList.toggle('active',Boolean(select.value));
+    button.title=button.textContent;
+  }
+  function closeFilterPopup(){
+    var popup=byId('filterPopup');if(popup)popup.hidden=true;
+    openFilterSelect=null;
+  }
+  function fillFilterChoices(){
+    var list=byId('filterChoices'),search=byId('filterSearch');
+    if(!list||!openFilterSelect)return;
+    var query=normalize(search&&search.value||'');
+    list.innerHTML='';
+    var found=0;
+    Array.prototype.forEach.call(openFilterSelect.options,function(option){
+      if(query&&normalize(option.textContent).indexOf(query)<0)return;
+      found++;
+      var choice=document.createElement('button');
+      choice.type='button';choice.className='filter-choice';
+      choice.textContent=option.textContent;
+      choice.setAttribute('role','option');
+      choice.setAttribute('aria-selected',String(openFilterSelect.value===option.value));
+      choice.addEventListener('click',function(){
+        var select=openFilterSelect;
+        if(!select)return;
+        select.value=option.value;
+        updateFilterTrigger(select);
+        closeFilterPopup();
+        applyFilters();
+      });
+      list.appendChild(choice);
+    });
+    if(!found){
+      var empty=document.createElement('div');
+      empty.className='filter-choice-empty';
+      empty.textContent='Nenhum valor encontrado';
+      list.appendChild(empty);
+    }
+  }
+  function openColumnPopup(button){
+    var col=button&&button.getAttribute('data-col');
+    var select=Array.prototype.find.call(document.querySelectorAll('.column-filter'),function(x){
+      return x.getAttribute('data-col')===col;
+    });
+    var popup=byId('filterPopup'),search=byId('filterSearch');
+    if(!select||!popup||!search)return;
+    openFilterSelect=select;
+    search.value='';fillFilterChoices();
+    popup.hidden=false;
+    var rect=button.getBoundingClientRect();
+    var width=Math.min(320,window.innerWidth-16);
+    popup.style.left=Math.max(8,Math.min(rect.left,window.innerWidth-width-8))+'px';
+    var top=rect.bottom+5;
+    if(top+340>window.innerHeight)top=Math.max(8,rect.top-340);
+    popup.style.top=top+'px';
+    search.focus();
+  }
+  function installFilterPopup(){
+    Array.prototype.forEach.call(document.querySelectorAll('.column-filter-open'),function(button){
+      button.addEventListener('click',function(){openColumnPopup(button);});
+    });
+    if(byId('filterSearch'))byId('filterSearch').addEventListener('input',fillFilterChoices);
+    document.addEventListener('pointerdown',function(event){
+      var popup=byId('filterPopup');
+      if(!popup||popup.hidden)return;
+      if(popup.contains(event.target)||event.target.closest('.column-filter-open'))return;
+      closeFilterPopup();
+    });
+    document.addEventListener('keydown',function(event){
+      if(event.key==='Escape')closeFilterPopup();
     });
   }
   function applyFilters(){
@@ -2006,7 +2088,10 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     rebuildColumnOptions();
     if(byId('operator'))byId('operator').value='';
     if(byId('generalSearch'))byId('generalSearch').value='';
-    Array.prototype.forEach.call(document.querySelectorAll('.column-filter'),function(x){x.value='';});
+    Array.prototype.forEach.call(document.querySelectorAll('.column-filter'),function(x){
+      x.value='';updateFilterTrigger(x);
+    });
+    closeFilterPopup();
     applyFilters();
   }
 
@@ -2045,6 +2130,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     if(byId('oldPendingLabel'))byId('oldPendingLabel').textContent=String(Number(state.old_pending_count||0));
     rebuildOperatorOptions();
     rebuildColumnOptions();
+    closeFilterPopup();
 
     var top=byId('topDrivers');
     if(top) top.innerHTML=String(state.top_html || '');
@@ -2230,6 +2316,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     });
     rebuildOperatorOptions();rebuildColumnOptions();
     bindActionButtons();
+    installFilterPopup();
     applyFilters();
     setStatus('Carregando dados atuais...');
     refreshDashboardLive(false);

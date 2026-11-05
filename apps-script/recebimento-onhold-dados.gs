@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.65';
+const SPX_DV_BUILD = '1.3.66';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -162,7 +162,9 @@ function dashboardCheckResponse_(e) {
       today: today,
       visible_today: effectiveDay === today,
       received_at: record.receivedAt,
-      status: record.status
+      status: record.status,
+      agency: record.agency,
+      neighborhood: record.neighborhood
     });
   } catch (error) {
     return jsonpResponse_(e, {
@@ -996,6 +998,11 @@ function dashboardRowValues_(record) {
   ]];
 }
 
+function isValidDashboardNeighborhood_(value) {
+  const name = clean_(value);
+  return Boolean(name && normalizeNeighborhoodName_(name) !== 'atualizar base');
+}
+
 function upsertDashboardRecord_(sheet, incoming) {
   const row = findDashboardRow_(sheet, incoming.occurrenceKey);
   let current = null;
@@ -1019,7 +1026,12 @@ function upsertDashboardRecord_(sheet, incoming) {
     driverId: incoming.driverId || current && current.driverId || '',
     driverName: incoming.driverName || current && current.driverName || '',
     agency: incoming.agency || current && current.agency || '',
-    neighborhood: incoming.neighborhood || current && current.neighborhood || '',
+    // Nunca trocar um bairro verdadeiro pelo marcador antigo "Atualizar base".
+    neighborhood: isValidDashboardNeighborhood_(incoming.neighborhood)
+      ? incoming.neighborhood
+      : (isValidDashboardNeighborhood_(current && current.neighborhood)
+          ? current.neighborhood
+          : (incoming.neighborhood || current && current.neighborhood || '')),
     occurrenceTimestamp: incoming.occurrenceTimestamp || current && current.occurrenceTimestamp || 0,
     flow: incoming.flow || current && current.flow || '',
     operatorLogin: current && current.operatorLogin || incoming.operatorLogin || '',

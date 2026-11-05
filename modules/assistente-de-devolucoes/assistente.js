@@ -3717,10 +3717,13 @@
       const store = await readDashboardQueue();
       const now = Date.now();
       const today = saoPauloDay();
-      // Apenas ocorrências de HOJE já confirmadas no Dashboard. Sem novo recebimento.
+      const oldestAllowedDay = saoPauloDay(Date.now() - 2 * 86400000);
+      // Recupera também pendências dos dois dias anteriores: a meia-noite
+      // não deve impedir enriquecimento de BR já recebido e ainda não enviado.
       const candidates = Object.values(store.records || {})
         .filter(record => record && record.key &&
-          String(record.received_day || '') === today &&
+          String(record.received_day || '') >= oldestAllowedDay &&
+          String(record.received_day || '') <= today &&
           record.central_sync === 'synced' &&
           dashboardNeedsEnrichment(record) &&
           Number(dashboardEnrichmentRetryAt.get(record.key)?.next || 0) <= now)
@@ -3743,6 +3746,16 @@
         });
 
         const existing = await checkCentralDashboardOccurrence(record.key);
+        if (existing?.ok && existing?.found &&
+            String(existing.shipment_id || '').toUpperCase() === String(record.shipment_id || '').toUpperCase() &&
+            String(existing.status || '').toLowerCase() === 'confirmed') {
+          // Dados já recebeu esta ocorrência. Corrigir só a ficha do Dashboard
+          // faria o histórico divergir da planilha; requer conciliação separada.
+          receiveDiagPush('dashboard_enrichment_already_sent_requires_data_review', {
+            shipment_id: record.shipment_id, occurrence_key: record.key
+          });
+          continue;
+        }
         if (existing?.ok && existing?.found &&
             String(existing.shipment_id || '').toUpperCase() === String(record.shipment_id || '').toUpperCase() &&
             !dashboardNeedsEnrichment(existing)) {

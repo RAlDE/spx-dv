@@ -707,10 +707,11 @@
     }
   }
 
-  async function checkCentralDashboardOccurrence(occurrenceKey) {
+  async function checkCentralDashboardOccurrence(occurrenceKey, verifyDataAgency = false) {
     if (!occurrenceKey) return null;
     return await requestCentralJsonp('dashboard_check', {
-      occurrence_key: occurrenceKey
+      occurrence_key: occurrenceKey,
+      ...(verifyDataAgency ? { check_data_agency: '1' } : {})
     }, 5500);
   }
 
@@ -762,7 +763,10 @@
 
       for (const checkDelay of [250, 700, 1400]) {
         if (checkDelay) await sleep(checkDelay);
-        const check = await checkCentralDashboardOccurrence(occurrenceKey);
+        const expectedAgency = String(payload?.agency || '').trim();
+        const needsDataVerify = Boolean(payload?.repair_confirmed_fields &&
+          payload?.agency_verified_by_at && expectedAgency);
+        const check = await checkCentralDashboardOccurrence(occurrenceKey, needsDataVerify);
         const hasOccurrence = Boolean(
           check?.ok && check?.found &&
           String(check?.occurrence_key || '') === occurrenceKey &&
@@ -770,21 +774,28 @@
         );
         // Compatibilidade temporária: no build 1.3.65 só havia leitura da chave.
         const hasFieldReadback = ['1.3.66', '1.3.67', DASHBOARD_SYNC_GENERATION].includes(String(check?.build || ''));
-        const expectedAgency = String(payload?.agency || '').trim();
         const expectedNeighborhood = String(payload?.neighborhood || '').trim();
         const agencyMatches = !hasFieldReadback || !expectedAgency ||
           String(check?.agency || '').trim().toUpperCase() === expectedAgency.toUpperCase();
         const neighborhoodMatches = !hasFieldReadback || !isUsefulNeighborhood(expectedNeighborhood) ||
           normalize(check?.neighborhood) === normalize(expectedNeighborhood);
-        if (hasOccurrence && (!agencyMatches || !neighborhoodMatches)) {
+        // Em 1.3.68, reparar BR já ENVIADO exige G conferida na aba Dados.
+        const dataAgencyMatches = !needsDataVerify ||
+          String(check?.status || '').toLowerCase() !== 'confirmed' ||
+          String(check?.build || '') !== DASHBOARD_SYNC_GENERATION ||
+          (Boolean(check?.data_agency_verified) &&
+            String(check?.data_agency || '').trim().toUpperCase() === expectedAgency.toUpperCase());
+        if (hasOccurrence && (!agencyMatches || !neighborhoodMatches || !dataAgencyMatches)) {
           lastFieldsMismatch = {
             expected_agency: expectedAgency,
             actual_agency: String(check?.agency || ''),
             expected_neighborhood: expectedNeighborhood,
-            actual_neighborhood: String(check?.neighborhood || '')
+            actual_neighborhood: String(check?.neighborhood || ''),
+            data_agency_verified: Boolean(check?.data_agency_verified),
+            actual_data_agency: String(check?.data_agency || '')
           };
         }
-        if (hasOccurrence && agencyMatches && neighborhoodMatches) {
+        if (hasOccurrence && agencyMatches && neighborhoodMatches && dataAgencyMatches) {
           receiveDiagPush('central_send_confirmed', {
             action,
             shipment_id: payload?.shipment_id || '',
@@ -794,7 +805,10 @@
             received_day: String(check?.received_day || ''),
             today: String(check?.today || ''),
             visible_today: Boolean(check?.visible_today),
-            fields_verified: hasFieldReadback
+            fields_verified: hasFieldReadback,
+            data_agency_verified: needsDataVerify && String(check?.status || '').toLowerCase() === 'confirmed'
+              ? Boolean(check?.data_agency_verified)
+              : null
           });
           return true;
         }

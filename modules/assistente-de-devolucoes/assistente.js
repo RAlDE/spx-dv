@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.65';
+  const MODULE_VERSION = '1.3.66';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -35,12 +35,17 @@
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
   const RECEIVE_INBOX_KEY = 'spxdv:confirmed-receive-inbox-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.65';
+  const DASHBOARD_SYNC_GENERATION = '1.3.66';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
   let centralHealthCache = { checkedAt: 0, ok: false, build: '' };
   let receiveInboxReplayTimer = null;
+  let dashboardEnrichmentTimer = null;
+  let dashboardEnrichmentStartTimer = null;
+  let dashboardEnrichmentWakeTimer = null;
+  let dashboardEnrichmentRunning = false;
+  const dashboardEnrichmentRetryAt = new Map();
 
   if (document.documentElement.dataset[APP_MARKER] === 'true') return;
   document.documentElement.dataset[APP_MARKER] = 'true';
@@ -227,6 +232,17 @@
     await dashboardDbRequest(tx.objectStore(DASHBOARD_DB_STORE).delete(key));
   }
 
+  function isUsefulNeighborhood(value) {
+    const name = String(value || '').trim();
+    return Boolean(name && normalize(name) !== 'atualizar base');
+  }
+
+  function dashboardNeedsEnrichment(record) {
+    const flow = String(record?.flow || '').trim().toLowerCase();
+    return !isUsefulNeighborhood(record?.neighborhood) ||
+      (!flow.startsWith('return') && !String(record?.agency || '').trim());
+  }
+
   function mergeDashboardRecord(previous, incoming) {
     const now = Date.now();
     const receivedAt = Number(previous?.received_at || incoming?.received_at || incoming?.captured_at || now);
@@ -239,6 +255,10 @@
       received_at: receivedAt,
       received_day: String(previous?.received_day || incoming?.received_day || saoPauloDay(receivedAt)),
       captured_at: Number(previous?.captured_at || incoming?.captured_at || receivedAt),
+      agency: String(incoming?.agency || previous?.agency || '').trim(),
+      neighborhood: isUsefulNeighborhood(incoming?.neighborhood)
+        ? String(incoming.neighborhood).trim()
+        : String(previous?.neighborhood || incoming?.neighborhood || '').trim(),
       updated_at: now,
       status: String(previous?.status || incoming?.status || 'captured')
     };
@@ -636,7 +656,7 @@
     const result = await requestCentralJsonp('health', {}, 5000);
     const ok = Boolean(
       result?.ok &&
-      String(result?.build || '') === DASHBOARD_SYNC_GENERATION &&
+      ['1.3.65', DASHBOARD_SYNC_GENERATION].includes(String(result?.build || '')) &&
       result?.capabilities?.dashboard_post === true &&
       result?.capabilities?.dashboard_check === true &&
       result?.capabilities?.dashboard_data === true
@@ -733,6 +753,7 @@
       return false;
     }
 
+    let lastFieldsMismatch = null;
     for (const delay of [0, 900, 2200]) {
       if (delay) await sleep(delay);
 
@@ -741,12 +762,28 @@
       for (const checkDelay of [250, 700, 1400]) {
         if (checkDelay) await sleep(checkDelay);
         const check = await checkCentralDashboardOccurrence(occurrenceKey);
-        if (
-          check?.ok &&
-          check?.found &&
+        const hasOccurrence = Boolean(
+          check?.ok && check?.found &&
           String(check?.occurrence_key || '') === occurrenceKey &&
           String(check?.shipment_id || '').toUpperCase() === String(payload?.shipment_id || '').toUpperCase()
-        ) {
+        );
+        // Compatibilidade temporária: no build 1.3.65 só havia leitura da chave.
+        const hasFieldReadback = String(check?.build || '') === DASHBOARD_SYNC_GENERATION;
+        const expectedAgency = String(payload?.agency || '').trim();
+        const expectedNeighborhood = String(payload?.neighborhood || '').trim();
+        const agencyMatches = !hasFieldReadback || !expectedAgency ||
+          String(check?.agency || '').trim().toUpperCase() === expectedAgency.toUpperCase();
+        const neighborhoodMatches = !hasFieldReadback || !isUsefulNeighborhood(expectedNeighborhood) ||
+          normalize(check?.neighborhood) === normalize(expectedNeighborhood);
+        if (hasOccurrence && (!agencyMatches || !neighborhoodMatches)) {
+          lastFieldsMismatch = {
+            expected_agency: expectedAgency,
+            actual_agency: String(check?.agency || ''),
+            expected_neighborhood: expectedNeighborhood,
+            actual_neighborhood: String(check?.neighborhood || '')
+          };
+        }
+        if (hasOccurrence && agencyMatches && neighborhoodMatches) {
           receiveDiagPush('central_send_confirmed', {
             action,
             shipment_id: payload?.shipment_id || '',
@@ -755,7 +792,8 @@
             build: String(check?.build || centralHealthCache.build || ''),
             received_day: String(check?.received_day || ''),
             today: String(check?.today || ''),
-            visible_today: Boolean(check?.visible_today)
+            visible_today: Boolean(check?.visible_today),
+            fields_verified: hasFieldReadback
           });
           return true;
         }
@@ -766,7 +804,8 @@
       action,
       shipment_id: payload?.shipment_id || '',
       occurrence_key: occurrenceKey,
-      error: 'POST enviado, mas o read-back não encontrou a ocorrência'
+      error: lastFieldsMismatch ? 'POST não confirmou os campos Bairro/3PL' : 'POST enviado, mas o read-back não encontrou a ocorrência',
+      ...(lastFieldsMismatch || {})
     });
     return false;
   }
@@ -3348,6 +3387,37 @@
   }
 
 
+  async function markLocalDashboardEnrichment(occurrenceKey, payload) {
+    if (!occurrenceKey || !payload) return;
+    const patched = record => ({
+      ...record,
+      agency: String(payload.agency || record.agency || '').trim(),
+      neighborhood: isUsefulNeighborhood(payload.neighborhood)
+        ? String(payload.neighborhood).trim()
+        : String(record.neighborhood || payload.neighborhood || '').trim()
+    });
+    try {
+      await ensureDashboardMigration();
+      const current = await dashboardDbGet(occurrenceKey);
+      if (current) await dashboardDbPut(patched(current));
+    } catch {
+      try {
+        const legacy = readLegacyDashboardQueue();
+        if (!legacy.records[occurrenceKey]) return;
+        legacy.records[occurrenceKey] = patched(legacy.records[occurrenceKey]);
+        localStorage.setItem(DASHBOARD_QUEUE_KEY, JSON.stringify(legacy));
+      } catch {}
+    }
+  }
+
+  function scheduleDashboardEnrichmentSoon() {
+    if (dashboardEnrichmentWakeTimer || !isTargetRoute()) return;
+    dashboardEnrichmentWakeTimer = window.setTimeout(() => {
+      dashboardEnrichmentWakeTimer = null;
+      void repairIncompleteDashboardEntries(2);
+    }, 12000);
+  }
+
   async function repairExistingDashboardOccurrence(shipmentId, attempt, returnFlow, neighborhood) {
     const shipment = String(shipmentId || '').trim().toUpperCase();
     const occurrenceKey = dataSheetOccurrenceKey(shipment, attempt?.ctime);
@@ -3376,6 +3446,9 @@
 
       const repaired = await sendCentralDashboard(payload, 'dashboard_upsert');
       if (repaired) {
+        if (centralHealthCache.build === DASHBOARD_SYNC_GENERATION) {
+          await markLocalDashboardEnrichment(occurrenceKey, payload);
+        }
         receiveDiagPush('dashboard_existing_repaired', {
           shipment_id: shipment,
           occurrence_key: occurrenceKey,
@@ -3439,6 +3512,7 @@
       // IMPORTANTE: esta etapa alimenta SOMENTE o Dashboard/fila central.
       // A aba Dados é gravada exclusivamente pelo botão de envio em lote do Dashboard.
       const centralConfirmed = await saveDashboardRecord(payload);
+      if (centralConfirmed && dashboardNeedsEnrichment(payload)) scheduleDashboardEnrichmentSoon();
 
       // Só encerramos a fila de retry quando o registro foi confirmado no servidor.
       // O dado local permanece salvo mesmo se o Web App estiver temporariamente indisponível.
@@ -3515,7 +3589,7 @@
     return Boolean(captured);
   }
 
-  async function processConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0) {
+  async function processConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0, existingOnly = false) {
     if (!shipmentId || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     receiveDiagPush('process_start', {
@@ -3611,6 +3685,12 @@
         neighborhood_source: String(neighborhoodDetails?.source || ''),
         neighborhood_confidence: String(neighborhoodDetails?.confidence || '')
       });
+      if (existingOnly) {
+        // Apenas repara uma occurrence_key já salva; nunca transforma preview em captura.
+        return await repairExistingDashboardOccurrence(
+          shipmentId, currentOccurrence, Boolean(cycleStart), neighborhood
+        );
+      }
       return await captureConfirmedOccurrenceToDashboard(
         shipmentId,
         currentOccurrence,
@@ -3627,6 +3707,65 @@
       });
       console.warn('[SPX-DV] Falha ao montar ficha do recebimento confirmado', shipmentId, error);
       return false;
+    }
+  }
+
+  async function repairIncompleteDashboardEntries(limit = 2) {
+    if (dashboardEnrichmentRunning || !authorized || !isTargetRoute()) return;
+    dashboardEnrichmentRunning = true;
+    try {
+      const store = await readDashboardQueue();
+      const now = Date.now();
+      const today = saoPauloDay();
+      // Apenas ocorrências de HOJE já confirmadas no Dashboard. Sem novo recebimento.
+      const candidates = Object.values(store.records || {})
+        .filter(record => record && record.key &&
+          String(record.received_day || '') === today &&
+          record.central_sync === 'synced' &&
+          dashboardNeedsEnrichment(record) &&
+          Number(dashboardEnrichmentRetryAt.get(record.key)?.next || 0) <= now)
+        .sort((a, b) => Number(b.received_at || 0) - Number(a.received_at || 0))
+        .slice(0, Math.max(1, Math.min(3, Number(limit) || 2)));
+
+      for (const record of candidates) {
+        if (!isTargetRoute() || !authorized) break;
+        const prev = dashboardEnrichmentRetryAt.get(record.key);
+        const attempts = Number(prev?.attempts || 0) + 1;
+        // Backoff e limite de carga: não atrapalhar o recebimento rápido.
+        const delay = Math.min(15 * 60 * 1000, 20000 * Math.pow(2, Math.min(6, attempts - 1)));
+        dashboardEnrichmentRetryAt.set(record.key, { attempts, next: Date.now() + delay });
+        receiveDiagPush('dashboard_enrichment_retry', {
+          shipment_id: record.shipment_id,
+          occurrence_key: record.key,
+          attempt: attempts,
+          missing_agency: !String(record.agency || '').trim(),
+          missing_neighborhood: !isUsefulNeighborhood(record.neighborhood)
+        });
+
+        const existing = await checkCentralDashboardOccurrence(record.key);
+        if (existing?.ok && existing?.found &&
+            String(existing.shipment_id || '').toUpperCase() === String(record.shipment_id || '').toUpperCase() &&
+            !dashboardNeedsEnrichment(existing)) {
+          await markLocalDashboardEnrichment(record.key, existing);
+          receiveDiagPush('dashboard_enrichment_already_complete', { shipment_id: record.shipment_id });
+          continue;
+        }
+
+        const repaired = await processConfirmedReceive(
+          String(record.shipment_id || ''),
+          String(record.operator_login || ''),
+          Number(record.received_at || 0),
+          true
+        );
+        receiveDiagPush(repaired ? 'dashboard_enrichment_repair_sent' : 'dashboard_enrichment_retry_needed', {
+          shipment_id: record.shipment_id,
+          occurrence_key: record.key
+        });
+      }
+    } catch (error) {
+      receiveDiagPush('dashboard_enrichment_error', { error: String(error?.message || error || '') });
+    } finally {
+      dashboardEnrichmentRunning = false;
     }
   }
 
@@ -4419,6 +4558,12 @@
     monitor = null;
     if (receiveInboxReplayTimer) clearInterval(receiveInboxReplayTimer);
     receiveInboxReplayTimer = null;
+    if (dashboardEnrichmentTimer) clearInterval(dashboardEnrichmentTimer);
+    if (dashboardEnrichmentStartTimer) clearTimeout(dashboardEnrichmentStartTimer);
+    if (dashboardEnrichmentWakeTimer) clearTimeout(dashboardEnrichmentWakeTimer);
+    dashboardEnrichmentTimer = null;
+    dashboardEnrichmentStartTimer = null;
+    dashboardEnrichmentWakeTimer = null;
     currentShipment = '';
     diagnosticView = false;
   }
@@ -4456,6 +4601,17 @@
         if (!isTargetRoute() || !authorized) return;
         replayConfirmedReceiveInbox(20);
       }, 60000);
+    }
+    if (!dashboardEnrichmentTimer) {
+      dashboardEnrichmentTimer = window.setInterval(() => {
+        void repairIncompleteDashboardEntries(2);
+      }, 45000);
+    }
+    if (!dashboardEnrichmentStartTimer) {
+      dashboardEnrichmentStartTimer = window.setTimeout(() => {
+        dashboardEnrichmentStartTimer = null;
+        void repairIncompleteDashboardEntries(2);
+      }, 18000);
     }
     ensureShipmentKeyListener();
   }

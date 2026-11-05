@@ -1258,7 +1258,10 @@ function dashboardLiveState_(data) {
       'servidor ' + SPX_DV_BUILD +
       ' · base ' + records.length +
       ' · hoje ' + todayRecords.length,
-    rows_html: rowsHtml,
+    rows_html: dashboardRowsHtml_(records),
+    old_pending_rows_html: dashboardOldPendingHtml_(oldPending),
+    day_options_html: dashboardDayOptionsHtml_(records, source.today),
+    today: source.today,
     top_html: dashboardTopDriversHtml_(todayRecords),
     operator_options_html: operatorOptionsHtml,
     warning_html: warningHtml,
@@ -1559,6 +1562,42 @@ function dashboardFormatSeconds_(value) {
   );
 }
 
+function dashboardDayOptionsHtml_(records, today) {
+  const days = new Set([today]);
+  (records || []).forEach(function(r) {
+    const day = clean_(r && r.received_day);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) days.add(day);
+  });
+  return Array.from(days).sort().reverse().map(function(day) {
+    return '<option value="' + dashboardHtmlEscape_(day) + '">' +
+      (day === today ? 'Hoje · ' : '') + day.split('-').reverse().join('/') + '</option>';
+  }).join('');
+}
+function dashboardRowsHtml_(records) {
+  return (records || []).slice().sort(function(a,b) {
+    return Number(b.received_at||0)-Number(a.received_at||0);
+  }).map(function(r) {
+    const status=clean_(r.status).toLowerCase();
+    const label=status==='confirmed'?'Enviado':status==='cancelled'?'Cancelado da fila':'Pendente';
+    const cells=[
+      dashboardFormatMillis_(r.received_at), r.shipment_id, r.reason, r.driver_id,
+      r.driver_name, r.agency, r.neighborhood, dashboardFormatSeconds_(r.occurrence_timestamp),
+      r.operator_login, label
+    ];
+    return '<tr data-day="' + dashboardHtmlEscape_(r.received_day) + '" data-status="' +
+      dashboardHtmlEscape_(status) + '">' + cells.map(function(value,index) {
+        return '<td>' + (index===1?'<strong>':'')+dashboardHtmlEscape_(value)+(index===1?'</strong>':'')+'</td>';
+      }).join('')+'</tr>';
+  }).join('');
+}
+function dashboardOldPendingHtml_(records) {
+  return (records||[]).map(function(r) {
+    return '<tr><td><input type="checkbox" class="old-select" value="'+
+      dashboardHtmlEscape_(r.occurrence_key)+'"></td>'+
+      [r.shipment_id,dashboardFormatMillis_(r.received_at),r.reason,r.driver_name,r.agency,r.neighborhood]
+        .map(function(v){return '<td>'+dashboardHtmlEscape_(v)+'</td>';}).join('')+'</tr>';
+  }).join('');
+}
 function dashboardTopDriversHtml_(records) {
   const drivers = new Map();
 
@@ -1716,6 +1755,9 @@ function dashboardHtml_(initialData) {
     .join('');
 
   const serverTopDriversHtml = dashboardTopDriversHtml_(todayRecords);
+  const serverHistoryRowsHtml = dashboardRowsHtml_(records);
+  const serverOldPendingRowsHtml = dashboardOldPendingHtml_(oldPending);
+  const serverDayOptionsHtml = dashboardDayOptionsHtml_(records, clean_(data.today) || Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd'));
   const serverBuildInfo = data.loading
     ? 'servidor ' + SPX_DV_BUILD + ' · carregando dados atuais...'
     : 'servidor ' + SPX_DV_BUILD +

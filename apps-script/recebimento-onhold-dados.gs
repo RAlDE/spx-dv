@@ -1835,71 +1835,93 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     return Array.prototype.slice.call(document.querySelectorAll('#rows tr'));
   }
 
+
   function selectedOperatorCount(){
     var select=byId('operator');
-    if(!select || select.selectedIndex < 0) return 0;
-    var option=select.options[select.selectedIndex];
-    return Number(option && option.getAttribute('data-count') || 0);
+    if(!select || select.selectedIndex<0)return 0;
+    return Number(select.options[select.selectedIndex].getAttribute('data-count')||0);
   }
-
+  function rebuildOperatorOptions(){
+    var select=byId('operator');if(!select)return;
+    var selected=select.value,day=byId('dayFilter')&&byId('dayFilter').value,counts={},total=0;
+    rows().forEach(function(row){
+      if(day&&row.getAttribute('data-day')!==day)return;
+      total++;
+      var login=String(row.cells[8]&&row.cells[8].textContent||'').trim().toLowerCase();
+      if(login)counts[login]=(counts[login]||0)+1;
+    });
+    select.innerHTML='';
+    var all=document.createElement('option');
+    all.value='';all.textContent='Todos os operadores ('+total+')';
+    all.setAttribute('data-count',String(total));select.appendChild(all);
+    Object.keys(counts).sort().forEach(function(login){
+      var o=document.createElement('option');
+      o.value=login;o.textContent=login+' ('+counts[login]+')';
+      o.setAttribute('data-count',String(counts[login]));select.appendChild(o);
+    });
+    if(Array.prototype.some.call(select.options,function(o){return o.value===selected;}))select.value=selected;
+  }
+  function rebuildColumnOptions(){
+    var day=byId('dayFilter')&&byId('dayFilter').value;
+    var eligible=rows().filter(function(r){return !day||r.getAttribute('data-day')===day;});
+    Array.prototype.forEach.call(document.querySelectorAll('.column-filter'),function(select){
+      var selected=select.value,col=Number(select.getAttribute('data-col')),values=new Map();
+      eligible.forEach(function(row){
+        var raw=String(row.cells[col]&&row.cells[col].textContent||'').trim(),key=normalize(raw);
+        if(!values.has(key))values.set(key,{label:raw,count:0});
+        values.get(key).count++;
+      });
+      select.innerHTML='';
+      var all=document.createElement('option');all.value='';all.textContent='Todos';select.appendChild(all);
+      Array.from(values.entries()).sort(function(a,b){
+        if(!a[0])return -1;if(!b[0])return 1;
+        return a[1].label.localeCompare(b[1].label,'pt-BR');
+      }).forEach(function(pair){
+        var option=document.createElement('option');
+        option.value=pair[0]||'__spxdv_vazio__';
+        option.textContent=(pair[0]?pair[1].label:'(Vazio)')+' ('+pair[1].count+')';
+        select.appendChild(option);
+      });
+      if(Array.prototype.some.call(select.options,function(o){return o.value===selected;}))select.value=selected;
+    });
+  }
   function applyFilters(){
     try{
-      var operator=normalize(byId('operator') && byId('operator').value);
-      var general=normalize(byId('generalSearch') && byId('generalSearch').value);
-      var columnInputs=Array.prototype.slice.call(document.querySelectorAll('.column-filter'));
-      var columnFilters={};
-      columnInputs.forEach(function(input){
-        columnFilters[Number(input.getAttribute('data-col'))]=normalize(input.value);
+      var day=byId('dayFilter')&&byId('dayFilter').value;
+      var operator=normalize(byId('operator')&&byId('operator').value);
+      var general=normalize(byId('generalSearch')&&byId('generalSearch').value);
+      var colFilters={};
+      Array.prototype.forEach.call(document.querySelectorAll('.column-filter'),function(input){
+        colFilters[Number(input.getAttribute('data-col'))]=input.value;
       });
-
-      var allRows=rows();
-      var visible=0;
+      var allRows=rows(),visible=0,totalDay=0;
       allRows.forEach(function(row){
-        var cells=Array.prototype.slice.call(row.cells || []);
-        var cellTexts=cells.map(function(cell){ return normalize(cell.textContent); });
-        var rowText=cellTexts.join(' ');
-        var login=cellTexts[8] || '';
-
-        var ok=(!operator || login === operator) && (!general || rowText.indexOf(general) >= 0);
-        if(ok){
-          Object.keys(columnFilters).some(function(key){
-            var filter=columnFilters[key];
-            if(filter && (cellTexts[Number(key)] || '').indexOf(filter) < 0){
-              ok=false;
-              return true;
-            }
-            return false;
-          });
-        }
-
-        row.hidden=!ok;
-        if(ok) visible+=1;
+        var cells=Array.prototype.map.call(row.cells||[],function(cell){return normalize(cell.textContent);});
+        var sameDay=!day||row.getAttribute('data-day')===day;
+        if(sameDay)totalDay++;
+        var login=cells[8]||'';
+        var ok=sameDay&&(!operator||login===operator)&&(!general||cells.join(' ').indexOf(general)>=0);
+        if(ok)Object.keys(colFilters).some(function(key){
+          var filter=colFilters[key],cell=cells[Number(key)]||'';
+          if(filter&&(filter==='__spxdv_vazio__'?cell!=='':cell!==filter)){
+            ok=false;return true;
+          }
+          return false;
+        });
+        row.hidden=!ok;if(ok)visible++;
       });
-
-      var total=allRows.length;
-      var info=byId('filterInfo');
-      if(info) info.textContent='Mostrando '+visible+' de '+total;
-      var badge=byId('operatorCount');
-      if(badge){
-        var count=operator ? selectedOperatorCount() : total;
-        badge.textContent=count+' recebido'+(count===1?'':'s');
+      if(byId('filterInfo'))byId('filterInfo').textContent='Mostrando '+visible+' de '+totalDay+' da data escolhida';
+      if(byId('operatorCount')){
+        var count=operator?selectedOperatorCount():totalDay;
+        byId('operatorCount').textContent=count+' recebido'+(count===1?'':'s');
       }
-      var empty=byId('empty');
-      if(empty) empty.hidden=visible>0;
-    }catch(error){
-      var status=byId('actionStatus');
-      if(status) status.textContent='Filtro indisponível: '+String(error && error.message || error);
-    }
+      if(byId('empty'))byId('empty').hidden=visible>0;
+    }catch(error){setStatus('Filtro indisponível: '+String(error&&error.message||error));}
   }
-
   function clearFilters(){
-    var operator=byId('operator');
-    var general=byId('generalSearch');
-    if(operator) operator.value='';
-    if(general) general.value='';
-    Array.prototype.slice.call(document.querySelectorAll('.column-filter')).forEach(function(input){
-      input.value='';
-    });
+    if(byId('operator'))byId('operator').value='';
+    if(byId('generalSearch'))byId('generalSearch').value='';
+    Array.prototype.forEach.call(document.querySelectorAll('.column-filter'),function(x){x.value='';});
     applyFilters();
   }
 
@@ -1925,6 +1947,18 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 
     var rowsBody=byId('rows');
     if(rowsBody) rowsBody.innerHTML=String(state.rows_html || '');
+    var daySelect=byId('dayFilter');
+    if(daySelect){
+      var oldDay=daySelect.value || String(state.today||'');
+      daySelect.innerHTML=String(state.day_options_html||'');
+      if(Array.prototype.some.call(daySelect.options,function(o){return o.value===oldDay;})) daySelect.value=oldDay;
+      else if(state.today) daySelect.value=String(state.today);
+    }
+    var oldRows=byId('oldPendingRows');
+    if(oldRows)oldRows.innerHTML=String(state.old_pending_rows_html||'');
+    if(byId('oldPendingLabel'))byId('oldPendingLabel').textContent=String(Number(state.old_pending_count||0));
+    rebuildOperatorOptions();
+    rebuildColumnOptions();
 
     var top=byId('topDrivers');
     if(top) top.innerHTML=String(state.top_html || '');
@@ -1944,15 +1978,6 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     if(byId('mOld')) byId('mOld').textContent=String(oldPending);
     if(byId('mOperators')) byId('mOperators').textContent=String(operators);
 
-    var operator=byId('operator');
-    if(operator){
-      var selected=operator.value;
-      operator.innerHTML='<option value="" data-count="'+total+'">Todos os operadores ('+total+')</option>'+
-        String(state.operator_options_html || '');
-      if(selected && Array.prototype.some.call(operator.options,function(option){ return option.value===selected; })){
-        operator.value=selected;
-      }
-    }
 
     var send=byId('sendPending');
     if(send){
@@ -2082,9 +2107,14 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     if(operator) operator.addEventListener('change',applyFilters);
     if(general) general.addEventListener('input',applyFilters);
     Array.prototype.slice.call(document.querySelectorAll('.column-filter')).forEach(function(input){
-      input.addEventListener('input',applyFilters);
+      input.addEventListener('change',applyFilters);
     });
     if(clearFiltersButton) clearFiltersButton.addEventListener('click',clearFilters);
+    var dayFilter=byId('dayFilter');
+    if(dayFilter)dayFilter.addEventListener('change',function(){
+      rebuildOperatorOptions();rebuildColumnOptions();applyFilters();
+    });
+    rebuildOperatorOptions();rebuildColumnOptions();
     bindActionButtons();
     applyFilters();
     setStatus('Carregando dados atuais...');

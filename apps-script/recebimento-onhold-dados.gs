@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.66';
+const SPX_DV_BUILD = '1.3.67';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -1013,8 +1013,9 @@ function upsertDashboardRecord_(sheet, incoming) {
     );
   }
 
-  const status = current && current.status === 'confirmed'
-    ? 'confirmed'
+  // Cancelamentos explícitos de pendências antigas não podem ser reabertos por um upsert.
+  const status = current && ['confirmed', 'cancelled'].includes(current.status)
+    ? current.status
     : incoming.status;
 
   const merged = {
@@ -1057,24 +1058,9 @@ function markDashboardConfirmed_(sheet, occurrenceKey) {
 }
 
 function cleanupOldConfirmedDashboard_(sheet) {
-  const today = Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
-  const properties = PropertiesService.getScriptProperties();
-  const cleanedDay = properties.getProperty(SPX_DV_CONFIG.dashboardCleanupProperty);
-  if (cleanedDay === today) return;
-
-  const lastRow = sheet.getLastRow();
-  if (lastRow >= 2) {
-    const values = sheet.getRange(2, 1, lastRow - 1, 14).getValues();
-    for (let index = values.length - 1; index >= 0; index -= 1) {
-      const day = normalizeDashboardDay_(values[index][1]);
-      const status = clean_(values[index][12]).toLowerCase();
-      if (day && day !== today && status === 'confirmed') {
-        sheet.deleteRow(index + 2);
-      }
-    }
-  }
-
-  properties.setProperty(SPX_DV_CONFIG.dashboardCleanupProperty, today);
+  // 1.3.67: preservar histórico. Não excluir ao virar o dia.
+  void sheet;
+  return 0;
 }
 
 function reconcileDashboardStatuses_(spreadsheet, dashboardSheet) {
@@ -1143,6 +1129,11 @@ function dashboardClientRecord_(record) {
   };
 }
 
+function dashboardIsPending_(record) {
+  const status = clean_(record && record.status).toLowerCase();
+  return status !== 'confirmed' && status !== 'cancelled';
+}
+
 function getDashboardData() {
   // Leitura somente: não usa ScriptLock e não faz limpeza/reconciliação.
   // O servidor já classifica "hoje" para a tela não depender de comparar
@@ -1164,7 +1155,7 @@ function getDashboardData() {
     .filter(record =>
       record.received_day &&
       record.received_day !== today &&
-      record.status !== 'confirmed'
+      dashboardIsPending_(record)
     )
     .sort((a, b) => Number(b.received_at || 0) - Number(a.received_at || 0));
 
@@ -1209,15 +1200,11 @@ function dashboardLiveState_(data) {
   const records = Array.isArray(source.records) ? source.records : [];
   const todayRecords = Array.isArray(source.today_records) ? source.today_records : [];
   const oldPending = Array.isArray(source.old_pending) ? source.old_pending : [];
-  const pendingToday = todayRecords.filter(record =>
-    clean_(record && record.status).toLowerCase() !== 'confirmed'
-  );
+  const pendingToday = todayRecords.filter(dashboardIsPending_);
   const confirmedToday = todayRecords.filter(record =>
     clean_(record && record.status).toLowerCase() === 'confirmed'
   );
-  const allPending = records.filter(record =>
-    clean_(record && record.status).toLowerCase() !== 'confirmed'
-  );
+  const allPending = records.filter(dashboardIsPending_);
 
   const operatorCounts = {};
   todayRecords.forEach(record => {
@@ -1299,7 +1286,9 @@ function getDashboardLiveState() {
 
 function sendPendingDashboardToData() {
   const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!lock.tryLock(2000)) {
+    return { ok: false, busy: true, sent: 0, failed: 0, error: 'Outro envio ou alteração está em execução. Nenhuma nova operação foi iniciada. Aguarde a conclusão e atualize o Dashboard antes de tentar novamente.' };
+  }
 
   try {
     const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
@@ -1307,8 +1296,7 @@ function sendPendingDashboardToData() {
     const dataSheet = spreadsheet.getSheetByName(SPX_DV_CONFIG.sheetName);
     if (!dataSheet) throw new Error('Aba Dados não encontrada');
 
-    cleanupOldConfirmedDashboard_(dashboardSheet);
-
+    // Nunca excluir histórico confirmado no envio em massa.
     const lastRow = dashboardSheet.getLastRow();
     if (lastRow < 2) {
       return { ok: true, pending: 0, sent: 0, duplicates: 0, failed: 0, mode: 'bulk' };
@@ -1317,7 +1305,7 @@ function sendPendingDashboardToData() {
     const rows = dashboardSheet.getRange(2, 1, lastRow - 1, 14).getValues();
     const pending = rows
       .map((values, index) => ({ index: index + 2, record: dashboardRecordFromRow_(values) }))
-      .filter(item => item.record.status !== 'confirmed')
+      .filter(item => dashboardIsPending_(item.record))
       .sort((a, b) => Number(a.record.receivedAt || 0) - Number(b.record.receivedAt || 0));
 
     if (!pending.length) {
@@ -1487,30 +1475,56 @@ function sendPendingDashboardToData() {
 }
 
 function clearConfirmedDashboard() {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(15000);
+  // 1.3.67: até links antigos recebem proteção contra exclusão física.
+  return { ok: false, removed: 0, error: 'Histórico protegido: não há exclusão física de recebimentos enviados.' };
+}
 
+function changeOldPendingDashboardEntries(occurrenceKeys, action) {
+  const keys = Array.from(new Set((Array.isArray(occurrenceKeys) ? occurrenceKeys : [])
+    .map(key => clean_(key)).filter(Boolean))).slice(0, 100);
+  if (!keys.length) return { ok: false, error: 'Selecione pelo menos um BR antigo.' };
+  if (action !== 'cancel') return { ok: false, error: 'Ação não autorizada.' };
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(2000)) {
+    return { ok: false, busy: true, error: 'Dashboard ocupado. Nenhuma pendência foi cancelada; tente após atualizar.' };
+  }
   try {
     const spreadsheet = SpreadsheetApp.openById(SPX_DV_CONFIG.spreadsheetId);
     const sheet = getDashboardSheet_(spreadsheet);
+    const known = loadRecordedOccurrenceKeys_(getControlSheet_(spreadsheet));
     const today = Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
     const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return { ok: true, removed: 0 };
+    const values = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, 14).getValues() : [];
+    const wanted = new Set(keys);
+    let cancelled = 0;
+    let alreadySent = 0;
+    let skipped = 0;
 
-    const values = sheet.getRange(2, 1, lastRow - 1, 14).getValues();
-    let removed = 0;
-
-    for (let index = values.length - 1; index >= 0; index -= 1) {
-      const day = normalizeDashboardDay_(values[index][1]);
-      const status = clean_(values[index][12]).toLowerCase();
-      if (day === today && status === 'confirmed') {
-        sheet.deleteRow(index + 2);
-        removed += 1;
+    values.forEach(function(row, index) {
+      const record = dashboardRecordFromRow_(row);
+      if (!wanted.has(record.occurrenceKey)) return;
+      wanted.delete(record.occurrenceKey);
+      // Exclusivamente pendências anteriores: nunca hoje ou futuro.
+      const day = dashboardEffectiveDay_(record);
+      if (!day || day >= today || !dashboardIsPending_(record)) {
+        skipped++;
+        return;
       }
+      if (known.has(record.occurrenceKey)) {
+        sheet.getRange(index + 2, 13, 1, 2).setValues([['confirmed', Date.now()]]);
+        alreadySent++;
+      } else {
+        sheet.getRange(index + 2, 13, 1, 2).setValues([['cancelled', Date.now()]]);
+        cancelled++;
+      }
+    });
+    skipped += wanted.size;
+    if (cancelled || alreadySent) {
+      SpreadsheetApp.flush();
+      touchDashboardRevision_();
     }
-
-    if (removed) touchDashboardRevision_();
-    return { ok: true, removed };
+    return { ok: true, cancelled: cancelled, already_sent: alreadySent, skipped: skipped };
   } finally {
     lock.releaseLock();
   }
@@ -1658,17 +1672,13 @@ function dashboardHtml_(initialData) {
     : records.filter(function(record) {
         return clean_(record && record.received_day) &&
           clean_(record.received_day) !== clean_(data.today) &&
-          clean_(record.status).toLowerCase() !== 'confirmed';
+          dashboardIsPending_(record);
       });
-  const pendingToday = todayRecords.filter(function(record) {
-    return clean_(record && record.status).toLowerCase() !== 'confirmed';
-  });
+  const pendingToday = todayRecords.filter(dashboardIsPending_);
   const confirmedToday = todayRecords.filter(function(record) {
     return clean_(record && record.status).toLowerCase() === 'confirmed';
   });
-  const allPending = records.filter(function(record) {
-    return clean_(record && record.status).toLowerCase() !== 'confirmed';
-  });
+  const allPending = records.filter(dashboardIsPending_);
 
   const operatorCounts = {};
   todayRecords.forEach(function(record) {

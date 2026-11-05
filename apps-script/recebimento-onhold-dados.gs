@@ -15,7 +15,7 @@
  * - fórmulas nas células-alvo podem ser substituídas pelos dados recebidos
  */
 
-const SPX_DV_BUILD = '1.3.67';
+const SPX_DV_BUILD = '1.3.68';
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -151,6 +151,10 @@ function dashboardCheckResponse_(e) {
     const today = Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
     const effectiveDay = dashboardEffectiveDay_(record);
 
+    const dataAgency = clean_(e && e.parameter && e.parameter.check_data_agency) === '1' &&
+      record.status === 'confirmed'
+      ? confirmedDashboardDataAgency_(spreadsheet, record)
+      : null;
     return jsonpResponse_(e, {
       ok: true,
       found: true,
@@ -164,7 +168,11 @@ function dashboardCheckResponse_(e) {
       received_at: record.receivedAt,
       status: record.status,
       agency: record.agency,
-      neighborhood: record.neighborhood
+      neighborhood: record.neighborhood,
+      ...(dataAgency ? {
+        data_agency_verified: dataAgency.verified,
+        data_agency: dataAgency.agency
+      } : {})
     });
   } catch (error) {
     return jsonpResponse_(e, {
@@ -175,6 +183,47 @@ function dashboardCheckResponse_(e) {
       error: String(error && error.message ? error.message : error)
     });
   }
+}
+
+// Pesquisa a chave imutável em _SPX_DV_CONTROLE, nunca apenas o BR.
+function confirmedDashboardDataAgency_(spreadsheet, record) {
+  const empty = { verified: false, agency: '', dataRow: 0 };
+  if (!record?.occurrenceKey || !record?.shipmentId) return empty;
+  const control = spreadsheet.getSheetByName(SPX_DV_CONFIG.controlSheetName);
+  const dataSheet = spreadsheet.getSheetByName(SPX_DV_CONFIG.sheetName);
+  if (!control || !dataSheet || control.getLastRow() < 2) return empty;
+  const match = control.getRange(2, 1, control.getLastRow() - 1, 1)
+    .createTextFinder(record.occurrenceKey)
+    .matchEntireCell(true)
+    .matchCase(true)
+    .findNext();
+  if (!match) return empty;
+  const dataRow = Number(control.getRange(match.getRow(), 2).getDisplayValue());
+  if (!Number.isSafeInteger(dataRow) || dataRow < 2 || dataRow > dataSheet.getLastRow()) return empty;
+  const values = dataSheet.getRange(dataRow, 3, 1, 5).getDisplayValues()[0];
+  const writtenBr = clean_(values[0]).toUpperCase();
+  const writtenDriver = clean_(values[2]);
+  if (writtenBr !== clean_(record.shipmentId).toUpperCase() ||
+      (record.driverId && writtenDriver && writtenDriver !== clean_(record.driverId))) {
+    return empty;
+  }
+  return { verified: true, agency: clean_(values[4]), dataRow: dataRow };
+}
+
+function repairConfirmedDataAgency_(spreadsheet, record, payload) {
+  if (record?.status !== 'confirmed' ||
+      payload?.repair_confirmed_fields !== true ||
+      payload?.agency_verified_by_at !== true ||
+      !clean_(record?.agency)) {
+    return { changed: false, reason: 'not_eligible' };
+  }
+  const found = confirmedDashboardDataAgency_(spreadsheet, record);
+  if (!found.verified) return { changed: false, reason: 'control_or_driver_mismatch' };
+  // Não sobrescrever uma 3PL preenchida. Corrigir só G vazio no BR/driver da ocorrência.
+  if (found.agency) return { changed: false, reason: 'already_has_agency' };
+  spreadsheet.getSheetByName(SPX_DV_CONFIG.sheetName)
+    .getRange(found.dataRow, 7).setValue(clean_(record.agency));
+  return { changed: true, reason: 'filled_blank_G' };
 }
 
 function dashboardUpsertResponse_(e) {
@@ -223,7 +272,12 @@ function dashboardUpsertResponse_(e) {
       throw new Error('occurrence_key inválida');
     }
 
+    if (payload.repair_confirmed_fields === true &&
+        !findDashboardRow_(dashboardSheet, dashboardRecord.occurrenceKey)) {
+      throw new Error('Reparo recusado: ocorrência não está no Dashboard');
+    }
     const saved = upsertDashboardRecord_(dashboardSheet, dashboardRecord);
+    const agencyRepair = repairConfirmedDataAgency_(spreadsheet, saved, payload);
     SpreadsheetApp.flush();
 
     result = {
@@ -232,7 +286,8 @@ function dashboardUpsertResponse_(e) {
       occurrence_key: dashboardRecord.occurrenceKey,
       status: saved.status,
       received_day: saved.receivedDay,
-      received_at: saved.receivedAt
+      received_at: saved.receivedAt,
+      data_agency_repair: agencyRepair.reason
     };
   } catch (error) {
     result.error = String(error && error.message ? error.message : error);
@@ -278,13 +333,19 @@ function doPost(e) {
       if (!dashboardRecord.occurrenceKey) {
         return jsonResponse_({ ok: false, error: 'occurrence_key inválida' });
       }
+      if (payload.repair_confirmed_fields === true &&
+          !findDashboardRow_(dashboardSheet, dashboardRecord.occurrenceKey)) {
+        return jsonResponse_({ ok: false, error: 'Reparo recusado: ocorrência não está no Dashboard' });
+      }
       const result = upsertDashboardRecord_(dashboardSheet, dashboardRecord);
+      const agencyRepair = repairConfirmedDataAgency_(spreadsheet, result, payload);
       SpreadsheetApp.flush();
       return jsonResponse_({
         ok: true,
         dashboard: true,
         occurrence_key: dashboardRecord.occurrenceKey,
-        status: result.status
+        status: result.status,
+        data_agency_repair: agencyRepair.reason
       });
     }
 

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.66';
+  const MODULE_VERSION = '1.3.67';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -35,7 +35,7 @@
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
   const RECEIVE_INBOX_KEY = 'spxdv:confirmed-receive-inbox-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.66';
+  const DASHBOARD_SYNC_GENERATION = '1.3.67';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
@@ -656,7 +656,7 @@
     const result = await requestCentralJsonp('health', {}, 5000);
     const ok = Boolean(
       result?.ok &&
-      ['1.3.65', DASHBOARD_SYNC_GENERATION].includes(String(result?.build || '')) &&
+      ['1.3.65', '1.3.66', DASHBOARD_SYNC_GENERATION].includes(String(result?.build || '')) &&
       result?.capabilities?.dashboard_post === true &&
       result?.capabilities?.dashboard_check === true &&
       result?.capabilities?.dashboard_data === true

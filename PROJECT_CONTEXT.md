@@ -2845,3 +2845,10 @@ Para recuperá-los é necessário comparar a lista dos 132 BRs do RT com os 121 
 - Verificação sintática local de JS e Apps Script, inclusive trecho JavaScript embutido no HTML. Validação REAL no SPX e Apps Script ainda pendente.
 - Implantar atualizando a extensão primeiro e depois o mesmo Apps Script /exec. Não tocar em operações "Enviar em massa" enquanto o servidor antigo estiver ativo.
 - Testar primeiro somente visualização histórica e filtros; confirmar que os status e contagens permanecem corretos. Cancelamentos antigos exigem aprovação explícita na interface. Testar um envio posterior pequeno e comparar controle + Dados, nunca repetir lote sem conciliação.
+
+### Ajuste final de recuperação e testes de segurança
+- A reconciliação 1.3.67 passa a considerar até dois dias anteriores (três dias incluindo hoje), com o limite de até dois registros por rodada. Evita que a virada da meia-noite encerre a recuperação de um BR capturado na véspera e ainda pendente.
+- Se o servidor já registra a ocorrência como `confirmed`, a rotina não altera apenas o Dashboard: um reparo isolado poderia divergir da linha já enviada a Dados. Diagnóstico: `dashboard_enrichment_already_sent_requires_data_review`. Corrigir essa situação exigirá conciliação específica de Dados/controle; não adivinhar valores.
+- Proteção de cancelamento simulada com quatro registros: antigo pendente cancelado, antigo já registrado no controle reconhecido como enviado, recebimento de hoje intacto e antigo confirmado intacto. Resultado: 1 cancelado, 1 confirmado, 2 protegidos.
+- Teste de geração de HTML com registros fictícios de hoje e de ontem passou: data histórica, lista de pendências, filtro de vazio e CSS diagonal presentes; JavaScript embutido passou no parser.
+- Nenhum cancelamento real, exclusão, envio em massa ou alteração de célula foi realizado na planilha durante a implementação 1.3.67. Testes reais ainda pendentes, inclusive compatibilidade do Apps Script 1.3.67 na implantação /exec.

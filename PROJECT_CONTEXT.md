@@ -2821,3 +2821,27 @@ Para recuperá-los é necessário comparar a lista dos 132 BRs do RT com os 121 
 - Versões MODULE_VERSION, DASHBOARD_SYNC_GENERATION, SPX_DV_BUILD e catálogo alinhadas em 1.3.66.
 - Validação: sintaxe JS e Apps Script, parse do catálogo, inspeção das invariantes. Teste no SPX REAL ainda pendente; não chamar esta versão de estável.
 - Após atualizar e reimplantar, validar reparo automático de BR existente sem reabri-lo; examinar dashboard_enrichment_retry, dashboard_enrichment_repair_sent e central_send_confirmed(fields_verified=true); conferir ausência de BR duplicado, contagens e envio em massa.
+
+ 
+## Atualização 1.3.67 — Dashboard histórico, filtros, pendências antigas e proteção na virada do dia (05/11/2026)
+
+### Incidente real e auditoria
+- Após a virada de 04 para 05/11, o Dashboard exibiu "hoje 0", pendências antigas e erro de LockService no envio em massa. A filtragem por data escondia os registros anteriores; não constitui prova de perda.
+- Consulta direta da planilha mostrou envio efetivo de 112 ocorrências, cruzando ocorrência_key na aba _SPX_DV_DASHBOARD, controle _SPX_DV_CONTROLE e BR gravado na aba Dados: 112/112 consistentes. Destas, 107 pertenciam a 04/11 e 5 a 03/11. Esse é um recorte de conferência, não a conciliação completa de todos os 440 BRs.
+- 4 dessas 112 estavam sem 3PL e 1 tinha "Atualizar base"; não declarar resolvido retroativamente. A primeira consulta ao Dashboard e a aba Dados estavam mudando durante o processamento. Não presumir perda nem duplicar.
+- O Apps Script 1.3.66 usava cleanupOldConfirmedDashboard_ para excluir antigos já confirmados ao iniciar o envio em massa. Na 1.3.67, a limpeza foi desativada, e o botão de remoção física foi substituído por ocultação local. Registros antigos excluídos ANTES dessa mudança não reaparecem automaticamente.
+
+### Alterações
+- Histórico por data no Dashboard, mantendo as linhas de dias anteriores para consulta. A tabela passa a ter coluna Status com Enviado, Pendente e Cancelado da fila. Top 10 continua calculado somente para hoje.
+- Filtros por coluna agora exibem valores distintos presentes na data selecionada, quantidade e opção (Vazio); filtro geral e por operador preservados.
+- Motivos do Top 10 recebem cabeçalhos diagonalmente inclinados (apenas motivos).
+- Pendências de dias anteriores clicáveis; painel lista BRs e permite selecionar até 100 por vez para retirar da fila, mediante confirmação. Servidor valida dia anterior, status capturado e ausência da occurrence_key no controle de envio. Isso NÃO cancela pedidos no SPX nem exclui dados na aba Dados ou registros atuais. Status cancelled é persistente e não participa do envio em massa.
+- Envio em massa mantém a mesma lógica das matrizes C:G / I:J, separadores verdes e preservação A/B/H; lock passou a informar ocupação sem esperar 30 s e sem reportar sucesso falso. Deduplicação pela aba técnica mantida.
+- Rotina antiga clearConfirmedDashboard agora recusa exclusão física para qualquer página antiga. O botão "Ocultar enviados" filtra visualmente no navegador.
+- Captura do SPX com retcode=0 e inbox durável 1.3.65 não foram alteradas. Reconciliação de Bairro e 3PL 1.3.66 preservada. Compatibilidade do módulo com build servidor 1.3.65, 1.3.66 e 1.3.67 durante transição.
+
+### Implantação e validação
+- Alinhar MODULE_VERSION, DASHBOARD_SYNC_GENERATION, SPX_DV_BUILD e catálogo em 1.3.67.
+- Verificação sintática local de JS e Apps Script, inclusive trecho JavaScript embutido no HTML. Validação REAL no SPX e Apps Script ainda pendente.
+- Implantar atualizando a extensão primeiro e depois o mesmo Apps Script /exec. Não tocar em operações "Enviar em massa" enquanto o servidor antigo estiver ativo.
+- Testar primeiro somente visualização histórica e filtros; confirmar que os status e contagens permanecem corretos. Cancelamentos antigos exigem aprovação explícita na interface. Testar um envio posterior pequeno e comparar controle + Dados, nunca repetir lote sem conciliação.

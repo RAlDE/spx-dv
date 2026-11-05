@@ -2852,3 +2852,32 @@ Para recuperá-los é necessário comparar a lista dos 132 BRs do RT com os 121 
 - Proteção de cancelamento simulada com quatro registros: antigo pendente cancelado, antigo já registrado no controle reconhecido como enviado, recebimento de hoje intacto e antigo confirmado intacto. Resultado: 1 cancelado, 1 confirmado, 2 protegidos.
 - Teste de geração de HTML com registros fictícios de hoje e de ontem passou: data histórica, lista de pendências, filtro de vazio e CSS diagonal presentes; JavaScript embutido passou no parser.
 - Nenhum cancelamento real, exclusão, envio em massa ou alteração de célula foi realizado na planilha durante a implementação 1.3.67. Testes reais ainda pendentes, inclusive compatibilidade do Apps Script 1.3.67 na implantação /exec.
+
+
+## Atualização 1.3.68 — Return: coordenadas do vendedor, 3PL por AT, filtros pesquisáveis e Top 10 (05/11/2026)
+
+### Evidência e conferência real de 05/11
+- Vídeo do usuário (SPX-DV 1.3.67): BR262430125984G aparece na caixa como Return, com motivo Motorista desistiu da rota, Driver ID 4166242, Bairro "Atualizar base", sem 3PL; o campo "Recebido em" aparece como "--" nesse trecho. Isso NÃO comprova retcode=0, e consulta não pode criar recebimento.
+- BR264815622911L aparece no vídeo com histórico de ocorrências. Busca direta na planilha encontrou esse BR na aba Dados, linha 265723, com SPXOWNFLEET e Santa Regina; ele NÃO foi encontrado na aba _SPX_DV_DASHBOARD nem na aba _SPX_DV_CONTROLE. Não gerar nova ocorrência sem confirmação real e conciliação.
+- BR262430125984G não foi encontrado no Dashboard, na _SPX_DV_CONTROLE nem na coluna C de Dados até a última linha consultada. É necessário verificar os diagnósticos de receive-hook / inbox no computador que bipou.
+- Na aba _SPX_DV_DASHBOARD, 904 ocorrências foram lidas: 896 LMHub confirmados, 8 Return_LMHub confirmados. Nove registros estavam sem 3PL: oito Return e um normal. Essa é a evidência do problema de enriquecimento do Return, sem generalização de que a API sempre fornece uma AT compatível.
+- Usuário confirmou que envio em massa dos registros presentes no Dashboard está funcionando. Não foi alterado.
+
+### Implementação
+- SPX-DV 1.3.68 lê coordenadas somente do VENDEDOR no Return (seller_info e wrappers trade_info/order_info com chaves explícitas de geolocalização); no fluxo normal continua usando buyer_info. Se não há coordenadas do vendedor, registra return_seller_geo_missing. Prioridade Google geocoder e depois Bairro Principal da AT permanece.
+- Tracking reconhece referências explícitas de assignment_task_id sem depender só do texto "Assignment Task". Identidade do Return pode aproveitar ID de motorista/operador explicitamente presente no mesmo evento; não herda de outra rota.
+- 3PL do Return permanece condicionada a vínculo verdadeiro entre AT anterior e Driver ID do próprio Return. Na ausência, registra return_agency_no_matching_at; nunca atribui 3PL de outro motorista. Busca da AT não aceita primeira linha se contém ID de AT conflitante. Consultas AT parciais não ficam presas no cache definitivo.
+- A caixa Rastreio do pedido passa a mostrar 3PL do Return quando há vínculo confirmado. Recomposição automática de registros do Dashboard verifica 3PL vazia também em Return; pode tentar corrigir registros existentes confirmados, sem criar ocorrência por visualização.
+- O reparo confirmado envia flags somente no caminho repairExistingDashboardOccurrence. Apps Script 1.3.68 pode completar G de Dados APENAS quando: payload marca reparo real, agência é vinculada à AT, status do Dashboard é confirmed, occurrence_key existe em _SPX_DV_CONTROLE, BR da coluna C e Driver ID da coluna E são iguais aos da ocorrência, e G está vazia. Se G já tiver valor ou dados divergirem, não altera. Não escreve outras células ou repete envio em massa.
+- dashboard_check aceita check_data_agency=1 e informa data_agency_verified/data_agency após ler controle e Dados. A extensão verifica valor efetivamente gravado em G para considerar reparo confirmado no servidor 1.3.68. Clientes 1.3.68 aceitam health 1.3.65/1.3.66/1.3.67 durante atualização gradual, mas sincronização completa de Dados requer Apps Script 1.3.68.
+- Filtros de todas as colunas ganharam pop-up com campo de pesquisa e opções dos valores existentes na data selecionada, incluindo (Vazio), preservando o filtro local.
+- Top 10 com largura mais compacta para Ranking, Driver, 3PL, Total, colunas dos motivos verticalmente alinhadas com seus valores; textos dos motivos verticais/legíveis, sem girar as demais colunas.
+- Não alterados receive-hook.js, regra retcode=0, inbox durável, tratamento do cancelamento Endereço não encontrado, controle de deduplicação, envio em massa e separadores/colunas A/B/H.
+
+### Testes e limites
+- JS módulo, Apps Script e JS embutido no Dashboard passaram em parser; HTML foi gerado com ocorrência fictícia contendo menu pesquisável e cabeçalhos verticais.
+- tradeInfoCoordinates foi testado com seller_geo direto, seller_info aninhado e ausência de seller (não usa buyer no Return).
+- Simulação de reparo da célula G: escreveu uma única célula quando controle/BR/driver correspondiam e G estava vazia; recusou BR/driver divergente, G preenchida, falta de vínculo, status não confirmado e ausência de controle.
+- Nenhuma consulta de preview criou BR; nenhum dado real foi alterado ou reenviado pelo assistente durante a implementação.
+- Testes reais no SPX continuam PENDENTES. Não declarar 1.3.68 estável até confirmar ambos os modos (Return e normal), a fonte de coordenadas do vendedor e a correspondência da AT, mais readback G e contagens.
+- Ordem de implantação: primeiro módulo 1.3.68 nos operadores, depois atualizar mesma implantação Apps Script /exec 1.3.68. Evitar envio em massa durante troca. O BR262430125984G NÃO deve ser inserido sem recibo retcode=0 ou evidência SPX; BR264815622911L já existe em Dados e exige conciliação antes de novo registro.

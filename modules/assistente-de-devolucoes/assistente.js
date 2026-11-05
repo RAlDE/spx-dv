@@ -2721,7 +2721,17 @@
       return exact.sort((a, b) => score(b) - score(a))[0];
     }
 
-    return directCandidates[0] || null;
+    // Não aceitar a primeira AT da busca se ela identificar uma AT diferente.
+    // Resposta sem ID explícito só é aceita quando há UMA única linha candidata.
+    const uniqueRows = Array.from(new Set(directCandidates));
+    if (uniqueRows.length === 1 && !assignmentRowIdValue(uniqueRows[0])) {
+      return uniqueRows[0];
+    }
+    receiveDiagPush('assignment_lookup_no_exact_id', {
+      assignment_task_id: key,
+      candidates: directCandidates.length
+    });
+    return null;
   }
 
   async function fetchAssignmentAgency(assignmentId) {

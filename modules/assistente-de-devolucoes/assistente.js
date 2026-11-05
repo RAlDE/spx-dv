@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.67';
+  const MODULE_VERSION = '1.3.68';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -35,7 +35,7 @@
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
   const RECEIVE_INBOX_KEY = 'spxdv:confirmed-receive-inbox-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.67';
+  const DASHBOARD_SYNC_GENERATION = '1.3.68';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
@@ -656,7 +656,7 @@
     const result = await requestCentralJsonp('health', {}, 5000);
     const ok = Boolean(
       result?.ok &&
-      ['1.3.65', '1.3.66', DASHBOARD_SYNC_GENERATION].includes(String(result?.build || '')) &&
+      ['1.3.65', '1.3.66', '1.3.67', DASHBOARD_SYNC_GENERATION].includes(String(result?.build || '')) &&
       result?.capabilities?.dashboard_post === true &&
       result?.capabilities?.dashboard_check === true &&
       result?.capabilities?.dashboard_data === true
@@ -768,7 +768,7 @@
           String(check?.shipment_id || '').toUpperCase() === String(payload?.shipment_id || '').toUpperCase()
         );
         // Compatibilidade temporária: no build 1.3.65 só havia leitura da chave.
-        const hasFieldReadback = String(check?.build || '') === DASHBOARD_SYNC_GENERATION;
+        const hasFieldReadback = ['1.3.66', '1.3.67', DASHBOARD_SYNC_GENERATION].includes(String(check?.build || ''));
         const expectedAgency = String(payload?.agency || '').trim();
         const expectedNeighborhood = String(payload?.neighborhood || '').trim();
         const agencyMatches = !hasFieldReadback || !expectedAgency ||
@@ -2373,6 +2373,12 @@
 
       const returnOperator = returnOccurrenceOperator(node);
       const returnIdentity = returnOperatorIdentity(returnOperator);
+      // Somente IDs explícitos do MESMO evento Return. Não herdar motorista de outra rota.
+      if (!returnIdentity.id) {
+        const explicitId = String(node?.return_operator_id || node?.operator_id ||
+          node?.driver_id || trackingDriverIdentity(node).id || '').trim();
+        if (/^\d{4,}$/.test(explicitId)) returnIdentity.id = explicitId;
+      }
 
       return {
         ctime: stamp,
@@ -2410,6 +2416,17 @@
     const text = String(message || '');
     if (!/Assignment Task/i.test(text)) return '';
     return String(text.match(/\[(AT[^\]\s]+)\]/i)?.[1] || '').trim();
+  }
+
+  function assignmentTaskIdFromNode(node) {
+    // Marcadores explícitos sem mensagem textual são comuns em algumas respostas.
+    const candidates = [node?.assignment_task_id, node?.assignmentTaskId,
+      node?.assignment_task?.id, node?.assignment?.assignment_task_id];
+    for (const value of candidates) {
+      const id = String(value || '').trim().toUpperCase();
+      if (/^AT[A-Z0-9]{6,}$/.test(id)) return id;
+    }
+    return '';
   }
 
   function trackingDriverIdentity(node) {
@@ -2453,7 +2470,9 @@
     const cycles = [];
 
     for (const event of events) {
-      const at = assignmentTaskId(event.node?.message);
+      const at = assignmentTaskId(event.node?.message) ||
+        assignmentTaskId(event.node?.description) ||
+        assignmentTaskIdFromNode(event.node);
 
       if (at) {
         currentAssignmentId = at;
@@ -2737,7 +2756,8 @@
               .map(entry => ({ path: entry.path, value: entry.value }))
       });
 
-      assignmentAgencyCache.set(key, result);
+      // Resposta parcial não pode ficar em cache definitivo e impedir nova consulta.
+      if (result.agency && result.mainNeighborhood) assignmentAgencyCache.set(key, result);
       return result;
     } catch (error) {
       receiveDiagPush('assignment_lookup_error', {
@@ -2865,6 +2885,11 @@
       }
 
       if (!matchedCycle || !matchedDetails) {
+        receiveDiagPush('return_agency_no_matching_at', {
+          occurrence_timestamp: occurrenceTime,
+          driver_id: returnDriverId,
+          candidate_ats: candidates.length
+        });
         return {
           ...attempt,
           assignment_agency_return_match: false
@@ -3214,18 +3239,35 @@
   }
 
   function tradeInfoCoordinates(tradeInfo, returnFlow) {
-    const block = returnFlow
-      ? tradeInfo?.data?.seller_info
-      : tradeInfo?.data?.buyer_info;
-
-    const latitude = Number(returnFlow ? block?.seller_geo_lat : block?.buyer_geo_lat);
-    const longitude = Number(returnFlow ? block?.seller_geo_lng : block?.buyer_geo_lng);
-
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null;
-    if (latitude === 0 && longitude === 0) return null;
-
-    return { latitude, longitude };
+    // Return: somente GEO do VENDEDOR. Nunca usar localização do comprador.
+    const info = tradeInfo?.data || tradeInfo || {};
+    const roots = returnFlow
+      ? [info.seller_info, info.trade_info?.seller_info, info.order_info?.seller_info,
+          tradeInfo?.seller_info].filter(Boolean)
+      : [info.buyer_info, info.trade_info?.buyer_info, info.order_info?.buyer_info,
+          tradeInfo?.buyer_info].filter(Boolean);
+    const prefix = returnFlow ? 'seller' : 'buyer';
+    const read = (obj, keys) => {
+      for (const key of keys) {
+        const value = obj?.[key];
+        if (value !== undefined && value !== null && String(value).trim() !== '') return Number(value);
+      }
+      return NaN;
+    };
+    for (const root of roots) {
+      const containers = [root, root?.geo, root?.location, root?.geo_location, root?.coordinates]
+        .filter(item => item && typeof item === 'object' && !Array.isArray(item));
+      for (const location of containers) {
+        const latitude = read(location, [prefix + '_geo_lat', prefix + '_latitude', 'geo_lat', 'latitude', 'lat']);
+        const longitude = read(location, [prefix + '_geo_lng', prefix + '_geo_lon', prefix + '_longitude',
+          'geo_lng', 'geo_lon', 'longitude', 'lng', 'lon']);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
+        if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) continue;
+        if (latitude === 0 && longitude === 0) continue;
+        return { latitude, longitude };
+      }
+    }
+    return null;
   }
 
   async function fetchOccurrenceNeighborhoodDetails(shipmentId, returnFlow, tradeInfo = null) {
@@ -3248,6 +3290,13 @@
         encodeURIComponent(shipment)
       );
       coordinates = tradeInfoCoordinates(info, returnFlow);
+      if (returnFlow && !coordinates) {
+        receiveDiagPush('return_seller_geo_missing', {
+          shipment_id: shipment,
+          seller_info_present: Boolean(info?.data?.seller_info || info?.seller_info),
+          trade_info_present: Boolean(info)
+        });
+      }
 
       if (coordinates) {
         const geo = await fetchGeoNeighborhood(
@@ -3446,7 +3495,7 @@
 
       const repaired = await sendCentralDashboard(payload, 'dashboard_upsert');
       if (repaired) {
-        if (centralHealthCache.build === DASHBOARD_SYNC_GENERATION) {
+        if (['1.3.66','1.3.67',DASHBOARD_SYNC_GENERATION].includes(centralHealthCache.build)) {
           await markLocalDashboardEnrichment(occurrenceKey, payload);
         }
         receiveDiagPush('dashboard_existing_repaired', {

@@ -238,9 +238,10 @@
   }
 
   function dashboardNeedsEnrichment(record) {
-    const flow = String(record?.flow || '').trim().toLowerCase();
+    // Tanto LMHub normal quanto Return devem ter 3PL resolvida pela AT correta.
+    // Na ausência de vínculo real do Return, não inventamos a agência.
     return !isUsefulNeighborhood(record?.neighborhood) ||
-      (!flow.startsWith('return') && !String(record?.agency || '').trim());
+      !String(record?.agency || '').trim();
   }
 
   function mergeDashboardRecord(previous, incoming) {
@@ -3493,6 +3494,14 @@
 
       if (!payload.occurrence_timestamp || !payload.reason) return false;
 
+      // Apenas este caminho de REPARO solicita conferência da linha já enviada.
+      // Com vínculo explícito à AT, o servidor poderá completar G em Dados
+      // se G estiver vazio e a chave for a mesma, sem reenvio em massa.
+      payload.repair_confirmed_fields = true;
+      payload.agency_verified_by_at = Boolean(
+        payload.agency && attempt?.assignment_task_id &&
+        (!attempt?.return_occurrence || attempt?.assignment_agency_return_match)
+      );
       const repaired = await sendCentralDashboard(payload, 'dashboard_upsert');
       if (repaired) {
         if (['1.3.66','1.3.67',DASHBOARD_SYNC_GENERATION].includes(centralHealthCache.build)) {
@@ -3797,10 +3806,9 @@
         const existing = await checkCentralDashboardOccurrence(record.key);
         if (existing?.ok && existing?.found &&
             String(existing.shipment_id || '').toUpperCase() === String(record.shipment_id || '').toUpperCase() &&
-            String(existing.status || '').toLowerCase() === 'confirmed') {
-          // Dados já recebeu esta ocorrência. Corrigir só a ficha do Dashboard
-          // faria o histórico divergir da planilha; requer conciliação separada.
-          receiveDiagPush('dashboard_enrichment_already_sent_requires_data_review', {
+            String(existing.status || '').toLowerCase() === 'cancelled') {
+          // Cancelamento explícito de fila antiga é terminal.
+          receiveDiagPush('dashboard_enrichment_cancelled_skipped', {
             shipment_id: record.shipment_id, occurrence_key: record.key
           });
           continue;
@@ -3821,7 +3829,8 @@
         );
         receiveDiagPush(repaired ? 'dashboard_enrichment_repair_sent' : 'dashboard_enrichment_retry_needed', {
           shipment_id: record.shipment_id,
-          occurrence_key: record.key
+          occurrence_key: record.key,
+          source: 'existing_confirmed_or_pending'
         });
       }
     } catch (error) {
@@ -4189,8 +4198,14 @@
           id: String(attempt?.return_operator_id || '').trim(),
           name: String(attempt?.return_operator_name || '').trim()
         };
+        const agency = attempt?.assignment_agency_return_match
+          ? String(attempt?.assignment_agency || '').trim()
+          : '';
+        const agencyInline = agency
+          ? ' <span class="driver-code">' + escapeHtml(agency) + '</span>'
+          : '';
         const driverLine = identity.name
-          ? '<b>Motorista:</b> ' + escapeHtml(identity.name) +
+          ? '<b>Motorista:</b> ' + escapeHtml(identity.name) + agencyInline +
             (identity.id
               ? '<br><span class="driver-code"><b>ID:</b> ' + escapeHtml(identity.id) + '</span>'
               : '')

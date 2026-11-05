@@ -2881,3 +2881,11 @@ Para recuperá-los é necessário comparar a lista dos 132 BRs do RT com os 121 
 - Nenhuma consulta de preview criou BR; nenhum dado real foi alterado ou reenviado pelo assistente durante a implementação.
 - Testes reais no SPX continuam PENDENTES. Não declarar 1.3.68 estável até confirmar ambos os modos (Return e normal), a fonte de coordenadas do vendedor e a correspondência da AT, mais readback G e contagens.
 - Ordem de implantação: primeiro módulo 1.3.68 nos operadores, depois atualizar mesma implantação Apps Script /exec 1.3.68. Evitar envio em massa durante troca. O BR262430125984G NÃO deve ser inserido sem recibo retcode=0 ou evidência SPX; BR264815622911L já existe em Dados e exige conciliação antes de novo registro.
+
+
+### Ajuste visual posterior na 1.3.68 — Top 10 com linhas diagonais (05/11/2026)
+- Referência visual recebida: matriz de motivos com rótulos inclinados a 45° e divisórias inclinadas paralelas que chegam até a mesma separação vertical da respectiva contagem.
+- Corrigido apenas o CSS de `.ranking-table .reason-head` no Apps Script: substituída a escrita vertical (`writing-mode:vertical-rl`) por rótulos diagonais (`rotate(-45deg)`) e divisórias diagonais (`skewX(-45deg)`). A primeira borda de cada motivo nasce na borda esquerda de sua coluna e a última borda fecha o grupo de motivos.
+- Mantidas as larguras compactas de Ranking, Driver, 3PL, Total e das colunas de motivos; corpo do Top 10, cálculo de motivos e contagens permanecem inalterados.
+- Sem alteração no módulo, receive-hook, catálogo, Dashboard de recebimentos, filtros, operações de captura, Return ou envio em massa. **SPX_DV_BUILD continua 1.3.68** para não quebrar a verificação de compatibilidade das extensões 1.3.68 em uso.
+- Apps Script e JavaScript embutido no HTML passaram na verificação de sintaxe; inspeção visual REAL após reimplantar na mesma URL /exec continua pendente.

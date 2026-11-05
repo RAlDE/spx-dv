@@ -2798,3 +2798,26 @@ Para recuperá-los é necessário comparar a lista dos 132 BRs do RT com os 121 
 - sintaxe Apps Script OK;
 - versões alinhadas em 1.3.65;
 - persistência/replay durável requer teste real.
+
+
+## Atualização 1.3.66 — reconciliação automática de Bairro/3PL (04/11/2026)
+
+### Evidências reais
+- O usuário confirmou no SPX real que TODOS os 440 BRs do dia chegaram ao Dashboard pela captura 1.3.65, sem faltantes. Essa captura e o hook foram preservados.
+- BR265784941401Y tinha 3PL vazia e "Atualizar base"; no painel constavam SPXOWNFLEET e Espinheiros. Reabrir o BR corrigiu a mesma linha no Dashboard.
+- BR2653319195509 tinha 3PL vazia e "Atualizar base"; no painel constavam SPXOWNFLEET e Ressacada. Reabrir o BR corrigiu a mesma linha no Dashboard.
+- Causa técnica: dashboard_check na 1.3.65 confirmava ocorrência pela chave sem verificar 3PL/Bairro; o reparo do painel não era agendado para fichas já capturadas com enriquecimento incompleto.
+
+### Correção da 1.3.66
+- Apps Script dashboard_check passa a retornar agency e neighborhood. O cliente valida os valores efetivamente persistidos em vez de confiar somente na ocorrência; diagnósticos central_send_confirmed incluem fields_verified.
+- Servidor não sobrescreve bairro já válido com "Atualizar base"; a fila local também preserva valores enriquecidos.
+- Reconciliação automática em tela de recebimento somente para registros de hoje, já sincronizados localmente, cuja 3PL (normal) ou Bairro faltem. Rodadas de até 2 itens a cada 45 s, início após 18 s, alerta antecipado se novo BR incompleto; backoff até 15 min para evitar sobrecarga.
+- Reconsulta tracking, trade_info e recipient_info e reutiliza AT/Google/Bairro Principal já existentes. Em modo de reconciliação, SOMENTE chama repairExistingDashboardOccurrence, que exige occurrence_key já existente no servidor: não pode registrar recebimentos por consulta.
+- Atualiza o espelho local após confirmar valores no servidor 1.3.66. Return continua sem 3PL inventada.
+- Compatibilidade temporária do cliente novo com health do servidor 1.3.65 permite atualizar os módulos PRIMEIRO e o Apps Script DEPOIS, na mesma implantação e URL /exec. A versão antiga da extensão não reconhece build novo: atualizar operadores antes da reimplantação.
+
+### Preservado e pendente
+- Sem mudanças no receive-hook.js, regra retcode=0, inbox durável, cancelamento Endereço não encontrado, deduplicação, envio em massa da 1.3.58, fórmulas/cor/colunas A/B/H, Return, Top 10 ou filtros.
+- Versões MODULE_VERSION, DASHBOARD_SYNC_GENERATION, SPX_DV_BUILD e catálogo alinhadas em 1.3.66.
+- Validação: sintaxe JS e Apps Script, parse do catálogo, inspeção das invariantes. Teste no SPX REAL ainda pendente; não chamar esta versão de estável.
+- Após atualizar e reimplantar, validar reparo automático de BR existente sem reabri-lo; examinar dashboard_enrichment_retry, dashboard_enrichment_repair_sent e central_send_confirmed(fields_verified=true); conferir ausência de BR duplicado, contagens e envio em massa.

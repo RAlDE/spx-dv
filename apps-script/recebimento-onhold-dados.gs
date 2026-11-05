@@ -1900,7 +1900,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
         var sameDay=!day||row.getAttribute('data-day')===day;
         if(sameDay)totalDay++;
         var login=cells[8]||'';
-        var ok=sameDay&&(!operator||login===operator)&&(!general||cells.join(' ').indexOf(general)>=0);
+        var ok=sameDay&&(!hideConfirmed||row.getAttribute('data-status')!=='confirmed')&&(!operator||login===operator)&&(!general||cells.join(' ').indexOf(general)>=0);
         if(ok)Object.keys(colFilters).some(function(key){
           var filter=colFilters[key],cell=cells[Number(key)]||'';
           if(filter&&(filter==='__spxdv_vazio__'?cell!=='':cell!==filter)){
@@ -1930,6 +1930,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     if(el) el.textContent=String(message || '');
   }
 
+  var hideConfirmed=false;
   var liveRevision=0;
   var liveLoading=false;
   var revisionLoading=false;
@@ -1989,7 +1990,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     var clear=byId('clearConfirmed');
     if(clear){
       clear.setAttribute('data-count',String(confirmed));
-      clear.disabled=confirmed===0;
+      clear.disabled=false;
     }
 
     applyFilters();
@@ -2059,6 +2060,12 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
         setStatus('Preparando envio em massa para Dados...');
         google.script.run
           .withSuccessHandler(function(result){
+            if(!result || result.ok===false){
+              send.disabled=false;
+              setStatus('Envio não iniciado: '+String(result&&result.error||'sem resposta'));
+              refreshDashboardLive(false);
+              return;
+            }
             var sent=Number(result && result.sent || 0);
             var duplicates=Number(result && result.duplicates || 0);
             var failed=Number(result && result.failed || 0);
@@ -2077,28 +2084,50 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     var clear=byId('clearConfirmed');
     if(clear){
       clear.addEventListener('click',function(){
-        var count=Number(clear.getAttribute('data-count') || 0);
-        if(!count){ alert('Não há registros já enviados para limpar hoje.'); return; }
-        if(!confirm('Limpar '+count+' registro(s) já enviado(s) de hoje?\\n\\nPendências não serão apagadas.')) return;
-        if(!(window.google && google.script && google.script.run)){
-          setStatus('Ação indisponível nesta página.');
-          return;
-        }
-        clear.disabled=true;
-        setStatus('Limpando registros já enviados...');
-        google.script.run
-          .withSuccessHandler(function(result){
-            var removed=Number(result && result.removed || 0);
-            setStatus('Limpeza concluída: '+removed+' removidos. Atualizando Dash...');
-            refreshDashboardLive(false);
-          })
-          .withFailureHandler(function(error){
-            clear.disabled=false;
-            setStatus('Falha na limpeza: '+String(error && error.message || error));
-          })
-          .clearConfirmedDashboard();
+        hideConfirmed=!hideConfirmed;
+        clear.textContent=hideConfirmed?'Mostrar enviados':'Ocultar enviados';
+        applyFilters();
       });
     }
+
+    var selectOld=byId('selectOldAll');
+    if(selectOld)selectOld.addEventListener('click',function(){
+      var all=Array.prototype.slice.call(document.querySelectorAll('.old-select'));
+      var count=Math.min(all.length,100);
+      all.forEach(function(input,index){input.checked=index<count;});
+      if(all.length>100)setStatus('Selecionados 100 de '+all.length+' antigos. Cancele em grupos de até 100.');
+      else setStatus('Selecionados '+count+' BRs antigos.');
+    });
+
+    var cancelOld=byId('cancelOldSelected');
+    if(cancelOld)cancelOld.addEventListener('click',function(){
+      var selected=Array.prototype.slice.call(document.querySelectorAll('.old-select:checked'))
+        .map(function(input){return input.value;});
+      if(!selected.length){alert('Selecione os BRs antigos que deseja cancelar da fila.');return;}
+      if(selected.length>100){alert('Selecione no máximo 100 BRs antigos por vez.');return;}
+      if(!confirm('Cancelar '+selected.length+' pendência(s) de DIAS ANTERIORES da fila do Dashboard?\\n\\nIsso NÃO cancela pedidos no SPX, NÃO apaga Dados e NÃO afeta recebimentos de hoje.'))return;
+      if(!(window.google&&google.script&&google.script.run)){
+        setStatus('Ação indisponível nesta página.');return;
+      }
+      cancelOld.disabled=true;
+      setStatus('Conferindo datas e cancelando apenas pendências antigas selecionadas...');
+      google.script.run
+        .withSuccessHandler(function(result){
+          cancelOld.disabled=false;
+          if(!result||result.ok===false){
+            setStatus('Cancelamento não concluído: '+String(result&&result.error||'sem resposta'));return;
+          }
+          setStatus('Retirados da fila: '+Number(result.cancelled||0)+
+            ' · já enviados: '+Number(result.already_sent||0)+
+            ' · protegidos/não encontrados: '+Number(result.skipped||0));
+          refreshDashboardLive(false);
+        })
+        .withFailureHandler(function(error){
+          cancelOld.disabled=false;
+          setStatus('Falha ao cancelar antigos: '+String(error&&error.message||error));
+        })
+        .changeOldPendingDashboardEntries(selected,'cancel');
+    });
   }
   try{
     var operator=byId('operator');

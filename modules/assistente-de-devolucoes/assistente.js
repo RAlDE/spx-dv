@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.68';
+  const MODULE_VERSION = '1.3.69';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -2430,7 +2430,12 @@
   function assignmentTaskId(message) {
     const text = String(message || '');
     if (!/Assignment Task/i.test(text)) return '';
-    return String(text.match(/\[(AT[^\]\s]+)\]/i)?.[1] || '').trim();
+    // Priorizar formato historicamente validado [AT...].
+    const bracketed = String(text.match(/\[(AT[^\]\s]+)\]/i)?.[1] || '').trim();
+    if (bracketed) return bracketed;
+    // Algumas versões do rastreio escrevem "Assignment Task AT123..."
+    // sem colchetes. Exigir dígito no ID evita capturar palavras comuns.
+    return String(text.match(/\b(AT(?=[A-Z0-9]*\d)[A-Z0-9]{6,})\b/i)?.[1] || '').trim();
   }
 
   function assignmentTaskIdFromNode(node) {
@@ -2857,13 +2862,32 @@
     }
 
     const cycles = extractAssignmentDeliveryCycles(tracking);
-    if (!cycles.length) return returnOccurrences;
+    if (!cycles.length) {
+      const nodes = collectAllObjects(tracking?.data?.tracking_list);
+      const marked = nodes.filter(node =>
+        /assignment task/i.test(String(node?.message || '') + ' ' + String(node?.description || ''))
+      );
+      receiveDiagPush('return_assignment_cycles_missing', {
+        occurrence_count: returnOccurrences.length,
+        tracking_assignment_markers: marked.length,
+        marker_field_keys: marked.slice(0, 3).map(node =>
+          Object.keys(node).filter(key => /assignment|task|operator|driver|message|description|status/i.test(key)).slice(0, 12)
+        )
+      });
+      return returnOccurrences;
+    }
 
     const assignmentIds = [...new Set(cycles
       .map(item => String(item?.assignmentId || '').trim().toUpperCase())
       .filter(Boolean))];
 
-    if (!assignmentIds.length) return returnOccurrences;
+    if (!assignmentIds.length) {
+      receiveDiagPush('return_assignment_ids_missing', {
+        occurrence_count: returnOccurrences.length,
+        detected_cycles: cycles.length
+      });
+      return returnOccurrences;
+    }
 
     const results = await Promise.all(assignmentIds.map(async assignmentId => [
       assignmentId,
@@ -2973,6 +2997,17 @@
     const values = primitiveEntries(node).map(([, value]) => String(value || ''));
     const statusTexts = values.map(trackingStatusText);
 
+    // Return usa a ordem inversa: "Retorno_Recebido_LMHub", não
+    // "LMHub_Recebido". Este evento serve só para EXIBIR a chegada no
+    // rastreio; NÃO equivale ao retcode=0 da API de recebimento real.
+    const returnReceivedStatuses = new Set([
+      'retorno_recebido_lmhub',
+      'retorno_lmhub_recebido',
+      'return_received_lmhub',
+      'return_lmhub_received'
+    ]);
+    if (statusTexts.some(text => returnReceivedStatuses.has(text))) return true;
+
     if (statusTexts.some(text =>
       text.includes('lmhub_recebido') ||
       text.includes('lm_hub_recebido') ||
@@ -3020,6 +3055,20 @@
     latestOccurrenceByShipment.set(shipment, occurrenceTime);
     const receivedSeconds = latestLmHubReceivedAfterOccurrence(tracking, occurrenceTime);
     rememberReceivedAt(shipment, receivedSeconds ? receivedSeconds * 1000 : 0);
+    if (receivedSeconds && trackingEventsChronological(tracking).some(item =>
+      Number(item?.ctime || 0) === receivedSeconds &&
+      primitiveEntries(item.node).some(([, value]) =>
+        trackingStatusText(value) === 'retorno_recebido_lmhub'
+      )
+    )) {
+      receiveDiagPush('return_tracking_received_visible', {
+        shipment_id: shipment,
+        occurrence_timestamp: occurrenceTime,
+        tracking_received_at: receivedSeconds * 1000,
+        // Esta evidência visual nunca registra recebimento no Dashboard.
+        dashboard_capture_triggered: false
+      });
+    }
     return receivedSeconds;
   }
 
@@ -3316,10 +3365,16 @@
       );
       coordinates = tradeInfoCoordinates(info, returnFlow);
       if (returnFlow && !coordinates) {
+        const seller = info?.data?.seller_info || info?.data?.trade_info?.seller_info ||
+          info?.data?.order_info?.seller_info || info?.seller_info || {};
         receiveDiagPush('return_seller_geo_missing', {
           shipment_id: shipment,
-          seller_info_present: Boolean(info?.data?.seller_info || info?.seller_info),
-          trade_info_present: Boolean(info)
+          seller_info_present: Boolean(Object.keys(seller).length),
+          trade_info_present: Boolean(info),
+          // Diagnóstico estrutural: NUNCA registrar coordenadas/endereço.
+          seller_field_names: Object.keys(seller).filter(k =>
+            /geo|lat|lon|lng|coordinate|location/i.test(k)
+          ).slice(0, 15)
         });
       }
 

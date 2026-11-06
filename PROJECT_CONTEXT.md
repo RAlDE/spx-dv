@@ -2889,3 +2889,27 @@ Para recuperá-los é necessário comparar a lista dos 132 BRs do RT com os 121 
 - Mantidas as larguras compactas de Ranking, Driver, 3PL, Total e das colunas de motivos; corpo do Top 10, cálculo de motivos e contagens permanecem inalterados.
 - Sem alteração no módulo, receive-hook, catálogo, Dashboard de recebimentos, filtros, operações de captura, Return ou envio em massa. **SPX_DV_BUILD continua 1.3.68** para não quebrar a verificação de compatibilidade das extensões 1.3.68 em uso.
 - Apps Script e JavaScript embutido no HTML passaram na verificação de sintaxe; inspeção visual REAL após reimplantar na mesma URL /exec continua pendente.
+
+
+## Atualização 1.3.69 — leitura do evento de recebimento Return + diagnóstico sem mudança de captura (05/11/2026)
+
+### Problema observado
+- BR262430125984G: tela SPX-DV 1.3.68 mostrava "Recebido em: —" apesar da linha do tempo SPX exibir "Retorno_Recebido_LMHub" em 05/11/2026 às 11:37:17. A ocorrência Return OnHold era 04/11/2026 às 20:13:35.
+- Confirmado no código: nodeRepresentsLmHubReceived reconhecia "lmhub_recebido" e "last_mile_hub_received", mas NÃO a ordem invertida "retorno_recebido_lmhub". Isso explica a ausência do horário na caixa, se o status estiver presente em tracking_info.
+- Importante: o evento de rastreio não equivale por si só ao recibo retcode=0 de POST /api/in-station/uni_receive/order. Não criar recebimento no Dashboard por consulta/status histórico. Confirmar captura separadamente pelos diagnósticos de receive-hook/inbox.
+
+### Mudanças no módulo 1.3.69
+- Status explícitos aceitos para EXIBIR "Recebido em" após a última ocorrência: retorno_recebido_lmhub, retorno_lmhub_recebido, return_received_lmhub, return_lmhub_received. Permanecem os status anteriores do LMHub normal. Não aceitar Retornando/Em_Espera/Devolução_Falhou ou eventos anteriores à ocorrência.
+- Evento de diagnóstico return_tracking_received_visible registra o horário do tracking e esclarece que ele NÃO disparou captura do Dashboard.
+- assignmentTaskId mantém prioridade histórica do formato [AT...] e reconhece ID explícito sem colchetes em mensagem "Assignment Task AT..."; ID exige caractere numérico para evitar inferir AT a partir de palavras. Sem ID real, não preencher 3PL.
+- Quando não é possível montar a relação AT/Return, registra return_assignment_cycles_missing (quantidade de marcadores e NOMES de campos, sem conteúdo sensível) ou return_assignment_ids_missing.
+- A ausência de coordenadas do vendedor no trade_info registra return_seller_geo_missing com nomes de campos geográficos disponíveis, SEM registrar o endereço ou coordenadas. Google primeiro e Bairro Principal da AT no fallback não mudam.
+- MODULE_VERSION e catálogo = 1.3.69. DASHBOARD_SYNC_GENERATION = 1.3.68 e Apps Script SPX_DV_BUILD = 1.3.68, de propósito: alteração só do módulo. **Não reimplantar Apps Script por esta mudança.**
+- receive-hook.js, regra retcode=0, inbox durável, confirmação central, envio em massa, histórico, Top 10 e cancelamentos antigos não foram alterados.
+
+### Validação estática / riscos
+- Sintaxe JavaScript do módulo verificada.
+- Seis cenários sintéticos testaram recebimento Return depois da ocorrência, Retornando falso, recebimento antes da ocorrência falso, LMHub normal preservado, evento filho e evento ausente. Todos passaram.
+- Quatro cenários de AT: ID entre colchetes, ID sem colchetes com marcador "Assignment Task", ausência de ID, ID fora de um marcador. Todos passaram.
+- Pendentes REAIS: validar no SPX se Retorno_Recebido_LMHub é reconhecido a partir do tracking_info do mesmo BR. A 3PL e Bairro do Return NÃO foram comprovadamente corrigidos: precisam dos eventos return_assignment_cycles_missing, assignment_lookup_resolved/empty, return_agency_no_matching_at, return_seller_geo_missing, geo_neighborhood_lookup. Não atribuir 3PL pela identidade do motorista isolada nem bairro por geografia aproximada.
+- Não inserir BR262430125984G no Dashboard a partir de tracking_info. Se o recebimento foi operacionalmente concluído, requer evidência do hook retcode=0 ou conciliação explícita com SPX antes da recuperação. 

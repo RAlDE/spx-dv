@@ -1,5 +1,8 @@
 # PROJECT_MASTER_CONTEXT — SPX-DV
 
+> ⚠️ **CONTINUIDADE ATUAL:** a versão e os casos críticos posteriores a este contexto mestre histórico estão documentados em [HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md](HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md) e [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md). Priorize-os antes de usar os números de versão antigos deste documento; preserve todas as regras históricas sem supor que correções foram validadas em produção.
+
+
 > **Arquivo mestre para continuidade entre conversas.**
 >
 > Repositório: `RAlDE/spx-dv`

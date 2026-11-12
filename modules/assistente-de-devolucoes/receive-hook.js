@@ -103,6 +103,42 @@
     } catch {}
   }
 
+  // Passive diagnostic only. These observations never enter the receipt bridge.
+  const SCAN_KEY = 'spxdv:scan-v1';
+  let scan;
+  try { scan = JSON.parse(localStorage.getItem(SCAN_KEY) || 'null'); } catch {}
+  if (!scan || !Array.isArray(scan.entries)) scan = { entries: [], dropped: 0 };
+  let scanTimer;
+  function scanMeta(urlValue, method) {
+    try {
+      const u = new URL(String(urlValue || ''), location.href);
+      if (u.origin !== location.origin) return null;
+      if (!/^(?:\/api\/(?:fleet_order\/order\/detail\/(?:tracking_info|recipient_info|order_info)|in-station\/(?:uni_receive\/order|admin\/common_site\/eha\/(?:no_reason_inbound|resolve_reason)))|\/spx_delivery\/admin\/assignment\/assignment_task\/search\/v2)\/?$/.test(u.pathname)) return null;
+      return { path: u.pathname + u.search, method: String(method).toUpperCase() };
+    } catch { return null; }
+  }
+  function persistScan() {
+    clearTimeout(scanTimer);
+    try { localStorage.setItem(SCAN_KEY, JSON.stringify(scan)); }
+    catch { scan.storage_error = 'Não foi possível salvar; exporte antes de fechar a página.'; }
+  }
+  window.__SPX_DV_SCAN_SNAPSHOT__ = () => scan;
+  window.addEventListener('pagehide', persistScan);
+  function observeScan(meta, body, response, status) {
+    try {
+      const raw = typeof response === 'string' ? response : JSON.stringify(response);
+      const entry = { at: new Date().toISOString(), ...meta, http_status: status,
+        request_body: String(body || ''), response_bytes: new Blob([raw || '']).size };
+      if ((raw || '').length > 500000) entry.omitted = 'Resposta acima do limite de 500.000 caracteres';
+      else { try { entry.response = JSON.parse(raw); } catch { entry.response_text = raw; } }
+      scan.entries.push(entry);
+      while (scan.entries.length > 40 || JSON.stringify(scan).length > 1500000) {
+        scan.entries.shift(); scan.dropped++;
+      }
+      clearTimeout(scanTimer); scanTimer = setTimeout(persistScan, 300);
+    } catch {}
+  }
+
   function publish(meta, payload) {
     if (!meta || !payload || typeof payload !== 'object') return;
 
@@ -154,10 +190,15 @@
       const url = typeof input === 'string' ? input : String(input?.url || '');
       const method = init?.method || (typeof input !== 'string' ? input?.method : '') || 'GET';
       recordPost(url, method, 'fetch');
+      const diagnostic = scanMeta(url, method);
+      const diagnosticBody = diagnostic ? requestBodyPromise(input, init) : null;
       const target = targetMeta(url, method);
       const bodyPromise = target ? requestBodyPromise(input, init) : null;
       const promise = nativeFetch.apply(this, arguments);
 
+      if (diagnostic) promise.then(async response => {
+        try { observeScan(diagnostic, await diagnosticBody, await response.clone().text(), response.status); } catch {}
+      }, () => {});
       if (target) {
         promise.then(async response => {
           try {
@@ -184,11 +225,18 @@
 
   XMLHttpRequest.prototype.open = function(method, url) {
     recordPost(url, method, 'xhr');
+    this.__spxDvScanMeta = scanMeta(url, method);
     this.__spxDvReceiveHookMeta = targetMeta(url, method);
     return nativeOpen.apply(this, arguments);
   };
 
   XMLHttpRequest.prototype.send = function(body) {
+    if (this.__spxDvScanMeta) {
+      const meta = this.__spxDvScanMeta, requestBody = serializeBody(body);
+      this.addEventListener('load', function() {
+        try { observeScan(meta, requestBody, this.responseType === 'json' ? this.response : this.responseText, this.status); } catch {}
+      }, { once: true });
+    }
     if (this.__spxDvReceiveHookMeta) {
       this.__spxDvReceiveHookMeta.body = serializeBody(body);
       this.__spxDvReceiveHookMeta.transport = 'xhr';

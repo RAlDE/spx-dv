@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.69';
+  const MODULE_VERSION = '1.3.71';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -466,6 +466,24 @@
     return JSON.stringify({ version: MODULE_VERSION, page: location.href, hook, inbox, main: receiveDiagRead() }, null, 2);
   }
 
+  function exportScan() {
+    try {
+      const panel = document.getElementById(PANEL_ID);
+      const br = String(panel?.dataset.shipmentId || currentShipment || '').toUpperCase();
+      const scan = window.__SPX_DV_SCAN_SNAPSHOT__?.() || JSON.parse(localStorage.getItem('spxdv:scan-v1') || '{"entries":[]}');
+      const report = { schema: 1, version: MODULE_VERSION, exported_at: new Date().toISOString(),
+        selected_br: br, scope: 'Últimas 40 respostas relevantes desta sessão/origem; pode conter outros BRs',
+        dashboard: JSON.parse(receiveDiagText()), network: scan, return_summary: getReturnDiagnostics() };
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob), a = document.createElement('a');
+      a.href = url; a.download = 'SPX-DV-diagnostico-' + (br || 'sessao') + '-' + Date.now() + '.json';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (error) { alert('Não foi possível exportar: ' + String(error.message || error)); }
+  }
+  document.addEventListener('click', event => {
+    if (event.target.closest?.('[data-export-scan]')) exportScan();
+  });
+
   function renderReceiveDiagnostics() {
     const panel = document.getElementById(PANEL_ID);
     const body = panel?.querySelector('.body');
@@ -482,9 +500,10 @@
     ).join('');
 
     body.innerHTML =
-      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">' +
       '<strong>DIAGNÓSTICO DO DASHBOARD</strong>' +
-      '<div style="display:flex;gap:6px">' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+      '<button type="button" data-export-scan style="border:1px solid #fb923c;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Baixar diagnóstico</button>' +
       '<button type="button" data-copy-receive-diag style="border:1px solid #fb923c;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Copiar</button>' +
       '<button type="button" data-retry-receive-sync style="border:1px solid #22c55e;border-radius:7px;background:#052e16;color:#dcfce7;padding:6px 9px;cursor:pointer">Reenviar novos</button>' +
       '<button type="button" data-clear-receive-diag style="border:1px solid #64748b;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Limpar</button>' +
@@ -1910,6 +1929,7 @@
     body.innerHTML =
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px">' +
       '<strong style="font-size:15px">DIAGNÓSTICO DO RETORNO</strong>' +
+      '<button type="button" data-export-scan style="border:1px solid #fb923c;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Baixar diagnóstico</button>' +
       '<button type="button" data-diag-back style="border:1px solid #fed7aa;border-radius:7px;background:#111827;color:#fff;padding:6px 9px;cursor:pointer">Voltar</button>' +
       '</div>' +
       '<div style="font-size:12px;color:#cbd5e1;margin-bottom:9px">BR: <b>' + escapeHtml(shipmentId || '—') +
@@ -1998,7 +2018,7 @@
     style.textContent = `
       #${PANEL_ID}{position:fixed;z-index:2147483647;top:16px;left:16px;right:auto;width:min(520px,calc(100vw - 32px));max-height:82vh;overflow:hidden;border:1px solid #334155;border-radius:14px;background:#0f172a;color:#f8fafc;box-shadow:0 22px 62px #0008;font:15px Arial,sans-serif}
       #${PANEL_ID}[hidden]{display:none!important}#${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} header{position:relative;padding:15px 210px 13px 15px;border-bottom:1px solid #fb923c;background:linear-gradient(135deg,#ff6a00,#e94b00 68%,#9a3412);cursor:grab;user-select:none;touch-action:none}
-      #${PANEL_ID}.dragging header{cursor:grabbing}#${PANEL_ID} h2{margin:0;font-size:19px;display:flex;align-items:baseline;gap:6px}#${PANEL_ID} .module-version{font-size:11px;font-weight:700;color:#fff;opacity:.78}#${PANEL_ID} header small{display:block;margin-top:7px;color:#fff;font-size:19px;font-weight:700}#${PANEL_ID} header small strong{font-size:inherit}#${PANEL_ID} .received-at{display:block;margin-top:3px;font-size:12px;font-weight:650;color:#ffedd5}#${PANEL_ID} .received-at b{font-size:12px}#${PANEL_ID} .header-actions{position:absolute;top:9px;right:9px;display:flex;gap:6px}#${PANEL_ID} .icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #fed7aa;border-radius:8px;background:#111827;color:#fff;font-size:18px;cursor:pointer}#${PANEL_ID} .dashboard-button{width:auto;min-width:58px;padding:0 9px;font-size:11px;font-weight:800}
+      #${PANEL_ID}.dragging header{cursor:grabbing}#${PANEL_ID} h2{margin:0;font-size:19px;display:flex;align-items:baseline;gap:6px}#${PANEL_ID} .module-version{font-size:11px;font-weight:700;color:#fff;opacity:.78}#${PANEL_ID} header small{display:block;margin-top:7px;color:#fff;font-size:19px;font-weight:700}#${PANEL_ID} header small strong{font-size:inherit}#${PANEL_ID} .received-at{display:block;margin-top:3px;font-size:12px;font-weight:650;color:#ffedd5}#${PANEL_ID} .received-at b{font-size:12px}#${PANEL_ID} .header-actions{position:absolute;top:9px;right:9px;display:flex;gap:6px;flex-wrap:wrap}#${PANEL_ID} .icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #fed7aa;border-radius:8px;background:#111827;color:#fff;font-size:18px;cursor:pointer}#${PANEL_ID} .dashboard-button{width:auto;min-width:58px;padding:0 9px;font-size:11px;font-weight:800}
       #${PANEL_ID} .body{max-height:65vh;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;pointer-events:auto;padding:10px}#${PANEL_ID} .message{padding:22px;text-align:center;color:#cbd5e1}#${PANEL_ID} .error{color:#fca5a5}
       #${PANEL_ID} .attempt{display:grid;grid-template-columns:27px minmax(0,1fr) auto;gap:9px;margin-bottom:8px;padding:10px;border:1px solid #3f3f46;border-radius:10px;background:#050505}
       #${PANEL_ID} .index{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#334155;font-size:13px;font-weight:900}#${PANEL_ID} .reason{display:inline-block;padding:5px 10px;border-radius:999px;background:#16a34a33;color:#bbf7d0;font-size:19px;font-weight:800}#${PANEL_ID} .reason.reason-valid{background:#2563eb33;color:#bfdbfe}#${PANEL_ID} .reason.reason-final{background:#dc262633;color:#fecaca}#${PANEL_ID} .cancelled-badge{display:inline-block;margin-left:7px;padding:4px 8px;border-radius:999px;background:#64748b33;color:#e2e8f0;font-size:13px;font-weight:900;vertical-align:middle}

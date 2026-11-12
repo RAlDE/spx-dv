@@ -1,3 +1,5 @@
+> **ATENÇÃO — HANDOFF MAIS RECENTE (11/11/2026):** leia primeiro [`HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md`](HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md). Ele documenta problemas de integridade no vínculo `_SPX_DV_CONTROLE` → `Dados`, duplicidade do mesmo BR com um único recibo relatado, Return recebido sem data/3PL/Bairro na caixa, evento de 11/11 ausente na data do Dashboard e filtros que precisam acompanhar o conjunto filtrado. **Nenhuma correção de sistema foi autorizada neste registro.**
+
 # PROJECT_CONTEXT — SPX-DV
 
 Atualizado em: 2026-11-03
@@ -2913,3 +2915,19 @@ Para recuperá-los é necessário comparar a lista dos 132 BRs do RT com os 121 
 - Quatro cenários de AT: ID entre colchetes, ID sem colchetes com marcador "Assignment Task", ausência de ID, ID fora de um marcador. Todos passaram.
 - Pendentes REAIS: validar no SPX se Retorno_Recebido_LMHub é reconhecido a partir do tracking_info do mesmo BR. A 3PL e Bairro do Return NÃO foram comprovadamente corrigidos: precisam dos eventos return_assignment_cycles_missing, assignment_lookup_resolved/empty, return_agency_no_matching_at, return_seller_geo_missing, geo_neighborhood_lookup. Não atribuir 3PL pela identidade do motorista isolada nem bairro por geografia aproximada.
 - Não inserir BR262430125984G no Dashboard a partir de tracking_info. Se o recebimento foi operacionalmente concluído, requer evidência do hook retcode=0 ou conciliação explícita com SPX antes da recuperação. 
+
+
+## Registro de incidentes e handoff de 11/11/2026 — SEM ALTERAÇÃO DE CÓDIGO
+
+**Arquivo de continuidade prioritário:** [HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md](HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md).
+
+O usuário apresentou novas evidências na versão do módulo **1.3.69** (Apps Script **1.3.68**) e pediu **apenas documentação para a próxima conversa com raciocínio mais alto**, sem publicar correções agora.
+
+1. **P0 integridade/deduplicação:** BR261747784244S mostra dois registros `confirmed` com o mesmo `received_at = 10/11 04:56:03`, mas dois motivos/ocorrências. Uma ocorrência é **10/11 08:46:52**, posterior ao recebimento. Pior: as referências do controle em `Dados!270471` e `Dados!270472` não correspondem corretamente à chave + BR + Driver ID; houve confirmação em leitura direta. Proibido reenviar/apagar/reparar automaticamente sem conciliação e plano aprovado.
+2. **P1 Return de 11/11:** BR267073684559J tem `Retorno_Recebido_LMHub` às **06:28:06** (vídeo), Dashboard confirmou recebimento às **06:28:06**, mas a caixa 1.3.69 mostra `Recebido em: —`, 3PL vazia e `Bairro: Atualizar base`. Central já possui bairro Quinta dos Acorianos e `Dados` tem 3PL SPXOWNFLEET, mas central 3PL vazia. Não adivinhar a origem dessa divergência.
+3. **P1 recebimento de 11/11 não refletido:** BR267803637465O tem evento Return recebido às **11:55:32** (vídeo), mas nenhuma linha central na data 11/11 durante a leitura. As duas linhas/controles existentes pertencem a **08 e 09/11**; a pesquisa de 11/11, portanto, não comprova inexistência histórica. Evento de rastreio não substitui `retcode=0`.
+4. **P2 filtros em cascata:** após filtrar para 5 resultados, os menus das outras colunas devem mostrar apenas valores correspondentes ao conjunto atual (excluindo a própria coluna no cálculo para preservar opções), com pesquisa interna, `(Vazio)`, contagens e seleção persistente.
+
+**Risco de requisito conflitante:** o usuário pede mostrar na caixa apenas ocorrências já recebidas, mas `PROJECT_MASTER_CONTEXT.md` exige preservar as ocorrências legítimas do ciclo Return no histórico visual. Na próxima conversa esclarecer a distinção *histórico mostrado* versus *registro enviado ao Dashboard* antes de modificar a caixa.
+
+**Estado após este registro:** módulo e catálogo continuam 1.3.69; geração Dashboard e Apps Script continuam 1.3.68; receive-hook e planilha não foram alterados. O novo handoff contém horários, chaves, linhas, consultas realizadas, riscos, hipóteses e plano de teste. A investigação real das causas e a implementação aguardam autorização posterior.

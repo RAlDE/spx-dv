@@ -128,6 +128,7 @@
         url: String(meta.url || ''),
         method: String(meta.method || 'POST').toUpperCase(),
         body: String(meta.body || '').slice(0, 12000),
+        observed_at: Date.now(),
         transport: String(meta.transport || '')
       },
       payload

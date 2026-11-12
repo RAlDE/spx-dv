@@ -60,10 +60,13 @@ O usuário confirmou que **foi recebido apenas uma vez**. A tela filtrada em **1
 
 **Inconsistência temporal objetiva:** ocorrência A às **08:46:52** é **posterior em 3h50m49s** ao mesmo recebimento às **04:56:03**; não pode representar a ocorrência que motivou aquele recebimento se os relógios forem comparáveis e corresponderem à mesma operação. Verificar timezone e unidade, mas não explicar como erro de fuso sem prova.
 
-**Inconsistência referencial grave, confirmada por leitura direta de `Dados`:**
-- Controle da ocorrência A aponta para `Dados!270471`: a coluna C **é o mesmo BR**, porém motivo = **Problemas Mecânicos** e Driver ID = **4269325** (isto corresponde aos dados da ocorrência B, não A).
-- Controle da ocorrência B aponta para `Dados!270472`: a coluna C é **BR269771956620M**, **outro BR**, não BR261747784244S.
-- Portanto, não é apenas duplicidade visual: `_SPX_DV_CONTROLE` também possui referências de linha incompatíveis. O controle marcar `confirmed` não prova, sozinho, que o registro correto esteja naquela linha. **Não corrigir, excluir, reenviar nem ajustar G automaticamente antes de conciliar as chaves e os destinos.**
+**ATUALIZAÇÃO DE CAUSA — esclarecimento posterior do usuário (11/11/2026):** o usuário informou expressamente: **"nessa parte dos dados 270471 e 72, eu removi a duplicidade por isso não está lá"**. Ou seja, **houve uma intervenção manual em `Dados` para remover a duplicidade**. Isso muda a interpretação da leitura anterior. O conteúdo atualmente encontrado nas linhas 270471 e 270472 **NÃO é evidência suficiente de que o sistema gravou as linhas erradas originalmente**. Se foram apagadas linhas inteiras, outras referências podem ter se deslocado; se foram apenas limpos valores, o efeito pode ser diferente. **O tipo exato de remoção não foi informado. Não afirmar que houve deslocamento de linhas.**
+
+**Observação histórica da leitura, agora com causa manual conhecida:**
+- `_SPX_DV_CONTROLE` ainda apontava para `Dados!270471` e `Dados!270472`, enquanto o conteúdo visto após a remoção manual não correspondia totalmente às chaves.
+- **Não classificar esse desencontro isoladamente como bug do envio em massa.** Ele é compatível com a intervenção relatada, mas ainda merece conciliação para evitar que reparos automáticos gravem na linha errada.
+- **O problema independente da DUPLICIDADE continua**: duas ocorrências no Dashboard, ambas com `received_at = 10/11/2026 04:56:03`, quando o usuário afirma ter realizado um só recebimento; uma ocorrência está marcada às 08:46:52, posterior ao recebimento. A remoção manual em Dados não explica por si só **por que duas chaves foram criadas no Dashboard**.
+- **Não corrigir, excluir, reenviar nem ajustar G automaticamente antes de verificar o vínculo real entre recibo e ocorrência.**
 
 **Hipótese técnica relevante, ainda NÃO demonstrada:** `processConfirmedReceive()` seleciona `visibleAttempts.at(-1)` (última ocorrência disponível **no momento da consulta**), independentemente do `receivedAt` original. Em tentativas/reprocessamentos posteriores pode vincular **um mesmo recibo antigo a uma ocorrência mais recente**, inclusive futura ao recibo. A chave BR+timestamp então permite duas chaves diferentes para o mesmo recebimento. Outras causas possíveis: reprocessamento de inbox, resposta tardia, migração local, concorrência ou drift de linhas após gravação. NÃO concluir a causa sem logs.
 
@@ -117,8 +120,8 @@ O usuário reafirmou: “**só é pra aparecer na caixa os que já foram recebid
 ## 8. Hipóteses técnicas e roteiro de investigação por prioridade
 
 ### P0 — isolar risco de dano na planilha (ANTES de corrigir código)
-1. Somente leitura: congelar snapshot/backup conforme procedimento aprovado, sem alterar a planilha original. Conferir `_SPX_DV_DASHBOARD`, `_SPX_DV_CONTROLE`, `Dados` e fórmulas/formatos; identificar se há outras chaves → linhas erradas além deste BR.
-2. Inspecionar `findWritableRows_`, `groupConsecutiveAssignments_`, `appendControlAssignments_`, eventual reordenação/edição da planilha e uso de ponteiro; reproduzir o mismatch 270471/270472 em teste local.
+1. Somente leitura: registrar o **histórico da remoção manual efetuada pelo usuário** (se foram linhas excluídas ou apenas conteúdos apagados), e congelar snapshot/backup conforme procedimento aprovado, sem alterar a planilha original. Conferir `_SPX_DV_DASHBOARD`, `_SPX_DV_CONTROLE`, `Dados` e fórmulas/formatos; somente procurar possíveis chaves → linhas erradas **não explicadas por intervenção manual**.
+2. Inspecionar `findWritableRows_`, `groupConsecutiveAssignments_`, `appendControlAssignments_`, histórico de edição/reordenação manual e ponteiro; **não atribuir o mismatch atual de 270471/270472 ao algoritmo sem evidência anterior à remoção manual**. Investigar separadamente a criação das duas occurrence_keys a partir de um recebimento relatado como único.
 3. Desenhar estratégia segura de correção com **prévia/dry-run e reconciliação**, aprovação explícita do usuário, sem reenviar ou apagar BRs. `confirmed` é insuficiente quando chave e linha não batem.
 
 ### P1 — capturas e associação temporal

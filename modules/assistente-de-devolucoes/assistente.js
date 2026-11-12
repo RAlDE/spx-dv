@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.69';
+  const MODULE_VERSION = '1.3.70';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -35,7 +35,8 @@
   const DASHBOARD_DB_STORE = 'records';
   const RECEIVE_DIAG_STORAGE_KEY = 'spxdv:receive-dashboard-diag-v1';
   const RECEIVE_INBOX_KEY = 'spxdv:confirmed-receive-inbox-v1';
-  const DASHBOARD_SYNC_GENERATION = '1.3.68';
+  const RECEIVE_INBOX_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+  const DASHBOARD_SYNC_GENERATION = '1.3.70';
   const DASHBOARD_MIGRATION_DONE_KEY = 'spxdv:dashboard-migration-v2-done';
   let dashboardDbPromise = null;
   let dashboardMigrationPromise = null;
@@ -129,6 +130,7 @@
   const addressDashboardSnapshots = new Map();
   const receivedAtByShipment = new Map();
   const latestOccurrenceByShipment = new Map();
+  let currentReturnAttempts = [];
   const RECEIVE_CAPTURE_RETRY_DELAYS = [600, 1400, 2800, 5000, 10000];
 
   function readCancelledAddressState() {
@@ -254,6 +256,8 @@
       shipment_id: String(incoming?.shipment_id || previous?.shipment_id || '').trim().toUpperCase(),
       operator_login: String(previous?.operator_login || incoming?.operator_login || '').trim().toLowerCase(),
       received_at: receivedAt,
+      receive_key: previous?.receive_key || (!previous?.received_at ||
+        Number(incoming?.received_at) === receivedAt ? incoming?.receive_key : undefined),
       received_day: String(previous?.received_day || incoming?.received_day || saoPauloDay(receivedAt)),
       captured_at: Number(previous?.captured_at || incoming?.captured_at || receivedAt),
       agency: String(incoming?.agency || previous?.agency || '').trim(),
@@ -332,7 +336,7 @@
       for (const [key, record] of Object.entries(records)) {
         if (!record || typeof record !== 'object') continue;
         const receivedAt = Number(record.received_at || record.created_at || 0);
-        if (!receivedAt || now - receivedAt > 3 * 24 * 60 * 60 * 1000) continue;
+        if (!receivedAt || now - receivedAt > RECEIVE_INBOX_TTL_MS) continue;
         clean[key] = record;
       }
 
@@ -386,31 +390,27 @@
     return saved;
   }
 
-  function removeConfirmedReceiveReceipt(receiveKey) {
+  function completeConfirmedReceiveReceipt(receiveKey) {
     const key = String(receiveKey || '').trim();
     if (!key) return false;
 
     const records = readConfirmedReceiveInbox();
     if (!records[key]) return true;
-    delete records[key];
+    records[key] = { ...records[key], completed_at: Date.now() };
     return writeConfirmedReceiveInbox(records);
   }
 
-  function confirmedReceiveInboxToday(limit = 50) {
-    const today = saoPauloDay();
+  function pendingConfirmedReceiveReceipts(limit = 50) {
     return Object.values(readConfirmedReceiveInbox())
-      .filter(record => {
-        if (!record || typeof record !== 'object') return false;
-        const receivedAt = Number(record.received_at || 0);
-        const day = String(record.received_day || (receivedAt ? saoPauloDay(receivedAt) : ''));
-        return day === today;
-      })
+      .filter(record => !record.completed_at)
       .sort((a, b) => Number(a.received_at || 0) - Number(b.received_at || 0))
       .slice(0, Math.max(1, Math.min(100, Number(limit) || 50)));
   }
 
   function replayConfirmedReceiveInbox(limit = 50) {
-    const records = confirmedReceiveInboxToday(limit);
+    const records = pendingConfirmedReceiveReceipts(100)
+      .filter(record => !confirmedReceiveSeen.has(record.receive_key))
+      .slice(0, limit);
     if (!records.length) {
       receiveDiagPush('receive_inbox_replay_empty', { day: saoPauloDay() });
       return 0;
@@ -462,7 +462,7 @@
   function receiveDiagText() {
     let hook = {};
     try { hook = JSON.parse(localStorage.getItem('spxdv:receive-hook-diag-v1') || '{}') || {}; } catch {}
-    const inbox = confirmedReceiveInboxToday(100);
+    const inbox = pendingConfirmedReceiveReceipts(100);
     return JSON.stringify({ version: MODULE_VERSION, page: location.href, hook, inbox, main: receiveDiagRead() }, null, 2);
   }
 
@@ -657,7 +657,7 @@
     const result = await requestCentralJsonp('health', {}, 5000);
     const ok = Boolean(
       result?.ok &&
-      ['1.3.65', '1.3.66', '1.3.67', DASHBOARD_SYNC_GENERATION].includes(String(result?.build || '')) &&
+      ['1.3.65', '1.3.66', '1.3.67', '1.3.68', DASHBOARD_SYNC_GENERATION].includes(String(result?.build || '')) &&
       result?.capabilities?.dashboard_post === true &&
       result?.capabilities?.dashboard_check === true &&
       result?.capabilities?.dashboard_data === true
@@ -707,11 +707,11 @@
     }
   }
 
-  async function checkCentralDashboardOccurrence(occurrenceKey, verifyDataAgency = false) {
+  async function checkCentralDashboardOccurrence(occurrenceKey, receiveKey = '') {
     if (!occurrenceKey) return null;
     return await requestCentralJsonp('dashboard_check', {
       occurrence_key: occurrenceKey,
-      ...(verifyDataAgency ? { check_data_agency: '1' } : {})
+      ...(receiveKey ? { receive_key: receiveKey } : {})
     }, 5500);
   }
 
@@ -764,38 +764,39 @@
       for (const checkDelay of [250, 700, 1400]) {
         if (checkDelay) await sleep(checkDelay);
         const expectedAgency = String(payload?.agency || '').trim();
-        const needsDataVerify = Boolean(payload?.repair_confirmed_fields &&
-          payload?.agency_verified_by_at && expectedAgency);
-        const check = await checkCentralDashboardOccurrence(occurrenceKey, needsDataVerify);
+        const receiveKey = String(payload?.receive_key || '');
+        const check = await checkCentralDashboardOccurrence(occurrenceKey, receiveKey);
+        if (receiveKey && check?.ok && check?.receipt_occurrence_key &&
+            check.receipt_occurrence_key !== occurrenceKey) {
+          receiveDiagPush('central_receipt_already_linked', {
+            receive_key: receiveKey,
+            occurrence_key: check.receipt_occurrence_key
+          });
+          return true;
+        }
+        const receiptMatches = !receiveKey || check?.build !== DASHBOARD_SYNC_GENERATION ||
+          check.receipt_occurrence_key === occurrenceKey;
         const hasOccurrence = Boolean(
-          check?.ok && check?.found &&
+          receiptMatches && check?.ok && check?.found &&
           String(check?.occurrence_key || '') === occurrenceKey &&
           String(check?.shipment_id || '').toUpperCase() === String(payload?.shipment_id || '').toUpperCase()
         );
         // Compatibilidade temporária: no build 1.3.65 só havia leitura da chave.
-        const hasFieldReadback = ['1.3.66', '1.3.67', DASHBOARD_SYNC_GENERATION].includes(String(check?.build || ''));
+        const hasFieldReadback = ['1.3.66', '1.3.67', '1.3.68', DASHBOARD_SYNC_GENERATION].includes(String(check?.build || ''));
         const expectedNeighborhood = String(payload?.neighborhood || '').trim();
         const agencyMatches = !hasFieldReadback || !expectedAgency ||
           String(check?.agency || '').trim().toUpperCase() === expectedAgency.toUpperCase();
         const neighborhoodMatches = !hasFieldReadback || !isUsefulNeighborhood(expectedNeighborhood) ||
           normalize(check?.neighborhood) === normalize(expectedNeighborhood);
-        // Em 1.3.68, reparar BR já ENVIADO exige G conferida na aba Dados.
-        const dataAgencyMatches = !needsDataVerify ||
-          String(check?.status || '').toLowerCase() !== 'confirmed' ||
-          String(check?.build || '') !== DASHBOARD_SYNC_GENERATION ||
-          (Boolean(check?.data_agency_verified) &&
-            String(check?.data_agency || '').trim().toUpperCase() === expectedAgency.toUpperCase());
-        if (hasOccurrence && (!agencyMatches || !neighborhoodMatches || !dataAgencyMatches)) {
+        if (hasOccurrence && (!agencyMatches || !neighborhoodMatches)) {
           lastFieldsMismatch = {
             expected_agency: expectedAgency,
             actual_agency: String(check?.agency || ''),
             expected_neighborhood: expectedNeighborhood,
-            actual_neighborhood: String(check?.neighborhood || ''),
-            data_agency_verified: Boolean(check?.data_agency_verified),
-            actual_data_agency: String(check?.data_agency || '')
+            actual_neighborhood: String(check?.neighborhood || '')
           };
         }
-        if (hasOccurrence && agencyMatches && neighborhoodMatches && dataAgencyMatches) {
+        if (hasOccurrence && agencyMatches && neighborhoodMatches) {
           receiveDiagPush('central_send_confirmed', {
             action,
             shipment_id: payload?.shipment_id || '',
@@ -805,10 +806,7 @@
             received_day: String(check?.received_day || ''),
             today: String(check?.today || ''),
             visible_today: Boolean(check?.visible_today),
-            fields_verified: hasFieldReadback,
-            data_agency_verified: needsDataVerify && String(check?.status || '').toLowerCase() === 'confirmed'
-              ? Boolean(check?.data_agency_verified)
-              : null
+            fields_verified: hasFieldReadback
           });
           return true;
         }
@@ -860,6 +858,7 @@
     try {
       const store = await readDashboardQueue();
       const today = saoPauloDay();
+      const now = Date.now();
       const maxRecords = Math.max(1, Math.min(50, Number(limit) || 10));
 
       const records = Object.values(store.records || {})
@@ -872,7 +871,7 @@
             (receivedAt > 0 ? saoPauloDay(receivedAt) : '')
           );
 
-          return recordDay === today;
+          return recordDay === today || Boolean(record.receive_key && receivedAt && now - receivedAt <= RECEIVE_INBOX_TTL_MS);
         })
         .sort((a, b) => Number(a.received_at || a.captured_at || 0) - Number(b.received_at || b.captured_at || 0))
         .slice(0, maxRecords);
@@ -2399,6 +2398,8 @@
         ctime: stamp,
         on_hold_reason__desc: returnOccurrenceReason(node) || 'Retorno LMHub em espera',
         return_occurrence: true,
+        return_event_assignment_id: assignmentTaskIdFromNode(node) ||
+          assignmentTaskId(node?.message) || assignmentTaskId(node?.description),
         current_return: false,
         return_operator: returnOperator,
         return_operator_id: returnIdentity.id,
@@ -2409,15 +2410,20 @@
       .sort((a, b) => Number(a.ctime) - Number(b.ctime) || a.index - b.index);
 
     // Evita duplicidade caso o mesmo evento apareça repetido em estruturas internas.
-    const unique = [];
-    const seen = new Set();
+    const byEvent = new Map();
     for (const item of matches) {
       const key = String(item.ctime) + '|' + normalize(item.on_hold_reason__desc);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      unique.push(item);
+      const previous = byEvent.get(key);
+      if (!previous) {
+        byEvent.set(key, item);
+      } else {
+        previous.return_event_assignment_id ||= item.return_event_assignment_id;
+        previous.return_operator_id ||= item.return_operator_id;
+        previous.return_operator_name ||= item.return_operator_name;
+      }
     }
 
+    const unique = [...byEvent.values()];
     if (unique.length) unique[unique.length - 1].current_return = true;
     return unique;
   }
@@ -2862,24 +2868,10 @@
     }
 
     const cycles = extractAssignmentDeliveryCycles(tracking);
-    if (!cycles.length) {
-      const nodes = collectAllObjects(tracking?.data?.tracking_list);
-      const marked = nodes.filter(node =>
-        /assignment task/i.test(String(node?.message || '') + ' ' + String(node?.description || ''))
-      );
-      receiveDiagPush('return_assignment_cycles_missing', {
-        occurrence_count: returnOccurrences.length,
-        tracking_assignment_markers: marked.length,
-        marker_field_keys: marked.slice(0, 3).map(node =>
-          Object.keys(node).filter(key => /assignment|task|operator|driver|message|description|status/i.test(key)).slice(0, 12)
-        )
-      });
-      return returnOccurrences;
-    }
-
-    const assignmentIds = [...new Set(cycles
-      .map(item => String(item?.assignmentId || '').trim().toUpperCase())
-      .filter(Boolean))];
+    const assignmentIds = [...new Set([
+      ...cycles.map(item => item.assignmentId),
+      ...returnOccurrences.map(item => item.return_event_assignment_id)
+    ].map(id => String(id || '').trim().toUpperCase()).filter(Boolean))];
 
     if (!assignmentIds.length) {
       receiveDiagPush('return_assignment_ids_missing', {
@@ -2903,13 +2895,15 @@
     return returnOccurrences.map(attempt => {
       const occurrenceTime = Number(attempt?.ctime || 0);
       const returnDriverId = String(attempt?.return_operator_id || '').trim();
-      if (!occurrenceTime || !returnDriverId) return attempt;
+      const eventAssignmentId = String(attempt?.return_event_assignment_id || '').trim().toUpperCase();
+      if (!occurrenceTime || (!returnDriverId && !eventAssignmentId)) return attempt;
 
-      const candidates = cycles
+      const priorCycles = cycles
         .filter(item => Number(item?.ctime || 0) <= occurrenceTime)
         .slice()
         .sort((a, b) => Number(b?.ctime || 0) - Number(a?.ctime || 0));
 
+      const candidates = eventAssignmentId ? [{ assignmentId: eventAssignmentId }] : priorCycles;
       let matchedCycle = null;
       let matchedDetails = null;
 
@@ -2923,10 +2917,9 @@
         const cycleDriverId = String(cycle?.driverId || '').trim();
         const detailsDriverId = String(details?.driverId || '').trim();
 
-        if (
-          cycleDriverId === returnDriverId ||
-          detailsDriverId === returnDriverId
-        ) {
+        const driverMatches = !returnDriverId || !detailsDriverId || detailsDriverId === returnDriverId;
+        if (driverMatches && (eventAssignmentId ||
+          (returnDriverId && (cycleDriverId === returnDriverId || detailsDriverId === returnDriverId)))) {
           matchedCycle = cycle;
           matchedDetails = details;
           break;
@@ -2991,22 +2984,53 @@
       .sort((a, b) => Number(a.ctime) - Number(b.ctime) || a.index - b.index);
   }
 
+  function nodeRepresentsReturnLmHubReceived(node) {
+    const statusFields = ['status', 'event_status', 'state'];
+    const values = primitiveEntries(node).map(([, value]) => value);
+    for (const field of statusFields) {
+      values.push(...primitiveEntries(node?.[field]).map(([, value]) => value));
+    }
+    return values.some(value => /(?:^|[^a-z0-9])(?:retorno_recebido_lmhub|retorno_lmhub_recebido|return_received_lmhub|return_lmhub_received)(?:$|[^a-z0-9])/.test(trackingStatusText(value)));
+  }
+
+  function returnReceiptsByOccurrence(attempts, tracking) {
+    const receipts = new Map();
+    for (const node of collectAllObjects(tracking)) {
+      if (!nodeRepresentsReturnLmHubReceived(node)) continue;
+      const seconds = returnEventTimestamp(node);
+      const attempt = selectReceiveOccurrence(attempts, seconds - 1);
+      if (!attempt) continue;
+      const timestamp = Number(attempt.ctime);
+      if (seconds * 1000 > Number(receipts.get(timestamp) || 0)) {
+        receipts.set(timestamp, seconds * 1000);
+      }
+    }
+    return receipts;
+  }
+
+  async function readReturnDisplayRecords(shipmentId, attempts, receipts) {
+    const candidates = attempts.slice(-3).reverse();
+    const latestTracked = attempts.findLast(attempt => receipts.has(Number(attempt.ctime)));
+    if (latestTracked && !candidates.includes(latestTracked)) candidates.push(latestTracked);
+    const records = await Promise.all(candidates.map(async attempt => {
+      const key = dataSheetOccurrenceKey(shipmentId, attempt.ctime);
+      const result = await checkCentralDashboardOccurrence(key);
+      const receivedAt = Number(result?.received_at || 0);
+      if (!result?.ok || !result.found || result.shipment_id !== shipmentId ||
+          result.occurrence_key !== key || !['captured', 'confirmed'].includes(result.status) ||
+          !receivedAt || selectReceiveOccurrence(attempts, Math.floor(receivedAt / 1000)) !== attempt) return null;
+      return [Number(attempt.ctime), result];
+    }));
+    return new Map(records.filter(Boolean));
+  }
+
   function nodeRepresentsLmHubReceived(node) {
     if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
 
     const values = primitiveEntries(node).map(([, value]) => String(value || ''));
     const statusTexts = values.map(trackingStatusText);
 
-    // Return usa a ordem inversa: "Retorno_Recebido_LMHub", não
-    // "LMHub_Recebido". Este evento serve só para EXIBIR a chegada no
-    // rastreio; NÃO equivale ao retcode=0 da API de recebimento real.
-    const returnReceivedStatuses = new Set([
-      'retorno_recebido_lmhub',
-      'retorno_lmhub_recebido',
-      'return_received_lmhub',
-      'return_lmhub_received'
-    ]);
-    if (statusTexts.some(text => returnReceivedStatuses.has(text))) return true;
+    if (nodeRepresentsReturnLmHubReceived(node)) return true;
 
     if (statusTexts.some(text =>
       text.includes('lmhub_recebido') ||
@@ -3084,6 +3108,15 @@
           'https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=' +
           encodeURIComponent(shipment)
         );
+        if (shipment === currentShipment && currentReturnAttempts.length) {
+          const receipts = returnReceiptsByOccurrence(currentReturnAttempts, tracking);
+          const receivedAt = Math.max(0, ...receipts.values());
+          if (!receivedAt) continue;
+          if (receivedAt > Number(receivedAtByShipment.get(shipment) || 0)) {
+            rememberReceivedAt(shipment, receivedAt);
+          }
+          return true;
+        }
         const receivedSeconds = latestLmHubReceivedAfterOccurrence(tracking, occurrenceTime);
         if (!receivedSeconds) continue;
 
@@ -3480,6 +3513,26 @@
     return String(details?.neighborhood || '').trim() || 'Atualizar base';
   }
 
+  function mergeVisibleAttempts(normalAttempts, returnAttempts) {
+    const unique = new Map();
+    for (const attempt of [...returnAttempts, ...normalAttempts]) {
+      const key = String(attempt?.ctime || 0) + '|' +
+        normalize(translateReason(attempt?.on_hold_reason__desc));
+      if (!unique.has(key)) unique.set(key, attempt);
+    }
+    return [...unique.values()].sort((a, b) =>
+      Number(a.ctime) - Number(b.ctime) || Number(Boolean(a.return_occurrence)) - Number(Boolean(b.return_occurrence))
+    );
+  }
+
+  function selectReceiveOccurrence(attempts, receiptSeconds, pinnedTimestamp = 0) {
+    return attempts.findLast(attempt => {
+      const timestamp = Number(attempt?.ctime || 0);
+      return timestamp > 0 && timestamp <= receiptSeconds &&
+        (!pinnedTimestamp || timestamp === pinnedTimestamp);
+    });
+  }
+
   function currentOccurrenceSheetPayload(shipmentId, attempt, returnFlow, neighborhood, operatorLogin = '', receivedAt = 0) {
     const reason = translateReason(attempt?.on_hold_reason__desc);
     const isReturnAttempt = Boolean(attempt?.return_occurrence);
@@ -3573,17 +3626,11 @@
 
       if (!payload.occurrence_timestamp || !payload.reason) return false;
 
-      // Apenas este caminho de REPARO solicita conferência da linha já enviada.
-      // Com vínculo explícito à AT, o servidor poderá completar G em Dados
-      // se G estiver vazio e a chave for a mesma, sem reenvio em massa.
+      // Atualiza somente a ocorrência já registrada no Dashboard.
       payload.repair_confirmed_fields = true;
-      payload.agency_verified_by_at = Boolean(
-        payload.agency && attempt?.assignment_task_id &&
-        (!attempt?.return_occurrence || attempt?.assignment_agency_return_match)
-      );
       const repaired = await sendCentralDashboard(payload, 'dashboard_upsert');
       if (repaired) {
-        if (['1.3.66','1.3.67',DASHBOARD_SYNC_GENERATION].includes(centralHealthCache.build)) {
+        if (['1.3.66','1.3.67','1.3.68',DASHBOARD_SYNC_GENERATION].includes(centralHealthCache.build)) {
           await markLocalDashboardEnrichment(occurrenceKey, payload);
         }
         receiveDiagPush('dashboard_existing_repaired', {
@@ -3607,7 +3654,7 @@
     }
   }
 
-  async function captureConfirmedOccurrenceToDashboard(shipmentId, attempt, returnFlow, operatorLogin = '', receivedAt = 0, tradeInfo = null, preloadedNeighborhood = '') {
+  async function captureConfirmedOccurrenceToDashboard(shipmentId, attempt, returnFlow, operatorLogin = '', receivedAt = 0, tradeInfo = null, preloadedNeighborhood = '', receiveKey = '') {
     if (!shipmentId || !attempt || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     const occurrenceKey = dataSheetOccurrenceKey(shipmentId, attempt?.ctime);
@@ -3648,6 +3695,7 @@
 
       // IMPORTANTE: esta etapa alimenta SOMENTE o Dashboard/fila central.
       // A aba Dados é gravada exclusivamente pelo botão de envio em lote do Dashboard.
+      if (receiveKey) payload.receive_key = receiveKey;
       const centralConfirmed = await saveDashboardRecord(payload);
       if (centralConfirmed && dashboardNeedsEnrichment(payload)) scheduleDashboardEnrichmentSoon();
 
@@ -3726,7 +3774,7 @@
     return Boolean(captured);
   }
 
-  async function processConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0, existingOnly = false) {
+  async function processConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0, { receipt, existingTimestamp } = {}) {
     if (!shipmentId || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     receiveDiagPush('process_start', {
@@ -3738,7 +3786,7 @@
     try {
       const historyPromise = fetchJson(
         `https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`
-      );
+      ).catch(error => ({ error }));
       const trackingPromise = fetchJson(
         `https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`
       ).catch(() => null);
@@ -3750,10 +3798,10 @@
       // define o fluxo e trade_info entrega as coordenadas, o geocoder já trabalha
       // em paralelo com o restante da montagem da ficha.
       const [tracking, tradeInfo] = await Promise.all([trackingPromise, tradeInfoPromise]);
-      const returnOccurrences = extractReturnOccurrences(tracking);
-      const cycleStart = returnOccurrences.length
-        ? Number(returnOccurrences[0].ctime || 0)
-        : 0;
+      const receiptSeconds = Math.floor(receivedAt / 1000);
+      const returnOccurrences = extractReturnOccurrences(tracking)
+        .filter(item => item.ctime <= receiptSeconds);
+      const cycleStart = Number(returnOccurrences[0]?.ctime || 0);
       const neighborhoodPromise = fetchOccurrenceNeighborhoodDetails(
         shipmentId,
         Boolean(cycleStart),
@@ -3766,6 +3814,8 @@
       }));
 
       const history = await historyPromise;
+      if (history?.error && !cycleStart) throw history.error;
+      if (history?.error) receiveDiagPush('return_recipient_unavailable', { shipment_id: shipmentId });
       const attempts = Array.isArray(history?.data?.recipient?.On_Hold)
         ? history.data.recipient.On_Hold.filter(Boolean)
         : [];
@@ -3784,30 +3834,30 @@
         ? await enrichReturnOccurrencesWithAssignmentAgency(returnOccurrences, tracking, null)
         : returnOccurrences;
 
-      const merged = cycleStart
-        ? [...attemptsWithAgency, ...returnOccurrencesWithAgency]
-        : attemptsWithAgency;
-
-      const visibleAttempts = merged
-        .filter((item, index, list) => {
-          const key = String(item?.ctime || 0) + '|' +
-            normalize(translateReason(item?.on_hold_reason__desc));
-          return list.findIndex(other =>
-            String(other?.ctime || 0) + '|' +
-            normalize(translateReason(other?.on_hold_reason__desc)) === key
-          ) === index;
-        })
-        .sort((a, b) => Number(a?.ctime || 0) - Number(b?.ctime || 0));
-
-      const currentOccurrence = visibleAttempts.at(-1);
+      const visibleAttempts = mergeVisibleAttempts(attemptsWithAgency, returnOccurrencesWithAgency);
+      const pinnedTimestamp = existingTimestamp || receipt?.occurrenceTimestamp;
+      const currentOccurrence = selectReceiveOccurrence(visibleAttempts, receiptSeconds, pinnedTimestamp);
       if (!currentOccurrence) {
         receiveDiagPush('process_no_occurrence', {
           shipment_id: shipmentId,
           attempts: attempts.length,
           visible_attempts: visibleAttempts.length,
+          received_at: receivedAt,
+          pinned_occurrence_timestamp: pinnedTimestamp || 0,
           return_flow: Boolean(cycleStart)
         });
         return false;
+      }
+
+      if (receipt && !pinnedTimestamp) {
+        const inbox = readConfirmedReceiveInbox();
+        const stored = inbox[receipt.key];
+        receipt.occurrenceTimestamp = Number(stored?.occurrence_timestamp || currentOccurrence.ctime);
+        if (stored && !stored.occurrence_timestamp) {
+          stored.occurrence_timestamp = receipt.occurrenceTimestamp;
+          writeConfirmedReceiveInbox(inbox);
+        }
+        if (receipt.occurrenceTimestamp !== Number(currentOccurrence.ctime)) return false;
       }
 
       const neighborhoodDetails = await neighborhoodPromise;
@@ -3817,12 +3867,13 @@
       );
       receiveDiagPush('process_occurrence_ready', {
         shipment_id: shipmentId,
+        receive_key: receipt?.key || '',
         occurrence_timestamp: Number(currentOccurrence?.ctime || 0),
         neighborhood: String(neighborhood || ''),
         neighborhood_source: String(neighborhoodDetails?.source || ''),
         neighborhood_confidence: String(neighborhoodDetails?.confidence || '')
       });
-      if (existingOnly) {
+      if (existingTimestamp) {
         // Apenas repara uma occurrence_key já salva; nunca transforma preview em captura.
         return await repairExistingDashboardOccurrence(
           shipmentId, currentOccurrence, Boolean(cycleStart), neighborhood
@@ -3835,7 +3886,8 @@
         operatorLogin,
         receivedAt,
         tradeInfo,
-        neighborhood
+        neighborhood,
+        receipt?.key
       );
     } catch (error) {
       receiveDiagPush('process_error', {
@@ -3869,6 +3921,7 @@
 
       for (const record of candidates) {
         if (!isTargetRoute() || !authorized) break;
+        if (!Number(record.occurrence_timestamp)) continue;
         const prev = dashboardEnrichmentRetryAt.get(record.key);
         const attempts = Number(prev?.attempts || 0) + 1;
         // Backoff e limite de carga: não atrapalhar o recebimento rápido.
@@ -3904,7 +3957,7 @@
           String(record.shipment_id || ''),
           String(record.operator_login || ''),
           Number(record.received_at || 0),
-          true
+          { existingTimestamp: Number(record.occurrence_timestamp || 0) }
         );
         receiveDiagPush(repaired ? 'dashboard_enrichment_repair_sent' : 'dashboard_enrichment_retry_needed', {
           shipment_id: record.shipment_id,
@@ -3923,22 +3976,29 @@
     if (!shipmentId) return;
     const operatorSnapshot = String(operatorLogin || currentOperatorLogin || '').trim().toLowerCase();
     const receivedAtSnapshot = Number(receivedAt || Date.now());
+    const receipt = {
+      key: receiveKey,
+      occurrenceTimestamp: Number(readConfirmedReceiveInbox()[receiveKey]?.occurrence_timestamp || 0)
+    };
 
     void (async () => {
       for (const delay of RECEIVE_CAPTURE_RETRY_DELAYS) {
         if (delay) await sleep(delay);
-        const captured = await processConfirmedReceive(shipmentId, operatorSnapshot, receivedAtSnapshot);
+        const captured = await processConfirmedReceive(shipmentId, operatorSnapshot, receivedAtSnapshot, { receipt });
         receiveDiagPush('process_attempt_result', {
           shipment_id: shipmentId,
           delay,
           captured: Boolean(captured)
         });
         if (captured) {
-          if (receiveKey) removeConfirmedReceiveReceipt(receiveKey);
+          if (receiveKey) completeConfirmedReceiveReceipt(receiveKey);
           receiveDiagPush('receive_receipt_completed', {
             shipment_id: shipmentId,
             receive_key: receiveKey
           });
+          if (shipmentId === currentShipment && currentReturnAttempts.length && !diagnosticView) {
+            void loadShipment(shipmentId);
+          }
           return;
         }
       }
@@ -4025,7 +4085,7 @@
         body_size: String(meta?.body || '').length
       });
 
-      if (Number(parsed?.retcode) !== 0) {
+      if (parsed?.retcode !== 0 && parsed?.retcode !== '0') {
         receiveDiagPush('receive_response_not_success', {
           retcode: parsed?.retcode,
           message: String(parsed?.message || '')
@@ -4037,13 +4097,17 @@
         .trim()
         .toLowerCase();
 
-      let orders = Array.isArray(parsed?.data?.order_list)
+      const responseOrders = Array.isArray(parsed?.data?.order_list)
         ? parsed.data.order_list.filter(Boolean)
         : [];
+      let orders = responseOrders.filter(order =>
+        /^BR[A-Z0-9]{8,}$/i.test(String(order?.shipment_id || order?.sls_tracking_number || '').trim())
+      );
 
       if (!orders.length) {
-        const requestShipmentIds = receiveShipmentIdsFromBody(meta?.body);
-        const fallbackReceiveTime = Number(parsed?.data?.receive_time || parsed?.receive_time || 0);
+        const ids = receiveShipmentIdsFromBody(meta?.body);
+        const requestShipmentIds = responseOrders.length && ids.length !== 1 ? [] : ids;
+        const fallbackReceiveTime = parsed?.data?.receive_time || parsed?.receive_time;
         orders = requestShipmentIds.map(shipmentId => ({
           shipment_id: shipmentId,
           receive_time: fallbackReceiveTime
@@ -4057,7 +4121,7 @@
 
       if (!orders.length) {
         receiveDiagPush('receive_success_without_orders', {
-          body_excerpt: String(meta?.body || '').slice(0, 500)
+          body_size: String(meta?.body || '').length
         });
         return;
       }
@@ -4073,29 +4137,33 @@
           .toUpperCase();
         if (!shipmentId) return;
 
-        const receiveSeconds = Number(order?.receive_time || 0);
-        const receivedAt = receiveSeconds > 0 ? receiveSeconds * 1000 : Date.now();
+        const receiveSeconds = parseReturnTimestamp(order?.receive_time ||
+          parsed?.data?.receive_time || parsed?.receive_time);
+        const observedAt = Number(meta?.observed_at);
+        const receivedAt = receiveSeconds > 0
+          ? receiveSeconds * 1000
+          : (observedAt > 0 ? observedAt : Date.now());
         void refreshReceivedAtFromTracking(shipmentId);
-        const receiveKey = shipmentId + '|' + Math.floor(receiveSeconds || receivedAt / 1000);
+        const receiveKey = shipmentId + '|' + Math.floor(receivedAt / 1000);
 
-        persistConfirmedReceiveReceipt(
+        if (confirmedReceiveSeen.has(receiveKey) || readConfirmedReceiveInbox()[receiveKey]?.completed_at) {
+          receiveDiagPush('receive_duplicate_ignored', { shipment_id: shipmentId, receive_key: receiveKey });
+          return;
+        }
+        const persisted = persistConfirmedReceiveReceipt(
           receiveKey,
           shipmentId,
           operatorLogin,
           receivedAt
         );
 
-        if (confirmedReceiveSeen.has(receiveKey)) {
-          receiveDiagPush('receive_duplicate_ignored', { shipment_id: shipmentId, receive_key: receiveKey });
-          return;
-        }
         confirmedReceiveSeen.add(receiveKey);
 
         receiveDiagPush('receive_queued', {
           shipment_id: shipmentId,
           received_at: receivedAt,
           operator_login: operatorLogin,
-          durable_receipt: true
+          durable_receipt: persisted
         });
         queueConfirmedReceive(shipmentId, operatorLogin, receivedAt, receiveKey);
       });
@@ -4256,7 +4324,7 @@
     return '';
   }
 
-  function renderAttempts(attempts, address, shipmentId, neighborhood = '') {
+  function renderAttempts(attempts, address, shipmentId, neighborhood = '', returnReceipts = null, returnRecords = new Map()) {
     if (!attempts.length) return '<div class="message">Nenhuma tentativa On Hold encontrada.</div>';
     const ordered = [...attempts].sort((a, b) => Number(a.ctime) - Number(b.ctime));
     const cards = ordered.map((attempt, index) => {
@@ -4268,35 +4336,51 @@
       const addressActions = isLatestAddress && !wasCancelled && address.pending
         ? `<div class="actions" data-reason-id="${escapeHtml(address.reasonId)}" data-local-lang="${escapeHtml(address.localLang)}"><button class="confirm" data-action="confirm">Confirmar</button><button class="cancel" data-action="cancel">Cancelar</button><div class="result"></div></div>`
         : '';
-      const neighborhoodText = String(neighborhood || '').trim() || 'Atualizar base';
+      const returnRecord = returnRecords.get(Number(attempt.ctime));
+      const neighborhoodPending = neighborhood === 'Consultando...';
+      const returnNeighborhood = returnReceipts && resolveOccurrenceNeighborhood(
+        neighborhoodPending ? '' : neighborhood, attempt.assignment_main_neighborhood
+      );
+      const neighborhoodText = (returnReceipts
+        ? [returnNeighborhood, returnRecord?.neighborhood].find(isUsefulNeighborhood)
+        : String(neighborhood || '').trim()) || (neighborhoodPending ? neighborhood : 'Atualizar base');
       const neighborhoodLine = `<br><span class="neighborhood"><b>Bairro:</b> <span class="neighborhood-value">${escapeHtml(neighborhoodText)}</span></span>`;
 
       if (attempt?.return_occurrence) {
-        const returnLabel = attempt.current_return ? 'ATUAL DO RETORNO' : 'OCORRÊNCIA DO RETORNO';
+        const receivedAt = returnReceipts?.get(Number(attempt.ctime));
+        const returnLabel = receivedAt
+          ? 'RECEBIDO · ' + formatReceivedAt(receivedAt)
+          : attempt.current_return ? 'ATUAL DO RETORNO' : 'OCORRÊNCIA DO RETORNO';
         const identity = {
           id: String(attempt?.return_operator_id || '').trim(),
           name: String(attempt?.return_operator_name || '').trim()
         };
-        const agency = attempt?.assignment_agency_return_match
-          ? String(attempt?.assignment_agency || '').trim()
-          : '';
-        const agencyInline = agency
-          ? ' <span class="driver-code">' + escapeHtml(agency) + '</span>'
-          : '';
-        const driverLine = identity.name
-          ? '<b>Motorista:</b> ' + escapeHtml(identity.name) + agencyInline +
-            (identity.id
-              ? '<br><span class="driver-code"><b>ID:</b> ' + escapeHtml(identity.id) + '</span>'
-              : '')
-          : 'Motorista não identificado';
-        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${driverLine}${neighborhoodLine}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
+        const agency = (attempt.assignment_agency_return_match && attempt.assignment_agency) ||
+          returnRecord?.agency || '';
+        const driverLine = '<b>Motorista:</b> ' + escapeHtml(identity.name || 'Não identificado') +
+          (identity.id ? '<br><span class="driver-code"><b>ID:</b> ' + escapeHtml(identity.id) + '</span>' : '') +
+          (agency ? '<br><span class="driver-code"><b>3PL:</b> ' + escapeHtml(agency) + '</span>' : '');
+        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${escapeHtml(returnLabel)}</div><div class="driver">${driverLine}${neighborhoodLine}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
       }
       const agency = String(attempt?.assignment_agency || '').trim();
       const agencyInline = agency ? ` <span class="driver-code">${escapeHtml(agency)}</span>` : '';
       return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span>${cancelledBadge}<div class="driver"><b>Motorista:</b> ${escapeHtml(attempt.driver_name || '-')}${agencyInline}<br><span class="driver-code"><b>ID:</b> ${escapeHtml(getDriverId(attempt))}</span>${neighborhoodLine}</div>${photo ? `<a href="${escapeHtml(photo)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(photo)}" alt="Foto da tentativa"></a>` : ''}${addressActions}</div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
-    }).join('');
+    });
     const decision = recommendation(ordered, address);
-    return `${cards}<div class="decision ${decision.className}"><strong>${escapeHtml(decision.text)}</strong></div>`;
+    let history = cards.join('');
+    if (returnReceipts) {
+      const received = [];
+      const other = [];
+      cards.forEach((card, index) => {
+        const attempt = ordered[index];
+        const activeAddress = index === ordered.length - 1 && address.pending &&
+          !attempt.return_occurrence && normalize(translateReason(attempt.on_hold_reason__desc)) === 'endereco nao encontrado';
+        (returnReceipts.has(Number(attempt.ctime)) && attempt.return_occurrence || activeAddress ? received : other).push(card);
+      });
+      history = (received.length ? received.join('') : '<div class="message">Recebimento do retorno ainda não localizado.</div>') +
+        (other.length ? '<details><summary>Outras ocorrências do ciclo</summary>' + other.join('') + '</details>' : '');
+    }
+    return `${history}<div class="decision ${decision.className}"><strong>${escapeHtml(decision.text)}</strong></div>`;
   }
 
   function updatePanelNeighborhood(shipmentId, neighborhood) {
@@ -4422,6 +4506,7 @@
 
   async function loadShipment(shipmentId, scanUnix = Math.floor(Date.now() / 1000)) {
     const version = ++currentRequest;
+    currentReturnAttempts = [];
     if (!diagnosticView) showPanel(shipmentId, '<div class="message">Consultando histórico...</div>');
     document.getElementById(AUTOADD_ID)?.remove();
     void fetchAutoAddInfo(shipmentId, scanUnix, version).then(info => {
@@ -4430,7 +4515,7 @@
     try {
       const historyPromise = fetchJson(
         `https://spx.shopee.com.br/api/fleet_order/order/detail/recipient_info?shipment_id=${encodeURIComponent(shipmentId)}&station_type=3`
-      );
+      ).catch(error => ({ error }));
       const trackingPromise = fetchJson(
         `https://spx.shopee.com.br/api/fleet_order/order/detail/tracking_info?shipment_id=${encodeURIComponent(shipmentId)}`
       ).catch(() => null);
@@ -4467,6 +4552,7 @@
       });
 
       const history = await historyPromise;
+      if (history?.error && !cycleStart) throw history.error;
       if (version !== currentRequest || shipmentId !== currentShipment) return;
       const attempts = Array.isArray(history?.data?.recipient?.On_Hold)
         ? history.data.recipient.On_Hold.filter(Boolean)
@@ -4486,18 +4572,13 @@
         : returnOccurrences;
       if (version !== currentRequest || shipmentId !== currentShipment) return;
 
-      // Em BR de retorno, juntamos apenas as ocorrências do ciclo iniciado em
-      // Retorno_LMHub_Em_Espera / Return_LMHub_Onhold. O histórico normal anterior some.
-      // Se houver mais de uma ocorrência de retorno, todas permanecem visíveis.
-      const merged = cycleStart ? [...attemptsWithAgency, ...returnOccurrencesWithAgency] : attemptsWithAgency;
-      const visibleAttempts = merged
-        .filter((item, index, list) => {
-          const key = String(item?.ctime || 0) + '|' + normalize(translateReason(item?.on_hold_reason__desc));
-          return list.findIndex(other =>
-            String(other?.ctime || 0) + '|' + normalize(translateReason(other?.on_hold_reason__desc)) === key
-          ) === index;
-        })
-        .sort((a, b) => Number(a?.ctime || 0) - Number(b?.ctime || 0));
+      const visibleAttempts = mergeVisibleAttempts(attemptsWithAgency, returnOccurrencesWithAgency);
+      const returnAttempts = visibleAttempts.filter(attempt => attempt.return_occurrence);
+      currentReturnAttempts = returnAttempts;
+      const returnReceipts = cycleStart ? returnReceiptsByOccurrence(returnAttempts, tracking) : null;
+      const returnRecordsPromise = returnReceipts
+        ? readReturnDisplayRecords(shipmentId, returnAttempts, returnReceipts)
+        : Promise.resolve(null);
 
       let address = { pending: false };
       const latestReason = translateReason([...currentAttempts]
@@ -4514,40 +4595,44 @@
             visibleAttempts,
             address,
             shipmentId,
-            visibleAttempts.length ? 'Consultando...' : ''
+            visibleAttempts.length ? 'Consultando...' : '',
+            returnReceipts
           )
         );
       }
 
       const latestVisibleOccurrence = visibleAttempts.at(-1);
       const latestVisibleOccurrenceTime = Number(latestVisibleOccurrence?.ctime || 0);
-      if (latestVisibleOccurrenceTime) {
-        syncReceivedAtFromTracking(shipmentId, tracking, latestVisibleOccurrenceTime);
+      if (returnReceipts) {
+        latestOccurrenceByShipment.set(shipmentId, latestVisibleOccurrenceTime);
+        rememberReceivedAt(shipmentId, Math.max(0, ...returnReceipts.values()));
+        void Promise.all([neighborhoodPromise, returnRecordsPromise]).then(([details, records]) => {
+          if (version !== currentRequest || shipmentId !== currentShipment || diagnosticView) return;
+          for (const [timestamp, record] of records) {
+            returnReceipts.set(timestamp, Number(record.received_at));
+          }
+          rememberReceivedAt(shipmentId, Math.max(0, ...returnReceipts.values()));
+          showPanel(shipmentId, renderAttempts(
+            visibleAttempts, address, shipmentId, details, returnReceipts, records
+          ));
+        }).catch(error => console.warn('[SPX-DV] Falha ao conferir recebimento do retorno', error));
       } else {
-        rememberReceivedAt(shipmentId, 0);
-      }
-
-      const assignmentNeighborhoodFallback = String(
-        latestVisibleOccurrence?.assignment_main_neighborhood || ''
-      ).trim();
-
-      void neighborhoodPromise.then(details => {
-        if (version !== currentRequest || shipmentId !== currentShipment || diagnosticView) return;
-        const resolvedNeighborhood = resolveOccurrenceNeighborhood(
-          details,
-          assignmentNeighborhoodFallback
-        );
-        updatePanelNeighborhood(shipmentId, resolvedNeighborhood);
-
-        if (latestVisibleOccurrence) {
-          void repairExistingDashboardOccurrence(
-            shipmentId,
-            latestVisibleOccurrence,
-            Boolean(cycleStart),
-            resolvedNeighborhood
-          );
+        if (latestVisibleOccurrenceTime) {
+          syncReceivedAtFromTracking(shipmentId, tracking, latestVisibleOccurrenceTime);
+        } else {
+          rememberReceivedAt(shipmentId, 0);
         }
-      });
+        void neighborhoodPromise.then(details => {
+          if (version !== currentRequest || shipmentId !== currentShipment || diagnosticView) return;
+          const resolvedNeighborhood = resolveOccurrenceNeighborhood(
+            details, latestVisibleOccurrence?.assignment_main_neighborhood
+          );
+          updatePanelNeighborhood(shipmentId, resolvedNeighborhood);
+          if (latestVisibleOccurrence) {
+            void repairExistingDashboardOccurrence(shipmentId, latestVisibleOccurrence, false, resolvedNeighborhood);
+          }
+        });
+      }
 
       if (address.pending && normalize(latestReason) === 'endereco nao encontrado') {
         const dashboardAttempt = visibleAttempts.at(-1);

@@ -1,4 +1,7 @@
 # SPX-DV — Handoff completo da conversa
+
+> ⚠️ **ARQUIVO HISTÓRICO — 04/11/2026.** Para continuidade atual da versão 1.3.69 e os incidentes críticos identificados em 11/11/2026, **leia primeiro** [HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md](HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md). As declarações de versão/pendências deste handoff de 04/11 são um retrato histórico. Nenhuma alteração de código foi autorizada na investigação de 11/11.
+
 Data do handoff: 04/11/2026
 Projeto: SPX DV E SPX ON HOLD
 Repositório deste módulo: RAlDE/spx-dv

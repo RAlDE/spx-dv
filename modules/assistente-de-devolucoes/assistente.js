@@ -707,11 +707,12 @@
     }
   }
 
-  async function checkCentralDashboardOccurrence(occurrenceKey, receiveKey = '') {
+  async function checkCentralDashboardOccurrence(occurrenceKey, receiveKey = '', verifyDataAgency = false) {
     if (!occurrenceKey) return null;
     return await requestCentralJsonp('dashboard_check', {
       occurrence_key: occurrenceKey,
-      ...(receiveKey ? { receive_key: receiveKey } : {})
+      ...(receiveKey ? { receive_key: receiveKey } : {}),
+      ...(verifyDataAgency ? { check_data_agency: '1' } : {})
     }, 5500);
   }
 
@@ -765,7 +766,8 @@
         if (checkDelay) await sleep(checkDelay);
         const expectedAgency = String(payload?.agency || '').trim();
         const receiveKey = String(payload?.receive_key || '');
-        const check = await checkCentralDashboardOccurrence(occurrenceKey, receiveKey);
+        const needsDataVerify = Boolean(payload.repair_confirmed_fields && payload.agency_verified_by_at && expectedAgency);
+        const check = await checkCentralDashboardOccurrence(occurrenceKey, receiveKey, needsDataVerify);
         if (receiveKey && check?.ok && check?.receipt_occurrence_key &&
             check.receipt_occurrence_key !== occurrenceKey) {
           receiveDiagPush('central_receipt_already_linked', {
@@ -788,7 +790,10 @@
           String(check?.agency || '').trim().toUpperCase() === expectedAgency.toUpperCase();
         const neighborhoodMatches = !hasFieldReadback || !isUsefulNeighborhood(expectedNeighborhood) ||
           normalize(check?.neighborhood) === normalize(expectedNeighborhood);
-        if (hasOccurrence && (!agencyMatches || !neighborhoodMatches)) {
+        const dataAgencyMatches = !needsDataVerify || check?.status !== 'confirmed' ||
+          !['1.3.68', DASHBOARD_SYNC_GENERATION].includes(String(check?.build || '')) ||
+          (check?.data_agency_verified && String(check.data_agency || '').trim().toUpperCase() === expectedAgency.toUpperCase());
+        if (hasOccurrence && (!agencyMatches || !neighborhoodMatches || !dataAgencyMatches)) {
           lastFieldsMismatch = {
             expected_agency: expectedAgency,
             actual_agency: String(check?.agency || ''),
@@ -796,7 +801,7 @@
             actual_neighborhood: String(check?.neighborhood || '')
           };
         }
-        if (hasOccurrence && agencyMatches && neighborhoodMatches) {
+        if (hasOccurrence && agencyMatches && neighborhoodMatches && dataAgencyMatches) {
           receiveDiagPush('central_send_confirmed', {
             action,
             shipment_id: payload?.shipment_id || '',
@@ -3626,8 +3631,10 @@
 
       if (!payload.occurrence_timestamp || !payload.reason) return false;
 
-      // Atualiza somente a ocorrência já registrada no Dashboard.
+      // Completa G somente quando a AT foi conferida e o servidor validar a linha.
       payload.repair_confirmed_fields = true;
+      payload.agency_verified_by_at = Boolean(payload.agency && attempt.assignment_task_id &&
+        (!attempt.return_occurrence || attempt.assignment_agency_return_match));
       const repaired = await sendCentralDashboard(payload, 'dashboard_upsert');
       if (repaired) {
         if (['1.3.66','1.3.67','1.3.68',DASHBOARD_SYNC_GENERATION].includes(centralHealthCache.build)) {

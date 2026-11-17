@@ -1872,6 +1872,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 .old-details{margin:0 0 16px;border:1px solid #7c4a16;border-radius:10px;padding:12px;background:#100904}.old-details summary{cursor:pointer;color:#fde68a;font-weight:800}.old-panel-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}.old-panel-actions button{padding:8px 11px}.old-panel-note{font-size:12px;color:#d1d5db}.old-table-wrap{max-height:350px;overflow:auto}.old-table{min-width:900px}.old-table th,.old-table td{padding:8px 10px}.history-filter{padding:9px 11px;background:#030303;color:#fff;border:1px solid #6b3415;border-radius:9px;min-width:180px}.column-filter{cursor:pointer}.warning{margin:0 0 16px;padding:11px 14px;border:1px solid #f59e0b55;border-radius:10px;background:#78350f25;color:#fde68a}.empty{padding:30px;text-align:center;color:#94a3b8}.action-status{min-height:18px;margin-top:9px;color:#fdba74;font-size:11px}footer{color:#94a3b8;font-size:11px}
 @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}main{padding:14px}.operator-filter{min-width:220px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
 .ranking-wrap>div{width:max-content;min-width:100%;padding-right:220px;box-sizing:border-box}
+.ranking-tabs{display:flex;gap:6px;flex-wrap:nowrap}.ranking-tabs button{min-width:68px}.ranking-tabs button[aria-selected="true"]{background:#7c2d12;border-color:#fb923c;color:#fff}.ranking-period{padding:10px 14px}[role="tabpanel"][hidden]{display:none}
 </style>
 </head>
 <body><main>
@@ -1889,13 +1890,16 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 <div class="metric"><span>Operadores hoje</span><strong id="mOperators">${Object.keys(operatorCounts).length}</strong></div>
 </section>
 <section class="panel">
-<details open>
-<summary class="panel-head top-summary"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted" id="topDayPeriod">Data selecionada nos recebimentos.</div></div></summary>
-<div class="ranking-wrap"><div id="topDrivers">${serverTopDriversHtml}</div></div>
-</details>
+<div class="panel-head"><div><h2>Top 10 motoristas ofensores</h2><div class="muted">Períodos da data selecionada nos recebimentos.</div></div>
+<div class="ranking-tabs" role="tablist" aria-label="Período do Top 10">
+<button type="button" id="rankingTabDay" role="tab" aria-selected="true" aria-controls="rankingPanelDay" data-ranking-tab="Day">Dia</button>
+<button type="button" id="rankingTabWeek" role="tab" aria-selected="false" aria-controls="rankingPanelWeek" tabindex="-1" data-ranking-tab="Week">Semana</button>
+<button type="button" id="rankingTabMonth" role="tab" aria-selected="false" aria-controls="rankingPanelMonth" tabindex="-1" data-ranking-tab="Month">Mês</button>
+</div></div>
+<div id="rankingPanelDay" role="tabpanel" aria-labelledby="rankingTabDay"><div class="ranking-period muted" id="topDayPeriod"></div><div class="ranking-wrap"><div id="topDrivers">${serverTopDriversHtml}</div></div></div>
+<div id="rankingPanelWeek" role="tabpanel" aria-labelledby="rankingTabWeek" hidden><div class="ranking-period muted" id="topWeekPeriod"></div><div class="ranking-wrap"><div id="topWeek"></div></div></div>
+<div id="rankingPanelMonth" role="tabpanel" aria-labelledby="rankingTabMonth" hidden><div class="ranking-period muted" id="topMonthPeriod"></div><div class="ranking-wrap"><div id="topMonth"></div></div></div>
 </section>
-<section class="panel"><details><summary class="panel-head top-summary"><div><h2>Top 10 da semana</h2><div class="muted" id="topWeekPeriod">Segunda a domingo da data selecionada.</div></div></summary><div class="ranking-wrap"><div id="topWeek"></div></div></details></section>
-<section class="panel"><details><summary class="panel-head top-summary"><div><h2>Top 10 do mês</h2><div class="muted" id="topMonthPeriod">Mês da data selecionada.</div></div></summary><div class="ranking-wrap"><div id="topMonth"></div></div></details></section>
 <section class="panel">
 <div class="panel-head"><div><h2>Recebimentos por data</h2><div class="muted">Histórico preservado e filtros locais, sem navegação externa.</div></div><div class="filters"><select id="dayFilter" class="history-filter">${serverDayOptionsHtml}</select><select id="operator" class="operator-filter"><option value="" data-count="${todayRecords.length}">Todos os operadores (${todayRecords.length})</option>${serverOperatorOptions}</select><span id="operatorCount" class="filter-badge">${todayRecords.length} recebidos</span><input id="generalSearch" class="search" placeholder="Filtro geral: pedido, login, motorista, 3PL, bairro, motivo..."><button id="clearFilters" type="button">Limpar filtros</button><span id="filterInfo" class="filter-info">Mostrando ${todayRecords.length} de ${todayRecords.length}</span></div></div>
 <div class="table-wrap"><table id="receiveTable"><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th><th>Status</th></tr><tr class="column-filters">${Array.from({length:10},function(_,i){return '<th><button type="button" class="column-filter-open" data-col="'+i+'" aria-haspopup="listbox">Todos ▾</button><select class="column-filter" data-col="'+i+'" hidden aria-label="Valor selecionado da coluna '+(i+1)+'"><option value="">Todos</option></select></th>';}).join('')}</tr></thead><tbody id="rows">${serverHistoryRowsHtml}</tbody></table><div id="empty" class="empty"${records.length ? ' hidden' : ''}>Nenhum recebimento corresponde aos filtros.</div></div>
@@ -1921,6 +1925,24 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
   }
 
 
+  function selectRankingTab(period,focus){
+    ['Day','Week','Month'].forEach(function(value){
+      var selected=value===period,tab=byId('rankingTab'+value),panel=byId('rankingPanel'+value);
+      if(tab){tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;if(selected&&focus)tab.focus();}
+      if(panel)panel.hidden=!selected;
+    });
+  }
+  function installRankingTabs(){
+    var names=['Day','Week','Month'];
+    names.forEach(function(period,index){
+      var tab=byId('rankingTab'+period);if(!tab)return;
+      tab.addEventListener('click',function(){selectRankingTab(period,false);});
+      tab.addEventListener('keydown',function(event){
+        var next=event.key==='ArrowRight'?(index+1)%3:event.key==='ArrowLeft'?(index+2)%3:event.key==='Home'?0:event.key==='End'?2:-1;
+        if(next<0)return;event.preventDefault();selectRankingTab(names[next],true);
+      });
+    });
+  }
   var rankingDayCache='';
   function clean_(value){return String(value==null?'':value).trim();}
   ${dashboardHtmlEscape_.toString()}
@@ -2353,6 +2375,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     });
     bindActionButtons();
     installFilterPopup();
+    installRankingTabs();
     applyFilters();
     setStatus('Carregando dados atuais...');
     refreshDashboardLive(false);

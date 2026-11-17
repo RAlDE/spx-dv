@@ -1890,7 +1890,9 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 <div class="metric"><span>Operadores hoje</span><strong id="mOperators">${Object.keys(operatorCounts).length}</strong></div>
 </section>
 <section class="panel">
-<div class="panel-head"><div><h2>Top 10 motoristas ofensores</h2><div class="muted">Períodos da data selecionada nos recebimentos.</div></div>
+<details open id="topRankingDetails">
+<summary class="panel-head top-summary"><div><h2>Top 10 motoristas ofensores</h2><div class="muted">Períodos da data selecionada nos recebimentos. Clique para abrir ou recolher.</div></div></summary>
+<div class="panel-head">
 <div class="ranking-tabs" role="tablist" aria-label="Período do Top 10">
 <button type="button" id="rankingTabDay" role="tab" aria-selected="true" aria-controls="rankingPanelDay" data-ranking-tab="Day">Dia</button>
 <button type="button" id="rankingTabWeek" role="tab" aria-selected="false" aria-controls="rankingPanelWeek" tabindex="-1" data-ranking-tab="Week">Semana</button>
@@ -1899,6 +1901,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 <div id="rankingPanelDay" role="tabpanel" aria-labelledby="rankingTabDay"><div class="ranking-period muted" id="topDayPeriod"></div><div class="ranking-wrap"><div id="topDrivers">${serverTopDriversHtml}</div></div></div>
 <div id="rankingPanelWeek" role="tabpanel" aria-labelledby="rankingTabWeek" hidden><div class="ranking-period muted" id="topWeekPeriod"></div><div class="ranking-wrap"><div id="topWeek"></div></div></div>
 <div id="rankingPanelMonth" role="tabpanel" aria-labelledby="rankingTabMonth" hidden><div class="ranking-period muted" id="topMonthPeriod"></div><div class="ranking-wrap"><div id="topMonth"></div></div></div>
+</details>
 </section>
 <section class="panel">
 <div class="panel-head"><div><h2>Recebimentos por data</h2><div class="muted">Histórico preservado e filtros locais, sem navegação externa.</div></div><div class="filters"><select id="dayFilter" class="history-filter">${serverDayOptionsHtml}</select><select id="operator" class="operator-filter"><option value="" data-count="${todayRecords.length}">Todos os operadores (${todayRecords.length})</option>${serverOperatorOptions}</select><span id="operatorCount" class="filter-badge">${todayRecords.length} recebidos</span><input id="generalSearch" class="search" placeholder="Filtro geral: pedido, login, motorista, 3PL, bairro, motivo..."><button id="clearFilters" type="button">Limpar filtros</button><span id="filterInfo" class="filter-info">Mostrando ${todayRecords.length} de ${todayRecords.length}</span></div></div>

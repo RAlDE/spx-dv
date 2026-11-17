@@ -1079,6 +1079,24 @@ function upsertDashboardRecord_(sheet, incoming) {
     );
   }
 
+  // Reject a new occurrence that predates neither the real receipt nor its existing link.
+  // Existing rows and Dados are never deleted or rewritten by this validation.
+  if (!current) {
+    const seconds = Math.floor(Number(incoming.receivedAt || 0) / 1000);
+    if (Number(incoming.occurrenceTimestamp || 0) > seconds) {
+      throw new Error('Ocorrência posterior ao recebimento: registro não criado.');
+    }
+    const lastRow = sheet.getLastRow();
+    const matches = lastRow >= 2 ? sheet.getRange(2, 4, lastRow - 1, 1)
+      .createTextFinder(incoming.shipmentId).matchEntireCell(true).matchCase(true).findAll() : [];
+    for (const match of matches) {
+      const existing = dashboardRecordFromRow_(sheet.getRange(match.getRow(), 1, 1, 14).getValues()[0]);
+      if (Math.floor(Number(existing.receivedAt || 0) / 1000) === seconds) {
+        throw new Error('Recebimento já vinculado à ocorrência ' + existing.occurrenceKey + '; duplicidade não criada.');
+      }
+    }
+  }
+
   // Cancelamentos explícitos de pendências antigas não podem ser reabertos por um upsert.
   const status = current && ['confirmed', 'cancelled'].includes(current.status)
     ? current.status

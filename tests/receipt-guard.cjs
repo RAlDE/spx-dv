@@ -1,0 +1,12 @@
+const fs=require('fs'),vm=require('vm'),a=require('assert/strict');
+const c=vm.createContext({});vm.runInContext(fs.readFileSync('apps-script/recebimento-onhold-dados.gs','utf8'),c);
+let records=[];c.findDashboardRow_=(_,key)=>{const i=records.findIndex(r=>r.occurrenceKey===key);return i<0?0:i+2};c.dashboardRecordFromRow_=row=>row[0];c.dashboardRowValues_=r=>[[r]];c.touchDashboardRevision_=()=>{};
+const sheet={getLastRow:()=>records.length+1,getRange:(row,col)=>({getValues:()=>[[records[row-2]]],setValues:values=>{records[row-2]=values[0][0]},createTextFinder:br=>{const finder={matchEntireCell:()=>finder,matchCase:()=>finder,findAll:()=>records.map((r,i)=>({r,i})).filter(x=>x.r.shipmentId===br).map(x=>({getRow:()=>x.i+2}))};return finder}})};
+const r=(br,time,receipt)=>({occurrenceKey:br+'|'+time,shipmentId:br,occurrenceTimestamp:time,receivedAt:receipt*1000,status:'captured',neighborhood:'Centro'});
+c.upsertDashboardRecord_(sheet,r('BR1',100,200));a.equal(records.length,1);
+a.throws(()=>c.upsertDashboardRecord_(sheet,r('BR1',90,200)),/duplicidade/);a.equal(records.length,1);
+a.throws(()=>c.upsertDashboardRecord_(sheet,r('BR2',300,200)),/posterior/);
+c.upsertDashboardRecord_(sheet,{...r('BR1',100,200),agency:'Frota'});a.equal(records.length,1);a.equal(records[0].agency,'Frota');
+c.upsertDashboardRecord_(sheet,r('BR1',300,400));a.equal(records.length,2);
+c.upsertDashboardRecord_(sheet,r('BR2',100,200));a.equal(records.length,3);
+console.log('OK: duplicidade bloqueada, ocorrência futura bloqueada, repetição idempotente, novo recebimento e BR distinto preservados.');

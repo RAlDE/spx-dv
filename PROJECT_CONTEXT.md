@@ -1,3 +1,5 @@
+> **Atualização prioritária — 17/11/2026:** usuário NÃO vai instalar a 1.3.72 por enquanto. Publicação no Git não significa validação real. Investigação AT/transportadora já foi feita anteriormente segundo o usuário; recuperar evidências antes de pedir nova coleta. Ler [HANDOFF_AT_TRANSPORTADORA_EVIDENCIAS.md](HANDOFF_AT_TRANSPORTADORA_EVIDENCIAS.md). Registrar próxima evidência com endpoint, payload, campos, vínculo BR/AT e fixture sanitizada. Não publicar novas correções operacionais até concluir esta investigação com o usuário.
+
 > **ATENÇÃO — HANDOFF MAIS RECENTE (11/11/2026):** leia primeiro [`HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md`](HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md). Ele documenta problemas de integridade no vínculo `_SPX_DV_CONTROLE` → `Dados`, duplicidade do mesmo BR com um único recibo relatado, Return recebido sem data/3PL/Bairro na caixa, evento de 11/11 ausente na data do Dashboard e filtros que precisam acompanhar o conjunto filtrado. **Nenhuma correção de sistema foi autorizada neste registro.**
 
 # PROJECT_CONTEXT — SPX-DV

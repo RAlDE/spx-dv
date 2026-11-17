@@ -1,0 +1,17 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const source=fs.readFileSync('apps-script/recebimento-onhold-dados.gs','utf8');
+const server=vm.createContext({PropertiesService:{getScriptProperties:()=>({getProperty:()=>''})},Utilities:{formatDate:()=> '2026-11-03'}});
+vm.runInContext(source,server);
+const html=server.dashboardHtml_({ok:true,today:'2026-11-03',records:[]});
+const script=html.split('<script>')[1].split('</script>')[0];new vm.Script(script);
+const nodes=Object.fromEntries(['dayFilter','topDrivers','topWeek','topMonth','topDayPeriod','topWeekPeriod','topMonthPeriod'].map(id=>[id,{value:'',innerHTML:'',textContent:''}]));
+let records=[];const ctx=vm.createContext({byId:id=>nodes[id],rows:()=>records});
+vm.runInContext(script.slice(script.indexOf("  var rankingDayCache="),script.indexOf('  function rebuildOperatorOptions(')),ctx);
+const row=(day,id,name,reason)=>({getAttribute:()=>day,cells:['','',reason,id,name,'Frota'].map(textContent=>({textContent}))});
+records=[row('2026-11-03','1','Ana','Ausente'),row('2026-11-02','2','Bia','Fora de Rota'),row('2026-11-08','2','Bia','Ausente'),row('2026-11-09','3','Caio','Ausente'),row('2026-10-31','4','Davi','Ausente')];
+nodes.dayFilter.value='2026-11-03';ctx.updateRankings();
+assert.match(nodes.topDayPeriod.textContent,/1 recebimentos/);assert.match(nodes.topWeekPeriod.textContent,/02\/11\/2026 a 08\/11\/2026 · 3/);assert.match(nodes.topMonthPeriod.textContent,/4 recebimentos/);
+assert.ok(!nodes.topDrivers.innerHTML.includes('Bia'));assert.ok(nodes.topWeek.innerHTML.indexOf('Bia')<nodes.topWeek.innerHTML.indexOf('Ana'));
+nodes.dayFilter.value='2026-12-31';ctx.updateRankings();assert.match(nodes.topDrivers.innerHTML,/período selecionado/);assert.equal(ctx.rankingPeriods('2027-01-01').weekStart,'2026-12-28');assert.equal(ctx.rankingPeriods('2027-01-01').weekEnd,'2027-01-03');
+const many=Array.from({length:12},(_,i)=>({driver_id:String(i),driver_name:'Motorista '+i,reason:'<motivo '+i+'>',agency:'Frota'}));const ranking=server.dashboardTopDriversHtml_(many);assert.equal((ranking.match(/class="rank-number"/g)||[]).length,10);assert.ok(ranking.includes('&lt;motivo'));assert.equal((ranking.match(/class="reason-head"/g)||[]).length,10);
+console.log('OK: dia, semana segunda-domingo, mês, troca de ano, vazio, Top 10 e escape HTML.');

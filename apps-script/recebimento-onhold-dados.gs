@@ -16,6 +16,7 @@
  */
 
 const SPX_DV_BUILD = '1.3.68';
+// Revisão visual 2026-11-17: motivos alinhados e Top 10 por dia/semana/mês. Protocolo preservado.
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -1710,7 +1711,7 @@ function dashboardTopDriversHtml_(records) {
     .slice(0, 10);
 
   if (!top.length) {
-    return '<div class="empty">Ainda não há motoristas para o ranking de hoje.</div>';
+    return '<div class="empty">Ainda não há motoristas para o período selecionado.</div>';
   }
 
   const reasonTotals = new Map();
@@ -1867,9 +1868,10 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 .panel{margin-bottom:16px}.panel-head{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:-18px -18px 14px;padding:16px 18px 14px;background:#090603;border-bottom:1px solid #6b3415;border-radius:14px 14px 0 0;box-shadow:0 5px 18px rgba(249,115,22,.11)}
 .search{width:min(390px,100%);padding:10px 12px;background:#030303;border:1px solid #3f3f46;color:#fff;border-radius:9px}.operator-filter{padding:10px 12px;background:#030303;border:1px solid #6b3415;color:#fff;border-radius:9px;min-width:280px}.filter-badge{display:inline-flex;align-items:center;min-height:38px;padding:8px 11px;border:1px solid #3f3f46;border-radius:9px;background:#050505;color:#fdba74;font-weight:800}.filter-info{font-size:12px;color:#d1d5db;white-space:nowrap}
 .ranking-wrap{overflow:auto;border:1px solid #2b211b;border-radius:10px;background:#050505}.ranking-table{border-collapse:separate;border-spacing:0;width:max-content;min-width:100%;background:#050505}.ranking-table th,.ranking-table td{border-right:1px solid #262626;border-bottom:1px solid #262626;padding:9px 11px;text-align:center;white-space:nowrap}.ranking-table th:first-child,.ranking-table td:first-child{border-left:1px solid #262626}.ranking-table thead th{position:sticky;top:0;z-index:2;background:#11100f;color:#fff;font-size:10px;font-weight:850;text-transform:uppercase;letter-spacing:.38px;vertical-align:middle;border-top:1px solid #6b3415;border-bottom-color:#4a260f}.ranking-table thead th:first-child{border-top-left-radius:8px}.ranking-table thead th:last-child{border-top-right-radius:8px}.ranking-table .rank-col{width:68px;min-width:68px}.ranking-table .driver-col{min-width:260px;text-align:left}.ranking-table .agency-col{min-width:145px;text-align:left}.ranking-table .total-col{min-width:76px;font-size:14px;font-weight:900;color:#fff;background:#0d0d0d}.ranking-table thead .total-col{background:#16110e;color:#fff}.ranking-table .reason-head{position:relative;width:58px;min-width:58px;max-width:58px;height:205px;padding:0;vertical-align:bottom;overflow:visible}.ranking-table .reason-head>span{position:absolute;left:20px;bottom:12px;display:block;width:190px;transform-origin:left bottom;transform:rotate(-55deg);white-space:nowrap;margin:0;color:#fff;font-size:11px;font-weight:800;text-align:left;text-transform:none;letter-spacing:.1px}.ranking-table tbody tr:hover td{background:#100b08}.ranking-table .reason-count{font-weight:900;color:#fff;font-size:14px}.ranking-table .reason-zero{color:#52525b}.ranking-table td.top-three-rank{background:rgba(127,29,29,.20);border-color:rgba(248,113,113,.20)}.ranking-table td.top-three-rank .rank-number{background:rgba(127,29,29,.38);border:1px solid rgba(248,113,113,.28);color:#fff;box-shadow:0 0 10px rgba(127,29,29,.18)}.rank-number{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#21140d;color:#fff;font-weight:900}.rank-driver-name{font-weight:800;color:#fff}.rank-driver-id{display:block;color:#9ca3af;font-size:10px;margin-top:2px}.top-summary{cursor:pointer;list-style:none}.top-summary::-webkit-details-marker{display:none}.top-summary::after{content:'▸';display:inline-grid;place-items:center;width:34px;height:34px;border-radius:9px;border:1px solid #6b3415;background:#0b0705;color:#fdba74;font-size:18px;font-weight:900;box-shadow:0 0 12px rgba(249,115,22,.1)}details[open]>.top-summary::after{content:'▾'}
-.ranking-table{width:max-content;min-width:0}.ranking-table th,.ranking-table td{padding:7px 6px}.ranking-table .rank-col{width:62px;min-width:62px;max-width:62px}.ranking-table .driver-col{width:230px;min-width:230px;max-width:230px;white-space:normal}.ranking-table .agency-col{width:126px;min-width:126px;max-width:126px;white-space:normal}.ranking-table .total-col{width:62px;min-width:62px;max-width:62px}.ranking-table .reason-head{position:relative;width:54px;min-width:54px;max-width:54px;height:224px;padding:0;vertical-align:bottom;overflow:visible;background:transparent;border-top:0;border-right:0;z-index:2}.ranking-table .reason-head::before{content:'';position:absolute;bottom:0;left:0;width:0;height:214px;border-left:1px solid #7a6d65;transform:skewX(-45deg);transform-origin:bottom left;pointer-events:none;z-index:3}.ranking-table .reason-head:last-child::after{content:'';position:absolute;bottom:0;left:100%;width:0;height:214px;border-left:1px solid #7a6d65;transform:skewX(-45deg);transform-origin:bottom left;pointer-events:none;z-index:3}.ranking-table .reason-head>span{position:absolute;left:12px;bottom:10px;display:block;width:max-content;max-width:none;height:auto;max-height:none;writing-mode:horizontal-tb;transform:rotate(-45deg);transform-origin:left bottom;white-space:nowrap;overflow:visible;margin:0;font-size:11px;line-height:1.12;text-align:left;text-transform:none;letter-spacing:.1px;color:#fff;font-weight:800;z-index:4}.ranking-table tbody .reason-count,.ranking-table tbody .reason-zero{width:54px;min-width:54px;max-width:54px;border-right:1px solid #37302b}.ranking-table .rank-driver-name{white-space:normal;overflow-wrap:break-word}.ranking-table tbody .driver-col{white-space:normal}.column-filter-open{width:100%;min-width:90px;max-width:190px;padding:7px 8px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid #3f3f46;background:#020202;color:#fff;font-size:11px;font-weight:500;border-radius:7px}.column-filter-open.active{border-color:#fb923c;color:#fdba74}.filter-popup{position:fixed;z-index:2147483000;width:320px;max-width:calc(100vw - 16px);padding:10px;border-radius:10px;border:1px solid #7c4a16;background:#100b08;box-shadow:0 18px 45px rgba(0,0,0,.88)}.filter-popup[hidden]{display:none}.filter-popup input{width:100%;padding:9px 10px;border:1px solid #52525b;background:#030303;color:#fff;border-radius:7px;outline-color:#fb923c}.filter-choices{margin-top:8px;max-height:260px;overflow:auto}.filter-choice{display:block;width:100%;text-align:left;padding:7px 9px;background:transparent;border:0;box-shadow:none;font-weight:500;white-space:normal;overflow-wrap:anywhere}.filter-choice[aria-selected="true"]{background:#43200d;color:#fdba74}.filter-choice:hover{background:#281207}.filter-choice-empty{color:#9ca3af;padding:9px}.table-wrap{max-height:64vh;overflow:auto;border:1px solid #262626;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1450px;background:#050505}th,td{padding:11px 12px;border-bottom:1px solid #262626;text-align:left;vertical-align:top}thead tr:first-child th{position:sticky;top:0;z-index:3;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.35px;box-shadow:inset 0 -1px #7c2d12,0 4px 14px rgba(249,115,22,.08)}.column-filters th{position:sticky;top:39px;z-index:2;background:#080503;padding:7px}.column-filter{width:100%;min-width:90px;padding:7px 8px;background:#020202;border:1px solid #3f3f46;color:#fff;border-radius:7px;font-size:11px}.column-filter::placeholder{color:#6b7280}tbody tr:hover{background:#100b08}
+.ranking-table{width:max-content;min-width:0}.ranking-table th,.ranking-table td{padding:7px 6px}.ranking-table .rank-col{width:62px;min-width:62px;max-width:62px}.ranking-table .driver-col{width:230px;min-width:230px;max-width:230px;white-space:normal}.ranking-table .agency-col{width:126px;min-width:126px;max-width:126px;white-space:normal}.ranking-table .total-col{width:62px;min-width:62px;max-width:62px}.ranking-table .reason-head{position:relative;width:54px;min-width:54px;max-width:54px;height:224px;padding:0;vertical-align:bottom;overflow:visible;background:transparent;border-top:0;border-right:0;z-index:2}.ranking-table .reason-head::before{content:'';position:absolute;bottom:0;left:0;width:0;height:214px;border-left:1px solid #7a6d65;transform:skewX(-45deg);transform-origin:bottom left;pointer-events:none;z-index:3}.ranking-table .reason-head:last-child::after{content:'';position:absolute;bottom:0;left:100%;width:0;height:214px;border-left:1px solid #7a6d65;transform:skewX(-45deg);transform-origin:bottom left;pointer-events:none;z-index:3}.ranking-table .reason-head>span{position:absolute;left:38px;bottom:12px;display:block;width:max-content;max-width:none;height:auto;max-height:none;writing-mode:horizontal-tb;transform:rotate(-45deg);transform-origin:left bottom;white-space:nowrap;overflow:visible;margin:0;font-size:11px;line-height:1.12;text-align:left;text-transform:none;letter-spacing:.1px;color:#fff;font-weight:800;z-index:4}.ranking-table tbody .reason-count,.ranking-table tbody .reason-zero{width:54px;min-width:54px;max-width:54px;border-right:1px solid #37302b}.ranking-table .rank-driver-name{white-space:normal;overflow-wrap:break-word}.ranking-table tbody .driver-col{white-space:normal}.column-filter-open{width:100%;min-width:90px;max-width:190px;padding:7px 8px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid #3f3f46;background:#020202;color:#fff;font-size:11px;font-weight:500;border-radius:7px}.column-filter-open.active{border-color:#fb923c;color:#fdba74}.filter-popup{position:fixed;z-index:2147483000;width:320px;max-width:calc(100vw - 16px);padding:10px;border-radius:10px;border:1px solid #7c4a16;background:#100b08;box-shadow:0 18px 45px rgba(0,0,0,.88)}.filter-popup[hidden]{display:none}.filter-popup input{width:100%;padding:9px 10px;border:1px solid #52525b;background:#030303;color:#fff;border-radius:7px;outline-color:#fb923c}.filter-choices{margin-top:8px;max-height:260px;overflow:auto}.filter-choice{display:block;width:100%;text-align:left;padding:7px 9px;background:transparent;border:0;box-shadow:none;font-weight:500;white-space:normal;overflow-wrap:anywhere}.filter-choice[aria-selected="true"]{background:#43200d;color:#fdba74}.filter-choice:hover{background:#281207}.filter-choice-empty{color:#9ca3af;padding:9px}.table-wrap{max-height:64vh;overflow:auto;border:1px solid #262626;border-radius:10px}table{border-collapse:collapse;width:100%;min-width:1450px;background:#050505}th,td{padding:11px 12px;border-bottom:1px solid #262626;text-align:left;vertical-align:top}thead tr:first-child th{position:sticky;top:0;z-index:3;background:#0d0805;color:#fdba74;font-size:11px;text-transform:uppercase;letter-spacing:.35px;box-shadow:inset 0 -1px #7c2d12,0 4px 14px rgba(249,115,22,.08)}.column-filters th{position:sticky;top:39px;z-index:2;background:#080503;padding:7px}.column-filter{width:100%;min-width:90px;padding:7px 8px;background:#020202;border:1px solid #3f3f46;color:#fff;border-radius:7px;font-size:11px}.column-filter::placeholder{color:#6b7280}tbody tr:hover{background:#100b08}
 .old-details{margin:0 0 16px;border:1px solid #7c4a16;border-radius:10px;padding:12px;background:#100904}.old-details summary{cursor:pointer;color:#fde68a;font-weight:800}.old-panel-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}.old-panel-actions button{padding:8px 11px}.old-panel-note{font-size:12px;color:#d1d5db}.old-table-wrap{max-height:350px;overflow:auto}.old-table{min-width:900px}.old-table th,.old-table td{padding:8px 10px}.history-filter{padding:9px 11px;background:#030303;color:#fff;border:1px solid #6b3415;border-radius:9px;min-width:180px}.column-filter{cursor:pointer}.warning{margin:0 0 16px;padding:11px 14px;border:1px solid #f59e0b55;border-radius:10px;background:#78350f25;color:#fde68a}.empty{padding:30px;text-align:center;color:#94a3b8}.action-status{min-height:18px;margin-top:9px;color:#fdba74;font-size:11px}footer{color:#94a3b8;font-size:11px}
 @media(max-width:900px){.metrics{grid-template-columns:repeat(2,1fr)}main{padding:14px}.operator-filter{min-width:220px}}@media(max-width:520px){.metrics{grid-template-columns:1fr}}
+.ranking-wrap>div{width:max-content;min-width:100%;padding-right:220px;box-sizing:border-box}
 </style>
 </head>
 <body><main>
@@ -1888,10 +1890,12 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </section>
 <section class="panel">
 <details open>
-<summary class="panel-head top-summary"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted">Matriz calculada no servidor. Clique no cabeçalho para abrir ou fechar.</div></div></summary>
+<summary class="panel-head top-summary"><div><h2>Top 10 motoristas ofensores do dia</h2><div class="muted" id="topDayPeriod">Data selecionada nos recebimentos.</div></div></summary>
 <div class="ranking-wrap"><div id="topDrivers">${serverTopDriversHtml}</div></div>
 </details>
 </section>
+<section class="panel"><details><summary class="panel-head top-summary"><div><h2>Top 10 da semana</h2><div class="muted" id="topWeekPeriod">Segunda a domingo da data selecionada.</div></div></summary><div class="ranking-wrap"><div id="topWeek"></div></div></details></section>
+<section class="panel"><details><summary class="panel-head top-summary"><div><h2>Top 10 do mês</h2><div class="muted" id="topMonthPeriod">Mês da data selecionada.</div></div></summary><div class="ranking-wrap"><div id="topMonth"></div></div></details></section>
 <section class="panel">
 <div class="panel-head"><div><h2>Recebimentos por data</h2><div class="muted">Histórico preservado e filtros locais, sem navegação externa.</div></div><div class="filters"><select id="dayFilter" class="history-filter">${serverDayOptionsHtml}</select><select id="operator" class="operator-filter"><option value="" data-count="${todayRecords.length}">Todos os operadores (${todayRecords.length})</option>${serverOperatorOptions}</select><span id="operatorCount" class="filter-badge">${todayRecords.length} recebidos</span><input id="generalSearch" class="search" placeholder="Filtro geral: pedido, login, motorista, 3PL, bairro, motivo..."><button id="clearFilters" type="button">Limpar filtros</button><span id="filterInfo" class="filter-info">Mostrando ${todayRecords.length} de ${todayRecords.length}</span></div></div>
 <div class="table-wrap"><table id="receiveTable"><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th><th>Status</th></tr><tr class="column-filters">${Array.from({length:10},function(_,i){return '<th><button type="button" class="column-filter-open" data-col="'+i+'" aria-haspopup="listbox">Todos ▾</button><select class="column-filter" data-col="'+i+'" hidden aria-label="Valor selecionado da coluna '+(i+1)+'"><option value="">Todos</option></select></th>';}).join('')}</tr></thead><tbody id="rows">${serverHistoryRowsHtml}</tbody></table><div id="empty" class="empty"${records.length ? ' hidden' : ''}>Nenhum recebimento corresponde aos filtros.</div></div>
@@ -1917,6 +1921,40 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
   }
 
 
+  var rankingDayCache='';
+  function clean_(value){return String(value==null?'':value).trim();}
+  ${dashboardHtmlEscape_.toString()}
+  ${dashboardTopDriversHtml_.toString()}
+  function rankingPeriods(day){
+    var date=new Date(day+'T12:00:00Z');
+    if(isNaN(date.getTime()))return null;
+    var monday=new Date(date),sunday=new Date(date);
+    var offset=(date.getUTCDay()+6)%7;
+    monday.setUTCDate(date.getUTCDate()-offset);sunday.setUTCDate(date.getUTCDate()-offset+6);
+    return {day:day,weekStart:monday.toISOString().slice(0,10),weekEnd:sunday.toISOString().slice(0,10),month:day.slice(0,7)};
+  }
+  function updateRankings(){
+    var day=byId('dayFilter')&&byId('dayFilter').value;
+    if(!byId('topDrivers')||!day||rankingDayCache===day)return;
+    var period=rankingPeriods(day);if(!period)return;
+    var daily=[],weekly=[],monthly=[];
+    rows().forEach(function(row){
+      var receivedDay=row.getAttribute('data-day');
+      var record={driver_id:row.cells[3].textContent,driver_name:row.cells[4].textContent,
+        agency:row.cells[5].textContent,reason:row.cells[2].textContent};
+      if(receivedDay===day)daily.push(record);
+      if(receivedDay>=period.weekStart&&receivedDay<=period.weekEnd)weekly.push(record);
+      if(receivedDay&&receivedDay.slice(0,7)===period.month)monthly.push(record);
+    });
+    function label(value){return value.split('-').reverse().join('/');}
+    byId('topDrivers').innerHTML=dashboardTopDriversHtml_(daily);
+    byId('topWeek').innerHTML=dashboardTopDriversHtml_(weekly);
+    byId('topMonth').innerHTML=dashboardTopDriversHtml_(monthly);
+    byId('topDayPeriod').textContent=label(day)+' · '+daily.length+' recebimentos';
+    byId('topWeekPeriod').textContent=label(period.weekStart)+' a '+label(period.weekEnd)+' · '+weekly.length+' recebimentos';
+    byId('topMonthPeriod').textContent=period.month.split('-').reverse().join('/')+' · '+monthly.length+' recebimentos';
+    rankingDayCache=day;
+  }
   function rebuildOperatorOptions(counts,total){
     var select=byId('operator');if(!select)return;
     var selected=select.value;
@@ -2077,6 +2115,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
           else values.set(key,{label:labels[columns[index]]||'(Vazio)',count:1});
         });
       });
+      updateRankings();
       rebuildOperatorOptions(operators,operatorTotal);
       rebuildColumnOptions(selects,facets);
       if(byId('filterInfo'))byId('filterInfo').textContent='Mostrando '+visible+' de '+totalDay+' da data escolhida';
@@ -2131,8 +2170,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     if(byId('oldPendingLabel'))byId('oldPendingLabel').textContent=String(Number(state.old_pending_count||0));
     closeFilterPopup();
 
-    var top=byId('topDrivers');
-    if(top) top.innerHTML=String(state.top_html || '');
+    rankingDayCache='';
 
     var warning=byId('warning');
     if(warning) warning.innerHTML=String(state.warning_html || '');

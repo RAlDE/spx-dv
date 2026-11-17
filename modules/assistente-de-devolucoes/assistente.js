@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.71';
+  const MODULE_VERSION = '1.3.72';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -3014,6 +3014,15 @@
   function nodeRepresentsLmHubReceived(node) {
     if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
 
+    // Real Return fixtures: status 10 alone is ambiguous across SPX enums.
+    // Restrict this fallback to a tracked receipt at LM Hub with Single/Mass.
+    const station = normalize(node.station_name || '');
+    const tags = Array.isArray(node.tags) ? node.tags.map(normalize) : [];
+    if (String(node.status) === '10' &&
+        normalize(node.message) === 'pedido em devolucao' &&
+        /lm[ _]*hub|last[ _]*mile[ _]*hub/.test(station) &&
+        tags.some(tag => tag === 'single' || tag === 'mass')) return true;
+
     const values = primitiveEntries(node).map(([, value]) => String(value || ''));
     const statusTexts = values.map(trackingStatusText);
 
@@ -3746,7 +3755,28 @@
     return Boolean(captured);
   }
 
-  async function processConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0, existingOnly = false) {
+  function selectReceivedOccurrence(attempts, receivedAt, exactTimestamp = 0) {
+    const receiptSeconds = Math.floor(Number(receivedAt || 0) / 1000);
+    if (!receiptSeconds) return null;
+    const eligible = attempts.filter(item => {
+      const time = Number(item?.ctime || 0);
+      return time > 0 && time <= receiptSeconds &&
+        (!exactTimestamp || time === Number(exactTimestamp));
+    });
+    return eligible.sort((a, b) => Number(a.ctime) - Number(b.ctime)).at(-1) || null;
+  }
+
+  function receivedReturnAttempts(attempts, tracking) {
+    const linked = new Set();
+    for (const event of trackingEventsChronological(tracking)) {
+      if (!nodeRepresentsLmHubReceived(event.node)) continue;
+      const occurrence = selectReceivedOccurrence(attempts, event.ctime * 1000);
+      if (occurrence) linked.add(Number(occurrence.ctime));
+    }
+    return attempts.filter(item => linked.has(Number(item.ctime)));
+  }
+
+  async function processConfirmedReceive(shipmentId, operatorLogin = '', receivedAt = 0, existingOnly = false, exactTimestamp = 0) {
     if (!shipmentId || !ONHOLD_DATA_WEBAPP_URL) return false;
 
     receiveDiagPush('process_start', {
@@ -3819,7 +3849,7 @@
         })
         .sort((a, b) => Number(a?.ctime || 0) - Number(b?.ctime || 0));
 
-      const currentOccurrence = visibleAttempts.at(-1);
+      const currentOccurrence = selectReceivedOccurrence(visibleAttempts, receivedAt, exactTimestamp);
       if (!currentOccurrence) {
         receiveDiagPush('process_no_occurrence', {
           shipment_id: shipmentId,
@@ -3924,7 +3954,8 @@
           String(record.shipment_id || ''),
           String(record.operator_login || ''),
           Number(record.received_at || 0),
-          true
+          true,
+          Number(record.occurrence_timestamp || String(record.key || '').split('|')[1] || 0)
         );
         receiveDiagPush(repaired ? 'dashboard_enrichment_repair_sent' : 'dashboard_enrichment_retry_needed', {
           shipment_id: record.shipment_id,
@@ -4309,7 +4340,7 @@
               ? '<br><span class="driver-code"><b>ID:</b> ' + escapeHtml(identity.id) + '</span>'
               : '')
           : 'Motorista não identificado';
-        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${driverLine}${neighborhoodLine}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
+        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${driverLine}<br><span class="driver-code"><b>Transportadora:</b> ${escapeHtml(String(attempt.assignment_agency || '').trim() || 'Não identificada')}</span>${neighborhoodLine}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
       }
       const agency = String(attempt?.assignment_agency || '').trim();
       const agencyInline = agency ? ` <span class="driver-code">${escapeHtml(agency)}</span>` : '';
@@ -4510,7 +4541,7 @@
       // Retorno_LMHub_Em_Espera / Return_LMHub_Onhold. O histórico normal anterior some.
       // Se houver mais de uma ocorrência de retorno, todas permanecem visíveis.
       const merged = cycleStart ? [...attemptsWithAgency, ...returnOccurrencesWithAgency] : attemptsWithAgency;
-      const visibleAttempts = merged
+      let visibleAttempts = merged
         .filter((item, index, list) => {
           const key = String(item?.ctime || 0) + '|' + normalize(translateReason(item?.on_hold_reason__desc));
           return list.findIndex(other =>
@@ -4518,6 +4549,8 @@
           ) === index;
         })
         .sort((a, b) => Number(a?.ctime || 0) - Number(b?.ctime || 0));
+
+      if (cycleStart) visibleAttempts = receivedReturnAttempts(visibleAttempts, tracking);
 
       let address = { pending: false };
       const latestReason = translateReason([...currentAttempts]

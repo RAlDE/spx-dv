@@ -1,0 +1,11 @@
+# SPX-DV 1.3.72 — correções baseadas nos diagnósticos reais
+
+Reconhece evento Return status=10 + mensagem Pedido em devolução + estação LM Hub + tag Single/Mass como recebimento para exibição. Status numérico sozinho não basta. Validado com 12 respostas BR265562365941M e 5 BR266809938082M; preservado caso normal BR262502130077D (18 respostas). O rastreio continua sem criar recibo operacional.
+
+Seleção para captura restringe ocorrência ao instante <= recebimento. Enriquecimento de registro antigo passa timestamp exato da chave para não migrar para ocorrência posterior. Caixa em ciclo Return exibe somente ocorrências associadas a evento de recebimento posterior; cada evento é ligado à última ocorrência anterior. Nome de transportadora agora é exibido na ficha Return quando presente; na ausência, Não identificada.
+
+Servidor impede criar NOVA chave de ocorrência com mesmo BR e segundo de recebimento já existente e rejeita ocorrência futura. Colisão gera erro explícito e mantém recibo pendente, sem confirmar envio incorreto. Não remove duplicidades históricas, não migra chaves, não altera Dados/controle. Envio em massa, repairConfirmedDataAgency_ e confirmedDashboardDataAgency_ idênticos à base. Um novo recibo com outra ocorrência é permitido; modelo por ocorrência existente permanece.
+
+Atualizar extensão para 1.3.72 e reimplantar Apps Script existente; build/protocolo GS continua 1.3.68 para compatibilidade. Dashboard e abas/rankings preservados. Testes node tests/return-received.cjs (aceita caminhos de JSON privados opcionais), node tests/receipt-guard.cjs e sintaxe passaram. Teste real pós-atualização ainda pendente.
+
+PENDÊNCIAS: fonte da transportadora Return não resolvida nos JSONs: eventos 119/120/124/126 não têm número de AT; terceiro/3pl vazios; consultas às ATs antigas retornam retcode 0/lista vazia. Necessária resposta da tela de atribuição Return que associe BR/AT/motorista à agência; não inferir de outro motorista/rota. BR267803637465O antigo ausente não foi inserido: não há recibo original desse caso nestes arquivos. Históricos duplicados não corrigidos automaticamente. Retenção diagnóstica limitada a 40 respostas; descartes acumulados elevados. PR #1 antigo não deve ser mesclado sem rebase e revisão; esta publicação não incorpora aquele pacote.

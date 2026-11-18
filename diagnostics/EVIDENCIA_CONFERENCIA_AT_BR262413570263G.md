@@ -40,3 +40,16 @@ Este endpoint confirma a consulta filtrada BR + VT → AT. Não assume escolha a
 Próxima lacuna: endpoint da listagem inicial de conferências filtrada pelo BR, que permite descobrir as VTs candidatas e seus horários. Capturar request e response ao pesquisar BR na lista principal Conferência: LM Hub AT/TO (antes de abrir Detalhe VT). Validar ordenação, paginação e significado dos horários antes de selecionar a última VT.
 Após isso, confirmar resposta da busca da AT em Atribuição de Entrega para obter o campo exato da agência. Agência visual SPXOWNFLEET já demonstrada; não confundir confirmação visual com contrato JSON.
 Nenhuma alteração operacional nesta coleta.
+
+## Busca BR → VTs confirmada no Network
+GET https://spx.shopee.com.br/api/in-station/lmhub/audit/task/list?page_no=1&count=24&shipment_id=BR262413570263G
+
+Resposta retcode=0, message=Success, data.total=2. Recorte fiel dos campos necessários (operadores omitidos):
+```json
+{"retcode":0,"message":"Success","data":{"total":2,"list":[{"validation_task_id":"VT202611170NMF4","station_name":"LM Hub_SC_Itajaí_Espinheiros","create_time":1794925316,"end_time":1794935567,"task_status":3},{"validation_task_id":"VT202611160NJBG","station_name":"LM Hub_SC_Itajaí_Espinheiros","create_time":1794813382,"end_time":1794827391,"task_status":3}]}}
+```
+Campos: data.list[i].validation_task_id identifica VT; create_time é criação; end_time é término. Neste caso VT202611170NMF4 é a mais recente por create_time: 17/11/2026 11:21:56, término14:12:47 (America/Sao_Paulo). VT202611160NJBG: 16/11/2026 04:16:22, término08:09:51.
+Nesta captura a resposta está em ordem decrescente de criação; isso não comprova contrato de ordenação geral. Implementação futura deve considerar data.total, paginação, tarefas em andamento e múltiplos alvos; não assumir list[0] sempre mais recente nem count24 suficiente para todo BR.
+Cadeia comprovada neste exemplo: shipment_id → task/list → validation_task_id → target/list com shipment_id e task_id → target_id AT20261117CZONV.
+Não confundir criação/término de VT com recebimento do pacote. Esta cadeia identifica AT na conferência consultada; não prova por si só última atribuição global fora das conferências.
+Próximo ponto: capturar consulta da AT em Entrega → Atribuição de Entrega para confirmar campo JSON da agência SPXOWNFLEET vista no vídeo. Nenhum código operacional alterado.

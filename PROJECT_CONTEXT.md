@@ -2940,3 +2940,12 @@ O usuário apresentou novas evidências na versão do módulo **1.3.69** (Apps S
 ### Esclarecimento posterior — remoção manual de duplicidade em Dados (11/11/2026)
 
 O usuário esclareceu que **removeu manualmente a duplicidade em Dados**, referindo-se às linhas **270471 e 270472**. A interpretação anterior de que a divergência dessas duas linhas por si só confirmava um erro de escrita do sistema estava **excessivamente conclusiva**. A leitura mostra apenas o estado **depois** da intervenção manual, portanto não permite reconstruir o estado anterior. É indispensável distinguir **erro de geração de chaves duplicadas/associação temporal** (continua em aberto no Dashboard) de **deslocamento ou apagamento manual de linhas** (natureza exata não confirmada). O handoff atualizado `HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md` é a referência prioritária. Nenhum código ou registro operacional foi alterado nesta revisão documental.
+
+
+## 18/11/2026 — 1.3.74: AT da rota somente na caixa
+- Solicitação: acrescentar a AT da rota às informações existentes da caixa para todos os BRs, incluindo recebimentos anteriores e futuros. Não adicionar ao Dashboard.
+- Cada cartão normal e Return exibe `AT da rota`, usando `assignment_task_id` já associado à própria ocorrência. Normal usa a associação do rastreio; Return usa o enriquecimento já existente (rastreio ou conferência com motorista e período compatíveis).
+- Aplica-se também aos BRs antigos quando consultados novamente; não exige novo recebimento nem migração. Sem AT resolvida, mostra `Não identificada`. Não garante resolução quando a fonte SPX não fornece vínculo suficiente.
+- Preservados transportadora, motorista, ID, bairro, motivos, horários, fotos e ações. Nenhuma mudança em consultas, associação temporal, captura, Dashboard, Apps Script, envio ou deduplicação.
+- Base GitHub conferida: 1de17ada166a86540f8a5b2385af9439e01a839b. Rascunho local preexistente em outra pasta não foi incorporado (removia transportadora e adicionava AT no cabeçalho).
+- Validação: sintaxe e testes locais existentes de AT, Return, agência por conferência e guarda de recebimento. Validação real no SPX pendente.

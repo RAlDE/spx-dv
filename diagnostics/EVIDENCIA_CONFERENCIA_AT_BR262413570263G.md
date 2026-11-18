@@ -85,3 +85,15 @@ Resultado comprovado para a conferência mais recente deste caso: BR262413570263
 Não solicitar novamente esta mesma varredura. Endpoints, parâmetros, campos e recortes de evidência já estão registrados neste arquivo.
 Coleta técnica concluída para este exemplo; não equivale a correção implementada nem a validação geral. Permanecem as limitações de composição atual, data da ocorrência, múltiplos alvos/páginas e inexistência de VT descritas acima. Evitar atribuir automaticamente motorista/bairro da AT ao pacote.
 Próximo trabalho: ler código/handoff vigente e avaliar integração pontual para transportadora ausente, preservando proveniência e sem bloquear bipagem, sem modificar envio em massa/planilha. Não publicar nova versão operacional apenas pela conclusão desta coleta.
+
+## Esclarecimento do usuário e evidência de 18/11/2026
+Regra esclarecida: a transportadora está vinculada ao motorista que carrega a AT. Para a ocorrência, partir de seu driver_id e confirmar a agência do mesmo motorista; não usar indiscriminadamente a última AT/conferência de outro motorista.
+Imagem image(20261118-194056).png da tela Atribuição de Entrega, apresentada pelo usuário como AT e motorista do dia16:
+- ID da AT: AT20261116CX392
+- Motorista: ID126922 (mesmo ID dos eventos124 e126 de16/11 no rastreio coletado)
+- Agência(3PL): SPXOWNFLEET
+- Estação5459 LM Hub_SC_Itajaí_Espinheiros
+- Corredor D-25; bairro principal da AT Espinheiros; status visual Complete.
+Evidência visual confirma driver126922 e agência SPXOWNFLEET na mesma linha desta AT. A relação com BR262413570263G e dia16 foi indicada pelo usuário; esta imagem não contém lista de pacotes nem resposta JSON dessa AT. Não declarar que verificamos automaticamente presença do BR nessa AT.
+Isso resolve a dúvida visual sobre a transportadora do motorista deste exemplo, sem precisar repetir a varredura completa. Endpoints/payloads já mapeados são reutilizáveis. Uma eventual captura futura de response v2 para esta AT seria validação adicional direcionada, não redescoberta da API.
+Não copiar bairro principal da AT como bairro individual do pacote sem fonte adequada. Nenhuma mudança operacional realizada neste registro.

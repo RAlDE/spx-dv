@@ -69,3 +69,19 @@ BR262413570263G não aparece no campo shipment_id (string de BRs separados por v
 Driver atual456987 difere do driver126922 da ocorrência de16/11. Não sobrescrever motorista da ocorrência com motorista da AT posterior. neighborhood=Santa Regina é atributo desta AT; não prova bairro individual do BR.
 Agência SPXOWNFLEET confirmada para esta AT no momento da consulta, não como histórico imutável. Próximo passo imediato: capturar aba Payload da requisição v2. Antes de alteração operacional, definir uso da fonte de conferência com sua data/proveniência e tratar casos de múltiplas ATs, BR ausente da composição atual e falta de conferência.
 Nomes pessoais, emails, lista de outros BRs e URL de rota foram omitidos do registro por não serem necessários para o mapeamento.
+
+## Payload confirmado — coleta das três consultas concluída
+Fonte: image(20261118-020309).png, enviada pelo usuário em17/11/2026.
+POST /spx_delivery/admin/assignment/assignment_task/search/v2
+```json
+{"assignment_task_id":"AT20261117CZONV","pageno":1,"count":20,"search_type":0}
+```
+Este registro substitui as pendências de Payload mencionadas nas seções cronológicas anteriores.
+Mapa completo observado:
+1. GET /api/in-station/lmhub/audit/task/list?page_no=1&count=24&shipment_id={BR} → data.list[].validation_task_id e create_time; data.total para paginação.
+2. GET /api/in-station/lmhub/audit/target/list?shipment_id={BR}&task_id={VT}&page_no=1&count=24 → data.list[].target_id; data.total.
+3. POST /spx_delivery/admin/assignment/assignment_task/search/v2 com payload acima, substituindo assignment_task_id pela AT exata → data.list[].agency, agency_id; conferir assignment_task_id.
+Resultado comprovado para a conferência mais recente deste caso: BR262413570263G → VT202611170NMF4 → AT20261117CZONV → SPXOWNFLEET (agency_id96).
+Não solicitar novamente esta mesma varredura. Endpoints, parâmetros, campos e recortes de evidência já estão registrados neste arquivo.
+Coleta técnica concluída para este exemplo; não equivale a correção implementada nem a validação geral. Permanecem as limitações de composição atual, data da ocorrência, múltiplos alvos/páginas e inexistência de VT descritas acima. Evitar atribuir automaticamente motorista/bairro da AT ao pacote.
+Próximo trabalho: ler código/handoff vigente e avaliar integração pontual para transportadora ausente, preservando proveniência e sem bloquear bipagem, sem modificar envio em massa/planilha. Não publicar nova versão operacional apenas pela conclusão desta coleta.

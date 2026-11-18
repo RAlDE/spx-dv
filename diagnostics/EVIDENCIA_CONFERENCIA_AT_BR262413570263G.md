@@ -53,3 +53,19 @@ Nesta captura a resposta está em ordem decrescente de criação; isso não comp
 Cadeia comprovada neste exemplo: shipment_id → task/list → validation_task_id → target/list com shipment_id e task_id → target_id AT20261117CZONV.
 Não confundir criação/término de VT com recebimento do pacote. Esta cadeia identifica AT na conferência consultada; não prova por si só última atribuição global fora das conferências.
 Próximo ponto: capturar consulta da AT em Entrega → Atribuição de Entrega para confirmar campo JSON da agência SPXOWNFLEET vista no vídeo. Nenhum código operacional alterado.
+
+## AT → agência: resposta e Headers confirmados
+POST https://spx.shopee.com.br/spx_delivery/admin/assignment/assignment_task/search/v2
+Fonte: JSON fornecido pelo usuário e imagem image(20261118-015940).png. Payload desta requisição ainda pendente.
+Resposta retcode=0, message=Success, data.pageno=1, data.count=20, data.total=1.
+Recorte de campos originais:
+```json
+{"assignment_task_id":"AT20261117CZONV","driver_id":456987,"station_id":5459,"agency":"SPXOWNFLEET","agency_id":96,"is_ownfleet":true,"corridor_cage":"H-15","city":"Itajaí","neighborhood":"Santa Regina","journey_type":3,"status":3,"order_count":96,"assigned_order_count":96,"processed_time":1794934104,"assigned_time":1794934160}
+```
+Caminhos: data.list[0].assignment_task_id, .agency, .agency_id, .driver_id, .neighborhood. Match exato do assignment_task_id deve preceder uso de agency; nunca usar primeiro resultado sem conferir ID.
+
+### Divergência que precisa ser preservada
+BR262413570263G não aparece no campo shipment_id (string de BRs separados por vírgula) desta resposta atual, embora a pesquisa da conferência com esse BR retorne essa AT. Isso não invalida automaticamente o histórico de conferência nem prova remoção: a causa ainda não foi demonstrada. A composição atual da AT não equivale necessariamente ao retrato da conferência. Não alegar vínculo atual do pacote apenas com esta resposta.
+Driver atual456987 difere do driver126922 da ocorrência de16/11. Não sobrescrever motorista da ocorrência com motorista da AT posterior. neighborhood=Santa Regina é atributo desta AT; não prova bairro individual do BR.
+Agência SPXOWNFLEET confirmada para esta AT no momento da consulta, não como histórico imutável. Próximo passo imediato: capturar aba Payload da requisição v2. Antes de alteração operacional, definir uso da fonte de conferência com sua data/proveniência e tratar casos de múltiplas ATs, BR ausente da composição atual e falta de conferência.
+Nomes pessoais, emails, lista de outros BRs e URL de rota foram omitidos do registro por não serem necessários para o mapeamento.

@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.75';
+  const MODULE_VERSION = '1.3.76';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -2019,6 +2019,7 @@
       #${PANEL_ID}{position:fixed;z-index:2147483647;top:16px;left:16px;right:auto;width:min(520px,calc(100vw - 32px));max-height:82vh;overflow:hidden;border:1px solid #334155;border-radius:14px;background:#0f172a;color:#f8fafc;box-shadow:0 22px 62px #0008;font:15px Arial,sans-serif}
       #${PANEL_ID}[hidden]{display:none!important}#${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} header{position:relative;padding:15px 210px 13px 15px;border-bottom:1px solid #fb923c;background:linear-gradient(135deg,#ff6a00,#e94b00 68%,#9a3412);cursor:grab;user-select:none;touch-action:none}
       #${PANEL_ID}.dragging header{cursor:grabbing}#${PANEL_ID} h2{margin:0;font-size:19px;display:flex;align-items:baseline;gap:6px}#${PANEL_ID} .module-version{font-size:11px;font-weight:700;color:#fff;opacity:.78}#${PANEL_ID} header small{display:block;margin-top:7px;color:#fff;font-size:19px;font-weight:700}#${PANEL_ID} header small strong{font-size:inherit}#${PANEL_ID} .received-at{display:block;margin-top:3px;font-size:12px;font-weight:650;color:#ffedd5}#${PANEL_ID} .received-at b{font-size:12px}#${PANEL_ID} .header-actions{position:absolute;top:9px;right:9px;display:flex;gap:6px;flex-wrap:wrap}#${PANEL_ID} .icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #fed7aa;border-radius:8px;background:#111827;color:#fff;font-size:18px;cursor:pointer}#${PANEL_ID} .dashboard-button{width:auto;min-width:58px;padding:0 9px;font-size:11px;font-weight:800}
+      #${PANEL_ID} .panel-at{display:block;margin-top:2px}
       #${PANEL_ID} .body{max-height:65vh;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;pointer-events:auto;padding:10px}#${PANEL_ID} .message{padding:22px;text-align:center;color:#cbd5e1}#${PANEL_ID} .error{color:#fca5a5}
       #${PANEL_ID} .attempt{display:grid;grid-template-columns:27px minmax(0,1fr) auto;gap:9px;margin-bottom:8px;padding:10px;border:1px solid #3f3f46;border-radius:10px;background:#050505}
       #${PANEL_ID} .index{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#334155;font-size:13px;font-weight:900}#${PANEL_ID} .reason{display:inline-block;padding:5px 10px;border-radius:999px;background:#16a34a33;color:#bbf7d0;font-size:19px;font-weight:800}#${PANEL_ID} .reason.reason-valid{background:#2563eb33;color:#bfdbfe}#${PANEL_ID} .reason.reason-final{background:#dc262633;color:#fecaca}#${PANEL_ID} .cancelled-badge{display:inline-block;margin-left:7px;padding:4px 8px;border-radius:999px;background:#64748b33;color:#e2e8f0;font-size:13px;font-weight:900;vertical-align:middle}
@@ -2038,7 +2039,7 @@
     if (!panel) {
       panel = document.createElement('section');
       panel.id = PANEL_ID;
-      panel.innerHTML = `<header><h2><span>Rastreio do pedido</span><span class="module-version">v${MODULE_VERSION}</span></h2><small><span><strong data-panel-br></strong></span><span><strong data-panel-at>—</strong></span><span class="received-at">Recebido em: <b data-panel-received-at>—</b></span></small><div class="header-actions"><button class="icon-button dashboard-button" data-dashboard title="Abrir Dashboard de Recebimento">Dash</button><button class="icon-button" data-receive-diag title="Diagnóstico do Dashboard">D</button><button class="icon-button" data-diagnostic title="Diagnóstico">i</button><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>`;
+      panel.innerHTML = `<header><h2><span>Rastreio do pedido</span><span class="module-version">v${MODULE_VERSION}</span></h2><small><span><strong data-panel-br></strong></span><span class="panel-at"><strong data-panel-at>—</strong></span><span class="received-at">Recebido em: <b data-panel-received-at>—</b></span></small><div class="header-actions"><button class="icon-button dashboard-button" data-dashboard title="Abrir Dashboard de Recebimento">Dash</button><button class="icon-button" data-receive-diag title="Diagnóstico do Dashboard">D</button><button class="icon-button" data-diagnostic title="Diagnóstico">i</button><button class="icon-button" data-refresh title="Atualizar">↻</button><button class="icon-button" data-collapse title="Recolher">−</button></div></header><div class="body"></div>`;
       panel.addEventListener('click', handleAction);
       document.body.appendChild(panel);
       restorePanelPosition(panel);
@@ -4449,7 +4450,7 @@
               ? '<br><span class="driver-code"><b>ID:</b> ' + escapeHtml(identity.id) + '</span>'
               : '')
           : 'Motorista não identificado';
-        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${driverLine}<br><span class="driver-code"><b>Transportadora:</b> ${escapeHtml(String(attempt.assignment_agency || '').trim() || 'Não identificada')}</span>${neighborhoodLine}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
+        return `<article class="attempt"><span class="index">${index + 1}</span><div><span class="reason ${reasonClass(reason)}">${escapeHtml(reason)}</span><div style="margin-top:6px;color:#fbbf24;font-size:12px;font-weight:900">${returnLabel}</div><div class="driver">${driverLine}${neighborhoodLine}</div></div><time>${escapeHtml(formatDate(attempt.ctime))}</time></article>`;
       }
       const agency = String(attempt?.assignment_agency || '').trim();
       const agencyInline = agency ? ` <span class="driver-code">${escapeHtml(agency)}</span>` : '';

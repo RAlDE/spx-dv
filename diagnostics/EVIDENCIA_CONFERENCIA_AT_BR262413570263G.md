@@ -30,3 +30,13 @@ Resposta retcode=0, message=Success, data.total=1:
 data.all_qty=134, data.validated_qty=134, demais contadores de estado zero. Estes contadores pertencem à conferência e não devem ser interpretados como quantidade recebida do BR.
 Resposta não contém shipment_id nem transportadora. Associação ao BR depende dos parâmetros da requisição, ainda pendentes (Request URL completa). Nome parcial visto na imagem: list?shipment_id=BR2624135702…
 Horários são de validação da conferência; não presumir que equivalem a recebimento ou atribuição. Próximo passo: coletar Headers/Request URL e Request Method dessa requisição, sem repetir resposta já recebida.
+
+## Endpoint confirmado pelo usuário (Headers)
+Método: GET
+URL: https://spx.shopee.com.br/api/in-station/lmhub/audit/target/list?shipment_id=BR262413570263G&task_id=VT202611170NMF4&page_no=1&count=24
+Parâmetros observados: shipment_id=BR262413570263G; task_id=VT202611170NMF4; page_no=1; count=24.
+Resposta correspondente já transcrita acima: data.total=1 e data.list[0].target_id=AT20261117CZONV.
+Este endpoint confirma a consulta filtrada BR + VT → AT. Não assume escolha automática da última AT quando houver vários resultados; não assume funcionamento sem task_id.
+Próxima lacuna: endpoint da listagem inicial de conferências filtrada pelo BR, que permite descobrir as VTs candidatas e seus horários. Capturar request e response ao pesquisar BR na lista principal Conferência: LM Hub AT/TO (antes de abrir Detalhe VT). Validar ordenação, paginação e significado dos horários antes de selecionar a última VT.
+Após isso, confirmar resposta da busca da AT em Atribuição de Entrega para obter o campo exato da agência. Agência visual SPXOWNFLEET já demonstrada; não confundir confirmação visual com contrato JSON.
+Nenhuma alteração operacional nesta coleta.

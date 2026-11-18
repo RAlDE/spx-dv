@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.72';
+  const MODULE_VERSION = '1.3.73';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -2786,6 +2786,7 @@
 
       const result = {
         assignmentId: String(assignmentRowIdValue(item) || key).trim(),
+        exactAssignmentId: String(assignmentRowIdValue(item) || '').trim().toUpperCase() === key,
         agency: String(assignmentAgencyValue(item) || '').trim(),
         agencyId: String(assignmentAgencyIdValue(item) || '').trim(),
         driverId: String(assignmentDriverIdValue(item) || '').trim(),
@@ -2876,7 +2877,115 @@
   }
 
 
+  // Conferência é fonte de associação, nunca de recebimento. Cache curto por BR
+  // compartilha consultas entre preview e inbox; falhas não viram sucesso vazio.
+  const returnAuditCache = new Map();
+
+  async function fetchReturnAuditPages(path, params) {
+    const rows = [];
+    const count = 24;
+    for (let page = 1; page <= 5; page++) {
+      const query = new URLSearchParams({ ...params, page_no: String(page), count: String(count) });
+      const response = await fetchJson('https://spx.shopee.com.br/api/in-station/lmhub/audit/' + path + '?' + query);
+      const data = response?.data;
+      if (response?.retcode !== 0 || !Array.isArray(data?.list) ||
+          !Number.isInteger(data.total) || data.total < 0) throw new Error('Resposta de conferência inválida');
+      rows.push(...data.list);
+      if (rows.length >= data.total) return rows;
+      if (!data.list.length) break;
+    }
+    throw new Error('Conferência incompleta: limite de páginas');
+  }
+
+  async function fetchReturnAuditTasks(shipmentId) {
+    const key = String(shipmentId || '').trim().toUpperCase();
+    if (!/^BR[A-Z0-9]{8,}$/.test(key)) throw new Error('BR inválido para conferência');
+    const cached = returnAuditCache.get(key);
+    if (cached && cached.expires > Date.now()) return cached.promise;
+    const entry = { expires: Date.now() + 60000, targets: new Map() };
+    entry.promise = fetchReturnAuditPages('task/list', { shipment_id: key });
+    returnAuditCache.set(key, entry);
+    if (returnAuditCache.size > 100) returnAuditCache.delete(returnAuditCache.keys().next().value);
+    try { return await entry.promise; }
+    catch (error) { if (returnAuditCache.get(key) === entry) returnAuditCache.delete(key); throw error; }
+  }
+
+  async function findReturnAgencyFromAudit(shipmentId, attempt) {
+    const key = String(shipmentId || '').trim().toUpperCase();
+    const driverId = String(attempt?.return_operator_id || '').trim();
+    const occurrenceTime = Number(attempt?.ctime || 0);
+    if (!driverId || !occurrenceTime) return null;
+    const tasks = (await fetchReturnAuditTasks(key))
+      .filter(task => Number(task.create_time) > 0 && Number(task.create_time) <= occurrenceTime)
+      .sort((a, b) => Number(b.create_time) - Number(a.create_time));
+    // Limite explícito: não varrer indefinidamente durante a operação.
+    if (tasks.length > 5) throw new Error('Muitas VTs candidatas: requer diagnóstico');
+    const matches = [];
+    let candidates = 0;
+    for (const task of tasks) {
+      const taskId = String(task.validation_task_id || '').trim();
+      if (!/^VT[A-Z0-9]+$/.test(taskId)) throw new Error('VT sem identidade válida');
+      const cache = returnAuditCache.get(key);
+      let promise = cache?.targets.get(taskId);
+      if (!promise) {
+        promise = fetchReturnAuditPages('target/list', { shipment_id: key, task_id: taskId });
+        cache?.targets.set(taskId, promise);
+      }
+      let targets;
+      try { targets = await promise; }
+      catch (error) { cache?.targets.delete(taskId); throw error; }
+      for (const target of targets) {
+        const at = String(target.target_id || '').trim().toUpperCase();
+        const validatedAt = Number(target.validation_end_time || 0);
+        if (!/^AT[A-Z0-9]+$/.test(at) || !validatedAt || validatedAt > occurrenceTime) continue;
+        if (++candidates > 10) throw new Error('Muitas ATs candidatas: requer diagnóstico');
+        const details = await fetchAssignmentAgency(at);
+        // Uma resposta indisponível não permite escolher silenciosamente outra AT.
+        if (!details) throw new Error('AT da conferência indisponível');
+        if (!details.exactAssignmentId || String(details.assignmentId).toUpperCase() !== at || String(details.driverId) !== driverId || !details.agency) continue;
+        matches.push({ ...details, taskId, validatedAt });
+      }
+    }
+    // Vários resultados concordantes podem fornecer a agência do motorista.
+    // Agências conflitantes ficam sem preenchimento, com diagnóstico explícito.
+    if (new Set(matches.map(item => item.agency.trim().toUpperCase())).size > 1) {
+      throw new Error('Agências conflitantes para o motorista nas conferências');
+    }
+    return matches.sort((a, b) => b.validatedAt - a.validatedAt)[0] || null;
+  }
+
   async function enrichReturnOccurrencesWithAssignmentAgency(returnOccurrences, tracking, version) {
+    const linked = await enrichReturnOccurrencesFromTracking(returnOccurrences, tracking, version);
+    const shipmentId = String(tracking?.data?.shipment_id || '').trim().toUpperCase();
+    if (!shipmentId) return linked;
+    const result = [];
+    for (const attempt of linked) {
+      if (version != null && version !== currentRequest) return linked;
+      if (attempt.assignment_agency_return_match && attempt.assignment_agency) { result.push(attempt); continue; }
+      try {
+        const details = await findReturnAgencyFromAudit(shipmentId, attempt);
+        if (details) {
+          receiveDiagPush('return_agency_audit_match', {
+            shipment_id: shipmentId, occurrence_timestamp: attempt.ctime,
+            driver_id: attempt.return_operator_id, assignment_task_id: details.assignmentId,
+            validation_task_id: details.taskId, agency: details.agency
+          });
+          result.push({ ...attempt, assignment_task_id: details.assignmentId,
+            assignment_agency: details.agency, assignment_agency_id: details.agencyId,
+            assignment_agency_return_match: true, assignment_agency_source: 'audit_driver_match',
+            assignment_validation_task_id: details.taskId });
+          continue;
+        }
+        receiveDiagPush('return_agency_audit_no_match', { shipment_id: shipmentId, driver_id: attempt.return_operator_id, occurrence_timestamp: attempt.ctime });
+      } catch (error) {
+        receiveDiagPush('return_agency_audit_error', { shipment_id: shipmentId, occurrence_timestamp: attempt.ctime, error: String(error?.message || error) });
+      }
+      result.push(attempt);
+    }
+    return result;
+  }
+
+  async function enrichReturnOccurrencesFromTracking(returnOccurrences, tracking, version) {
     if (!Array.isArray(returnOccurrences) || !returnOccurrences.length || !tracking) {
       return returnOccurrences || [];
     }
@@ -2944,8 +3053,8 @@
         const detailsDriverId = String(details?.driverId || '').trim();
 
         if (
-          cycleDriverId === returnDriverId ||
-          detailsDriverId === returnDriverId
+          detailsDriverId === returnDriverId &&
+          (!cycleDriverId || cycleDriverId === returnDriverId)
         ) {
           matchedCycle = cycle;
           matchedDetails = details;

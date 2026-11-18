@@ -97,3 +97,14 @@ Imagem image(20261118-194056).png da tela Atribuição de Entrega, apresentada p
 Evidência visual confirma driver126922 e agência SPXOWNFLEET na mesma linha desta AT. A relação com BR262413570263G e dia16 foi indicada pelo usuário; esta imagem não contém lista de pacotes nem resposta JSON dessa AT. Não declarar que verificamos automaticamente presença do BR nessa AT.
 Isso resolve a dúvida visual sobre a transportadora do motorista deste exemplo, sem precisar repetir a varredura completa. Endpoints/payloads já mapeados são reutilizáveis. Uma eventual captura futura de response v2 para esta AT seria validação adicional direcionada, não redescoberta da API.
 Não copiar bairro principal da AT como bairro individual do pacote sem fonte adequada. Nenhuma mudança operacional realizada neste registro.
+
+## Atualização visual do BR em18/11/2026
+Fonte: image(20261118-194756).png. Cartões dos últimos três eventos exibem, em horários apresentados pela interface:
+- 18/11/2026 07:44:33: Retorno_Atribuído_LMHub; Pedido adicionado a Assignment Task.
+- 18/11/2026 07:45:46: Retorno_LMHub_Retornando; Pedido em devolução ao vendedor; motorista ID101045.
+- 18/11/2026 13:53:16: Retorno_LMHub_Em_Espera; Devolução em espera: [Endereço não encontrado]; motorista ID101045.
+Status atual visível: Retorno_LMHub_Em_Espera. Nome exibido do motorista: Juliano Santos Pinto (nome omitido das fixtures futuras quando desnecessário).
+É uma nova ocorrência, mesmo BR e mesmo motivo textual, com outro motorista e outra data que a ocorrência de16/11 (driver126922). Não substituir dados históricos de recebimentos anteriores pela ocorrência mais recente consultada.
+Esta imagem não demonstra recebimento físico posterior à ocorrência de18/11 nem agência do driver101045 nem código AT atual. Não inferir recebimento, criar registro de recebido, ou herdar SPXOWNFLEET do driver126922 com base nela.
+Ao confirmar próximo recebimento, associar à ocorrência temporalmente correspondente e buscar transportadora do motorista dessa ocorrência. Reconsulta/enriquecimento de registro histórico deve manter sua identidade de ocorrência.
+Nenhum código operacional alterado; atualização documental fornecida para entendimento pelo usuário.

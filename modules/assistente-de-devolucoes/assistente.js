@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.77';
+  const MODULE_VERSION = '1.3.78';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -2020,6 +2020,8 @@
       #${PANEL_ID}[hidden]{display:none!important}#${PANEL_ID} *{box-sizing:border-box}#${PANEL_ID} header{position:relative;padding:15px 210px 13px 15px;border-bottom:1px solid #fb923c;background:linear-gradient(135deg,#ff6a00,#e94b00 68%,#9a3412);cursor:grab;user-select:none;touch-action:none}
       #${PANEL_ID}.dragging header{cursor:grabbing}#${PANEL_ID} h2{margin:0;font-size:19px;display:flex;align-items:baseline;gap:6px}#${PANEL_ID} .module-version{font-size:11px;font-weight:700;color:#fff;opacity:.78}#${PANEL_ID} header small{display:block;margin-top:7px;color:#fff;font-size:19px;font-weight:700}#${PANEL_ID} header small strong{font-size:inherit}#${PANEL_ID} .received-at{display:block;margin-top:3px;font-size:12px;font-weight:650;color:#ffedd5}#${PANEL_ID} .received-at b{font-size:12px}#${PANEL_ID} .header-actions{position:absolute;top:9px;right:9px;display:flex;gap:6px;flex-wrap:wrap}#${PANEL_ID} .icon-button{display:grid;place-items:center;width:32px;height:32px;border:1px solid #fed7aa;border-radius:8px;background:#111827;color:#fff;font-size:18px;cursor:pointer}#${PANEL_ID} .dashboard-button{width:auto;min-width:58px;padding:0 9px;font-size:11px;font-weight:800}
       #${PANEL_ID} .panel-at{display:block;margin-top:2px}
+      #${PANEL_ID} header :is(h2,small),#${PANEL_ID} header :is(h2,small) *{user-select:text;cursor:text}
+      #${PANEL_ID} [data-panel-at]{font-weight:400}
       #${PANEL_ID} .body{max-height:65vh;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;pointer-events:auto;padding:10px}#${PANEL_ID} .message{padding:22px;text-align:center;color:#cbd5e1}#${PANEL_ID} .error{color:#fca5a5}
       #${PANEL_ID} .attempt{display:grid;grid-template-columns:27px minmax(0,1fr) auto;gap:9px;margin-bottom:8px;padding:10px;border:1px solid #3f3f46;border-radius:10px;background:#050505}
       #${PANEL_ID} .index{display:grid;place-items:center;width:27px;height:27px;border-radius:50%;background:#334155;font-size:13px;font-weight:900}#${PANEL_ID} .reason{display:inline-block;padding:5px 10px;border-radius:999px;background:#16a34a33;color:#bbf7d0;font-size:19px;font-weight:800}#${PANEL_ID} .reason.reason-valid{background:#2563eb33;color:#bfdbfe}#${PANEL_ID} .reason.reason-final{background:#dc262633;color:#fecaca}#${PANEL_ID} .cancelled-badge{display:inline-block;margin-left:7px;padding:4px 8px;border-radius:999px;background:#64748b33;color:#e2e8f0;font-size:13px;font-weight:900;vertical-align:middle}
@@ -2100,7 +2102,7 @@
     let drag = null;
 
     handle.addEventListener('pointerdown', event => {
-      if (event.button !== 0 || event.target.closest('button')) return;
+      if (event.button !== 0 || event.target.closest('button, h2, small')) return;
       const rect = panel.getBoundingClientRect();
       drag = { pointerId: event.pointerId, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top };
       panel.classList.add('dragging');

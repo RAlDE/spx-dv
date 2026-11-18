@@ -1,6 +1,8 @@
 # Return convertido para Liquidate sem entrada no Dashboard
 
-Relato do usuário em18/11/2026: pacote já em retorno/devolução ao vendedor, com ocorrências que indicariam encaminhar ao SOC, muda para Liquidate no SPX durante o recebimento e não aparece no Dashboard.
+Relato esclarecido pelo usuário em 18/11/2026: pacote já em retorno/devolução ao vendedor muda para Liquidate NO RECEBIMENTO quando tem três ocorrências válidas OU motivo Rejeitado pelo comprador OU motivo Mudança de endereço. Nesse cenário não aparece no Dashboard. Não é uma conversão genérica de qualquer Return recebido.
+
+Condições relatadas são alternativas, não cumulativas. A regra histórica do projeto conta os três dias distintos com motivos válidos; a expressão “3 ocorrências válidas” neste esclarecimento não autoriza mudar essa contagem para três registros no mesmo dia. Conferir os eventos reais antes de atribuir comportamento ao SPX. Este documento descreve o cenário relatado, não uma causa técnica já comprovada.
 
 Pedido explícito: manter os diagnósticos D e I na caixa. Presentes na versão1.3.73 publicada. Não remover durante correções.
 

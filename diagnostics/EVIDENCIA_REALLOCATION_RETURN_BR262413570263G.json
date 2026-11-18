@@ -1,0 +1,17 @@
+{
+  "source": {
+    "screen": "Informações do pedido > F12 > Network > Fetch/XHR",
+    "request_name": "reallocation_history?shipment_id=BR262413570263G",
+    "collection": "Resposta copiada e fornecida pelo usuário"
+  },
+  "response": {
+    "retcode": 0,
+    "message": "",
+    "data": {
+      "shipment_id": "BR262413570263G",
+      "order_reallocation_history_list": null,
+      "total": 0
+    }
+  },
+  "conclusion": "Esta resposta não contém histórico de reatribuição nem vínculo AT. Não implica ausência de AT em outra fonte. Próxima resposta a examinar: tracking_info do mesmo BR, incluindo campos que a interface pode não exibir."
+}

@@ -1,4 +1,4 @@
-> **Handoff sobre AT Return por idioma (18/11/2026):** consulta de continuidade em [HANDOFF_2026-11-18_AT_RETURN_IDIOMA_PT_EN.md](HANDOFF_2026-11-18_AT_RETURN_IDIOMA_PT_EN.md). Resposta `tracking_info` en-US contém ID da AT nos eventos 119/120 que não aparece em pt-BR. Preferência dos cookies `spx-admin-lang` e `spx-lang` é hipótese a verificar, não solução validada. Sem alterações de código no registro.
+> **Handoff sobre AT Return por idioma (18/11/2026):** consulta de continuidade em [HANDOFF_2026-11-18_AT_RETURN_IDIOMA_PT_EN.md](HANDOFF_2026-11-18_AT_RETURN_IDIOMA_PT_EN.md). Resposta `tracking_info` en-US contém ID da AT nos eventos 119/120 que não aparece em pt-BR. Teste real posterior confirmou AT em inglês com página ainda em português quando `spx-admin-lang=en` e `spx-lang=en` estavam definidos em conjunto; não foi isolado qual cookie controla a API nem criada solução automática segura. Sem alterações de código no registro.
 
 # PROJECT_MASTER_CONTEXT — SPX-DV
 

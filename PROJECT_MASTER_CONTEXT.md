@@ -1,3 +1,5 @@
+> **Handoff sobre AT Return por idioma (18/11/2026):** consulta de continuidade em [HANDOFF_2026-11-18_AT_RETURN_IDIOMA_PT_EN.md](HANDOFF_2026-11-18_AT_RETURN_IDIOMA_PT_EN.md). Resposta `tracking_info` en-US contém ID da AT nos eventos 119/120 que não aparece em pt-BR. Preferência dos cookies `spx-admin-lang` e `spx-lang` é hipótese a verificar, não solução validada. Sem alterações de código no registro.
+
 # PROJECT_MASTER_CONTEXT — SPX-DV
 
 > ⚠️ **CONTINUIDADE ATUAL:** a versão e os casos críticos posteriores a este contexto mestre histórico estão documentados em [HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md](HANDOFF_2026-11-11_PENDENCIAS_RETURN_DASHBOARD.md) e [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md). Priorize-os antes de usar os números de versão antigos deste documento; preserve todas as regras históricas sem supor que correções foram validadas em produção.

@@ -4,7 +4,8 @@
 
 ## Para retomar em outra conversa (LEIA PRIMEIRO)
 
-1. **Fato confirmado:** a resposta do MESMO endpoint `GET /api/fleet_order/order/detail/tracking_info?shipment_id=BR2659468678763` é localizada conforme idioma do SPX. Na resposta pt-BR, os eventos 119/120 mencionam Assignment Task mas omitem seu ID; na resposta en, ambos incluem `AT20261118D0T4N` na propriedade `message`.
+1. **ATUALIZAÇÃO DE TESTE REAL:** Com a tela em português e `spx-admin-lang=en` + `spx-lang=en`, consulta `tracking_info` feita no Console retornou HTTP 200 e `AT20261118D0T4N` em inglês nos eventos 119/120. O efeito conjunto está confirmado; **qual cookie isolado controla o idioma ainda não foi testado**. Leia seção 'Teste real conclusivo' no final.
+2. **Fato confirmado:** a resposta do MESMO endpoint `GET /api/fleet_order/order/detail/tracking_info?shipment_id=BR2659468678763` é localizada conforme idioma do SPX. Na resposta pt-BR, os eventos 119/120 mencionam Assignment Task mas omitem seu ID; na resposta en, ambos incluem `AT20261118D0T4N` na propriedade `message`.
 2. **Fato confirmado:** `Accept-Language` do navegador continua `pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7` nos dois estados de idioma observados. No teste via Console, enviar apenas `Accept-Language: en-US,en;q=0.9` com a interface/sessão pt-BR NÃO alterou a resposta: ambos os testes retornaram mensagens em português, HTTP 200, AT ausente.
 3. **Fato confirmado:** os cookies de preferência de idioma mudam conforme o seletor do SPX: inglês `spx-admin-lang=en` e `spx-lang=en`; português `spx-admin-lang=pt-br` e `spx-lang=pt-BR`. O cookie separado `language=pt-BR` permaneceu igual nos dois exemplos. Isso aponta para uma hipótese plausível, **NÃO demonstra** qual cookie controla a resposta.
 4. **Próxima etapa pendente:** experimento controlado que isole o efeito de `spx-admin-lang` e `spx-lang` sobre `tracking_info`, mantendo a interface em português. Não afirmar que mudar cookie funciona antes de prova real. Planejar com segurança e restauração de estado, sem compartilhar credenciais.
@@ -72,3 +73,25 @@
 
 - **18/11/2026 — descoberta e comparação completas:** par de respostas PT/EN, eventos 119/120, AT extraída em inglês, teste `Accept-Language` negativo, descoberta dos cookies `spx-admin-lang` e `spx-lang` como hipótese não confirmada. Registro documental apenas; nenhum código, catálogo, integração de Sheets ou estado da sessão alterado por este trabalho.
 - **Próximo registro:** acrescentar neste arquivo resultado controlado de cada cookie (com sucesso/fracasso), detalhes mínimos sem segredos, limitações, decisão técnica, commit e validação real quando houver.
+
+
+## Teste real conclusivo — cookies de idioma em inglês sem mudar a interface
+
+**Data:** 18/11/2026 (sessão local; captura enviada depois da comparação de headers). **Fonte:** imagem do Console do Chrome na página de rastreio do mesmo BR. **Ambiente:** SPX real.
+
+**Resultado confirmado:** o usuário manteve a interface visível do SPX em **português** e mostrou na aba Application os cookies `spx-admin-lang=en` e `spx-lang=en`. Em seguida executou, na mesma página e sem recarregar, uma chamada GET autenticada com `fetch('/api/fleet_order/order/detail/tracking_info?shipment_id=BR2659468678763', { credentials:'include', cache:'no-store' })` no Console. O Console exibiu `HTTP: 200` e a tabela confirmou:
+
+| Status | Resposta em inglês | AT extraída |
+|---|---|---|
+| 119 | `Parcel adding into Assignment Task AT20261118D0T4N` | `AT20261118D0T4N` |
+| 120 | `Parcel added into Assignment Task AT20261118D0T4N` | `AT20261118D0T4N` |
+
+**Conclusão atualizada:** está **validado em ambiente real** que, com a página do SPX ainda visível em português, a requisição `tracking_info` pode retornar mensagens em inglês incluindo a AT, quando os DOIS cookies de preferência de idioma estão em `en`. O teste anterior, que apenas enviava `Accept-Language: en-US,en;q=0.9` com a sessão pt-BR, retornou português sem AT.
+
+**Limites importantes:** os dois cookies foram alterados conjuntamente; não foi isolado qual deles é necessário/suficiente. O teste não prova que uma extensão possa impor idioma `en` em apenas UMA requisição sem tocar no estado da sessão, tampouco garante comportamento idêntico para outros endpoints ou usuários. A tela permanecer visualmente em português **até aquela captura** não demonstra que uma recarga após alterar cookies continuaria em português. A observação de `HTTP 200` e ID de AT não autoriza associar esta AT automaticamente a toda ocorrência de Return.
+
+**Próxima decisão técnica:** encontrar mecanismo seguro de consulta *isolada* em inglês (ou preferir o vínculo estruturado BR → VT → AT já validado) sem mudar globalmente cookies/sessão do operador, sem interferir no SPX e sem vazamento de AT entre ciclos. Registrar testes de isolamento por cookie apenas se necessários, preferindo sessão de teste autorizada. Antes de qualquer implementação, exigir confirmação do usuário e verificar o código/versão atual no GitHub.
+
+**Restauração:** orientar operador a restaurar os cookies `spx-admin-lang=pt-br` e `spx-lang=pt-BR` após o experimento. **Segurança:** não publicar nem solicitar cookies de autenticação, tokens, IDs de sessão ou headers de assinatura. Este registro contém somente os valores de idioma não autenticadores; a captura original permanece na conversa.
+
+**Estado de publicação desta investigação:** documentação apenas; código, catálogo, lógica Return, recebimento, dashboard e Apps Script não alterados. No registro, versões de catálogo SPX-DV `1.3.78` e OnHold `0.3.28`.

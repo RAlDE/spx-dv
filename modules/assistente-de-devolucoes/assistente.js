@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.78';
+  const MODULE_VERSION = '1.3.79';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -4190,7 +4190,22 @@
         body_size: String(meta?.body || '').length
       });
 
-      if (Number(parsed?.retcode) !== 0) {
+      let salvadosOrder = null;
+      if (Number(parsed?.retcode) === 120114020) {
+        let request;
+        try { request = JSON.parse(meta.body); } catch {}
+        const rows = parsed?.data?.order_list;
+        const order = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+        if (/^BR[A-Z0-9]+$/.test(request?.shipment_id || '') &&
+            order?.shipment_id === request.shipment_id &&
+            typeof request.task_id === 'string' && request.task_id.trim() &&
+            order.receive_entity_id === request.task_id &&
+            Number.isSafeInteger(order.receive_time) && order.receive_time > 0 &&
+            order.receive_time <= Math.floor(Date.now() / 1000) + 300) {
+          salvadosOrder = order;
+        }
+      }
+      if (Number(parsed?.retcode) !== 0 && !salvadosOrder) {
         receiveDiagPush('receive_response_not_success', {
           retcode: parsed?.retcode,
           message: String(parsed?.message || '')

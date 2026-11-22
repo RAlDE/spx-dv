@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.79';
+  const MODULE_VERSION = '1.3.80';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -3965,6 +3965,12 @@
 
       const currentOccurrence = selectReceivedOccurrence(visibleAttempts, receivedAt, exactTimestamp);
       if (!currentOccurrence) {
+        if (!existingOnly && history?.retcode === 0 &&
+            Array.isArray(history?.data?.recipient?.On_Hold) &&
+            tracking?.retcode === 0 && tracking.data?.shipment_id === shipmentId &&
+            Array.isArray(tracking.data.tracking_list) && tracking.data.tracking_list.length > 0) {
+          return 'no_occurrence';
+        }
         receiveDiagPush('process_no_occurrence', {
           shipment_id: shipmentId,
           attempts: attempts.length,
@@ -4093,6 +4099,11 @@
       for (const delay of RECEIVE_CAPTURE_RETRY_DELAYS) {
         if (delay) await sleep(delay);
         const captured = await processConfirmedReceive(shipmentId, operatorSnapshot, receivedAtSnapshot);
+        if (captured === 'no_occurrence') {
+          if (receiveKey) removeConfirmedReceiveReceipt(receiveKey);
+          receiveDiagPush('receive_ignored_no_occurrence', { shipment_id: shipmentId, receive_key: receiveKey });
+          return;
+        }
         receiveDiagPush('process_attempt_result', {
           shipment_id: shipmentId,
           delay,
@@ -4974,12 +4985,12 @@
   // Garante abertura toda vez que o usuário entra em Recebimento unitário.
   window.setInterval(() => syncReceiveRoute(false), 250);
   window.setInterval(ensureNeighborhoodDiagnosticUi, 500);
-  window.setInterval(ensureGeoDiagnosticUi, 500);
+
 
   installRealReceiveBridge();
   installReturnNetworkDiagnostic();
   ensureNeighborhoodDiagnosticUi();
-  ensureGeoDiagnosticUi();
+
   ensureShipmentKeyListener();
   if (isTargetRoute()) void start();
 })();

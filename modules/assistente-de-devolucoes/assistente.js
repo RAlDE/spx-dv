@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.80';
+  const MODULE_VERSION = '1.3.81';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -621,7 +621,7 @@
     }
   }
 
-  function requestCentralJsonp(view, params = {}, timeoutMs = 6500) {
+  function requestCentralJsonp(view, params = {}, timeoutMs = 6500, endpoint = ONHOLD_DATA_WEBAPP_URL) {
     if (!ONHOLD_DATA_WEBAPP_URL) return Promise.resolve(null);
 
     return new Promise(resolve => {
@@ -655,7 +655,7 @@
       });
 
       script.async = true;
-      script.src = ONHOLD_DATA_WEBAPP_URL + '?' + query.toString();
+      script.src = endpoint + '?' + query.toString();
       script.onerror = () => finish(null);
       script.onload = () => {
         // Callback JSONP roda antes do evento load. Se não rodou, a resposta
@@ -3980,6 +3980,13 @@
         return false;
       }
 
+      if (!existingOnly && normalize(translateReason(currentOccurrence.on_hold_reason__desc)) === 'endereco nao encontrado') {
+        const receipt = { br: shipmentId, received_at: receivedAt };
+        const key = addressReceiptPrefix + shipmentId + '|' + receivedAt;
+        localStorage.setItem(key, JSON.stringify(receipt));
+        void syncAddressReceipt(key);
+      }
+
       const neighborhoodDetails = await neighborhoodPromise;
       const neighborhood = resolveOccurrenceNeighborhood(
         neighborhoodDetails,
@@ -4548,7 +4555,6 @@
       });
 
       markAddressCancelled(shipmentId);
-      void sendCancelledAddressToSheet(shipmentId);
       void captureCancelledAddressToDashboard(shipmentId);
       void refreshReceivedAtFromTracking(shipmentId);
       actions.querySelectorAll('button').forEach(item => item.remove());
@@ -4588,26 +4594,41 @@
     }, 120);
   }
 
-  async function sendCancelledAddressToSheet(shipmentId) {
-    if (!shipmentId) return false;
+  const addressReceiptPrefix = 'spxdv:address-receipt:';
+  const addressSending = new Set();
 
+  async function syncAddressReceipt(key) {
+    if (addressSending.has(key)) return;
+    addressSending.add(key);
     try {
+      const receipt = JSON.parse(localStorage.getItem(key));
+      if (!receipt) return;
+      const receiptKey = receipt.br + '|' + receipt.received_at;
+      const status = await requestCentralJsonp('receipt', receipt, 12000, SHEET_WEBAPP_URL);
+      if (status?.key !== receiptKey) return;
+      if (status.ok) {
+        localStorage.removeItem(key);
+        return;
+      }
       await fetch(SHEET_WEBAPP_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        credentials: 'include',
+        method: 'POST', mode: 'no-cors', credentials: 'include',
         headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-        body: JSON.stringify({ br: shipmentId }),
-        keepalive: true
+        body: JSON.stringify(receipt)
       });
-
-      return true;
+      const ack = await requestCentralJsonp('receipt', receipt, 12000, SHEET_WEBAPP_URL);
+      if (ack?.ok && ack.key === receipt.br + '|' + receipt.received_at) localStorage.removeItem(key);
     } catch (error) {
-      console.warn('[SPX-DV] Falha ao enviar BR para planilha', error);
-      return false;
+      receiveDiagPush('address_sheet_pending', { error: String(error) });
+    } finally {
+      addressSending.delete(key);
     }
   }
 
+  async function retryAddressReceipts() {
+    for (const key of Object.keys(localStorage).filter(key => key.startsWith(addressReceiptPrefix))) {
+      await syncAddressReceipt(key);
+    }
+  }
 
   async function loadShipment(shipmentId, scanUnix = Math.floor(Date.now() / 1000)) {
     const version = ++currentRequest;
@@ -4838,8 +4859,7 @@
       }
       if (action === 'cancel') {
         markAddressCancelled(shipmentId);
-        void sendCancelledAddressToSheet(shipmentId);
-        void captureCancelledAddressToDashboard(shipmentId);
+          void captureCancelledAddressToDashboard(shipmentId);
         void refreshReceivedAtFromTracking(shipmentId);
       }
       if (result) result.textContent = action === 'confirm' ? 'Motivo confirmado.' : 'Cancelado';
@@ -4948,6 +4968,7 @@
       receiveInboxReplayTimer = window.setInterval(() => {
         if (!isTargetRoute() || !authorized) return;
         replayConfirmedReceiveInbox(20);
+        void retryAddressReceipts();
       }, 60000);
     }
     if (!dashboardEnrichmentTimer) {

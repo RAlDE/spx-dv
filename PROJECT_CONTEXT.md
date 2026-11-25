@@ -1,3 +1,7 @@
+## 25/11/2026 — Top 15 do Dash
+
+Os rankings do dia, da semana e do mês exibem até 15 motoristas por quantidade de recebimentos, relativos à data selecionada. Publicar o Apps Script central na implantação existente.
+
 ## 25/11/2026 — Confirmação de captura concorrente no Dash (1.3.83)
 
 O fluxo de recebimento e a tratativa de endereço podem tentar salvar a mesma ocorrência ao mesmo tempo. A segunda tentativa agora aguarda a resposta da primeira. Assim o recibo local continua elegível para as tentativas da fila se a gravação falhar. Teste simulado com duas chamadas simultâneas conferiu uma única gravação por tentativa e o mesmo resultado para os dois chamadores, em falha e sucesso. A referência operacional anterior é a 1.3.82.

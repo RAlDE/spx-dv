@@ -16,7 +16,7 @@
  */
 
 const SPX_DV_BUILD = '1.3.68';
-// Revisão visual 2026-11-17: motivos alinhados e Top 10 por dia/semana/mês. Protocolo preservado.
+// Revisão visual 2026-11-17: motivos alinhados e Top 15 por dia/semana/mês. Protocolo preservado.
 
 const SPX_DV_CONFIG = Object.freeze({
   spreadsheetId: '14N5jvp164IpA_YRZlgnODhbogCr7rLAjJzuTCzyx4mY',
@@ -1710,7 +1710,7 @@ function dashboardTopDriversHtml_(records) {
     .sort(function(a, b) {
       return b.count - a.count || a.name.localeCompare(b.name, 'pt-BR');
     })
-    .slice(0, 10);
+    .slice(0, 15);
 
   if (!top.length) {
     return '<div class="empty">Ainda não há motoristas para o período selecionado.</div>';
@@ -1893,9 +1893,9 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </section>
 <section class="panel">
 <details open id="topRankingDetails">
-<summary class="panel-head top-summary"><div><h2>Top 10 motoristas ofensores</h2><div class="muted">Períodos da data selecionada nos recebimentos. Clique para abrir ou recolher.</div></div></summary>
+<summary class="panel-head top-summary"><div><h2>Top 15 motoristas ofensores</h2><div class="muted">Períodos da data selecionada nos recebimentos. Clique para abrir ou recolher.</div></div></summary>
 <div class="panel-head">
-<div class="ranking-tabs" role="tablist" aria-label="Período do Top 10">
+<div class="ranking-tabs" role="tablist" aria-label="Período do Top 15">
 <button type="button" id="rankingTabDay" role="tab" aria-selected="true" aria-controls="rankingPanelDay" data-ranking-tab="Day">Dia</button>
 <button type="button" id="rankingTabWeek" role="tab" aria-selected="false" aria-controls="rankingPanelWeek" tabindex="-1" data-ranking-tab="Week">Semana</button>
 <button type="button" id="rankingTabMonth" role="tab" aria-selected="false" aria-controls="rankingPanelMonth" tabindex="-1" data-ranking-tab="Month">Mês</button>

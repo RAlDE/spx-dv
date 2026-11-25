@@ -4,9 +4,11 @@ No vídeo, a aba abre em 1,4 s, o painel aparece em 3,9 s e os 565 recebidos apa
 
 Ao abrir na visão de hoje, o Apps Script central consulta as colunas de data, horário de recebimento e estado. Em seguida busca os detalhes das linhas do dia e das pendências de qualquer data. A seleção percorre a base inteira nessas três colunas para localizar inclusive lançamentos fora de ordem. A tela mostra “…” até obter a resposta e “Atualizado.” ao concluir. Escolher outra data ou abrir o Top 15 semanal ou mensal carrega o histórico completo. O filtro de data continua usando o horário de recebimento no fuso de São Paulo.
 
-Em teste com 20.409 linhas sintéticas, 565 recebidos do dia e 85 pendências, a abertura leu 69.137 células e entregou os 565 recebimentos. A leitura anterior consultava 285.726 células e enviava as 20.409 linhas. Registros de dias anteriores, recebimentos repetidos, virada de dia, pendências fora de ordem e o resultado dos rankings e filtros foram conferidos. O tempo real após a implantação ainda precisa ser medido na estação.
+Em teste com 20.409 linhas sintéticas, 565 recebidos do dia e 85 pendências, a abertura leu 69.137 células e entregou os 565 recebimentos. A leitura anterior consultava 285.726 células e enviava as 20.409 linhas. Registros de dias anteriores, recebimentos repetidos, virada de dia, pendências fora de ordem e o resultado dos rankings e filtros foram conferidos.
 
-Publicar o arquivo `apps-script/recebimento-onhold-dados.gs` como nova versão na implantação central existente. A marca “leitura diária” identifica a nova tela. O identificador de sincronização do servidor continua 1.3.68 por compatibilidade com a extensão. A versão anterior do script central está no commit `d31c4e6d0d0cf659a0bbc4d0cdb4a33ad71e1da9`.
+Na gravação da estação após a implantação, a aba do Dash abre em 0,53 s, o painel aparece em 2,87 s e os totais com “Atualizado.” aparecem em 7,53 s. Da abertura da aba aos totais foram 7,0 s, ante 35,9 s na gravação anterior. Do painel visível aos totais foram 4,7 s, ante 33,4 s. Na nova abertura, a base indicava 20.410 registros, 566 recebidos no dia, zero pendências do dia e de dias anteriores e dois operadores. Durante a consulta, os cartões exibiram reticências. A medição abrange a abertura na aba Dia.
+
+A implantação central de `apps-script/recebimento-onhold-dados.gs` foi identificada na estação pela marca “leitura diária”. O identificador de sincronização do servidor continua 1.3.68 por compatibilidade com a extensão. A versão anterior do script central está no commit `d31c4e6d0d0cf659a0bbc4d0cdb4a33ad71e1da9`.
 
 ## 25/11/2026 — Top 15 do Dash
 

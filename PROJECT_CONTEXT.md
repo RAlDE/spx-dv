@@ -1,3 +1,9 @@
+## 25/11/2026 — Confirmação de captura concorrente no Dash (1.3.83)
+
+O fluxo de recebimento e a tratativa de endereço podem tentar salvar a mesma ocorrência ao mesmo tempo. A segunda tentativa agora aguarda a resposta da primeira. Assim o recibo local continua elegível para as tentativas da fila se a gravação falhar. Teste simulado com duas chamadas simultâneas conferiu uma única gravação por tentativa e o mesmo resultado para os dois chamadores, em falha e sucesso. A referência operacional anterior é a 1.3.82.
+
+O rastreio apresentado tinha ocorrência às 15:36:39 de 23/11 e recebimento no hub às 14:42:05 de 24/11. A data de filtro esperada é 24/11. O rastreio documenta a cronologia, mas não contém a resposta da gravação histórica no Dash. Validação da 1.3.83 na estação pendente.
+
 ## 25/11/2026 — Carregamento do Dash e conferência de recebimentos
 
 O Apps Script central passa a entregar o histórico em linhas compactas à página. O navegador cria as linhas da tabela apenas para a data escolhida e utiliza o histórico para calcular os rankings. O servidor lê a revisão antes de consultar os dados para que uma gravação durante a consulta seja percebida na atualização seguinte. A leitura da aba central continua integral. Em um teste simulado com duas datas, a tabela de cada dia e os contadores coincidiram com os da versão anterior. O tempo no SPX depende da implantação na estação.

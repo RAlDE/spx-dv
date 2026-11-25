@@ -2,7 +2,7 @@
   'use strict';
 
   const APP_MARKER = 'spxdvAssistantActive';
-  const MODULE_VERSION = '1.3.82';
+  const MODULE_VERSION = '1.3.83';
   const PANEL_ID = 'spxdv-attempt-panel';
   const TOGGLE_ID = 'spxdv-attempt-toggle';
   const AUTOADD_ID = 'spxdv-autoadd-notice';
@@ -125,7 +125,7 @@
   const assignmentAgencyCache = new Map();
   const confirmedReceiveSeen = new Set();
   const CANCELLED_ADDRESS_KEY = 'spxdv:cancelled-address-v1';
-  const dashboardOccurrenceInFlight = new Set();
+  const dashboardOccurrenceInFlight = new Map();
   const addressDashboardSnapshots = new Map();
   const receivedAtByShipment = new Map();
   const latestOccurrenceByShipment = new Map();
@@ -3755,11 +3755,21 @@
 
     const occurrenceKey = dataSheetOccurrenceKey(shipmentId, attempt?.ctime);
     if (!occurrenceKey) return false;
-    if (dashboardOccurrenceInFlight.has(occurrenceKey)) return true;
+    const pending = dashboardOccurrenceInFlight.get(occurrenceKey);
+    if (pending) return pending;
 
-    dashboardOccurrenceInFlight.add(occurrenceKey);
-
+    const capture = Promise.resolve().then(saveConfirmedOccurrence).catch(error => {
+      console.warn('[SPX-DV] Falha ao capturar recebimento confirmado no Dashboard', error);
+      return false;
+    });
+    dashboardOccurrenceInFlight.set(occurrenceKey, capture);
     try {
+      return await capture;
+    } finally {
+      dashboardOccurrenceInFlight.delete(occurrenceKey);
+    }
+
+    async function saveConfirmedOccurrence() {
       const assignmentNeighborhood = String(attempt?.assignment_main_neighborhood || '').trim();
       let neighborhood = String(preloadedNeighborhood || '').trim();
 
@@ -3797,11 +3807,6 @@
       // Só encerramos a fila de retry quando o registro foi confirmado no servidor.
       // O dado local permanece salvo mesmo se o Web App estiver temporariamente indisponível.
       return Boolean(centralConfirmed);
-    } catch (error) {
-      console.warn('[SPX-DV] Falha ao capturar recebimento confirmado no Dashboard', error);
-      return false;
-    } finally {
-      dashboardOccurrenceInFlight.delete(occurrenceKey);
     }
   }
 

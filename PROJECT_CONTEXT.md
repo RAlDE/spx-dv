@@ -1,3 +1,9 @@
+## 25/11/2026 — Carregamento do Dash e conferência de recebimentos
+
+O Apps Script central passa a entregar o histórico em linhas compactas à página. O navegador cria as linhas da tabela apenas para a data escolhida e utiliza o histórico para calcular os rankings. O servidor lê a revisão antes de consultar os dados para que uma gravação durante a consulta seja percebida na atualização seguinte. A leitura da aba central continua integral. Em um teste simulado com duas datas, a tabela de cada dia e os contadores coincidiram com os da versão anterior. O tempo no SPX depende da implantação na estação.
+
+Na conferência de 25/11, o recebimento de Return relatado às 14:58:27 apareceu na base central com o mesmo horário. O outro caso, de 24/11, foi localizado na BUYER, mas a pesquisa nas primeiras 50 mil linhas do Dash e do controle central não encontrou o BR. A causa histórica desse caso exige conferir os horários de ocorrência e recebimento no rastreio do SPX. O teste de sete recebimentos da 1.3.82 continua registrado abaixo.
+
 ## 25/11/2026 — Planilha BUYER de endereço, versão 1.3.82
 
 O operador confirmou a regra histórica da seção “Integração com Google Sheets”. Quando a caixa oferece a tratativa de endereço e o SPX aceita o cancelamento manual ou automático (`cancel_eo_reason`, HTTP de sucesso e `retcode === 0`), o módulo envia o BR para a BUYER. Cada novo cancelamento real, inclusive do mesmo BR no mesmo dia, pode gerar outra linha. A bipagem, a consulta ao rastreio e o botão Confirmar seguem seus fluxos próprios.

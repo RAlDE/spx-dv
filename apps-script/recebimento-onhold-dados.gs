@@ -1279,7 +1279,7 @@ function getDashboardRevision() {
   };
 }
 
-function dashboardLiveState_(data) {
+function dashboardLiveState_(data, compact, revision) {
   const source = data && typeof data === 'object' ? data : {};
   const records = Array.isArray(source.records) ? source.records : [];
   const todayRecords = Array.isArray(source.today_records) ? source.today_records : [];
@@ -1296,24 +1296,6 @@ function dashboardLiveState_(data) {
     if (!login) return;
     operatorCounts[login] = Number(operatorCounts[login] || 0) + 1;
   });
-
-  const sortedToday = todayRecords.slice().sort((a, b) =>
-    Number(b && b.received_at || 0) - Number(a && a.received_at || 0)
-  );
-
-  const rowsHtml = sortedToday.map(record =>
-    '<tr>' +
-      '<td>' + dashboardHtmlEscape_(dashboardFormatMillis_(record.received_at)) + '</td>' +
-      '<td><strong>' + dashboardHtmlEscape_(record.shipment_id) + '</strong></td>' +
-      '<td>' + dashboardHtmlEscape_(record.reason) + '</td>' +
-      '<td>' + dashboardHtmlEscape_(record.driver_id) + '</td>' +
-      '<td>' + dashboardHtmlEscape_(record.driver_name) + '</td>' +
-      '<td>' + dashboardHtmlEscape_(record.agency) + '</td>' +
-      '<td>' + dashboardHtmlEscape_(record.neighborhood) + '</td>' +
-      '<td>' + dashboardHtmlEscape_(dashboardFormatSeconds_(record.occurrence_timestamp)) + '</td>' +
-      '<td>' + dashboardHtmlEscape_(record.operator_login || 'Não identificado') + '</td>' +
-    '</tr>'
-  ).join('');
 
   const operatorOptionsHtml = Object.keys(operatorCounts)
     .sort()
@@ -1337,12 +1319,13 @@ function dashboardLiveState_(data) {
     ok: source.ok !== false,
     error: clean_(source.error),
     build: SPX_DV_BUILD,
-    revision: dashboardRevisionValue_(),
+    revision: revision,
     build_info:
       'servidor ' + SPX_DV_BUILD +
       ' · base ' + records.length +
       ' · hoje ' + todayRecords.length,
-    rows_html: dashboardRowsHtml_(records),
+    rows_html: compact ? '' : dashboardRowsHtml_(records),
+    history: compact ? records.map(r => [r.received_day, r.received_at, r.shipment_id, r.reason, r.driver_id, r.driver_name, r.agency, r.neighborhood, r.occurrence_timestamp, r.operator_login, r.status]) : null,
     old_pending_rows_html: dashboardOldPendingHtml_(oldPending),
     day_options_html: dashboardDayOptionsHtml_(records, source.today),
     today: source.today,
@@ -1358,9 +1341,10 @@ function dashboardLiveState_(data) {
   };
 }
 
-function getDashboardLiveState() {
+function getDashboardLiveState(compact) {
   try {
-    return dashboardLiveState_(getDashboardData());
+    const revision = dashboardRevisionValue_();
+    return dashboardLiveState_(getDashboardData(), compact === true, revision);
   } catch (error) {
     return {
       ok: false,
@@ -1968,6 +1952,20 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
   function clean_(value){return String(value==null?'':value).trim();}
   ${dashboardHtmlEscape_.toString()}
   ${dashboardTopDriversHtml_.toString()}
+  ${dashboardRowsHtml_.toString()}
+  var historyByDay=null, renderedDay=null;
+  var clock=new Intl.DateTimeFormat('en-GB',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
+  function dashboardFormatMillis_(value){return Number(value)?clock.format(Number(value)).replace(',',''):'-';}
+  function dashboardFormatSeconds_(value){return dashboardFormatMillis_(Number(value)*1000);}
+  function loadHistory(history){
+    historyByDay=new Map();
+    renderedDay=null;
+    history.forEach(function(r){
+      if(!historyByDay.has(r[0]))historyByDay.set(r[0],[]);
+      historyByDay.get(r[0]).push({received_day:r[0],received_at:r[1],shipment_id:r[2],reason:r[3],
+        driver_id:r[4],driver_name:r[5],agency:r[6],neighborhood:r[7],occurrence_timestamp:r[8],operator_login:r[9],status:r[10]});
+    });
+  }
   function rankingPeriods(day){
     var date=new Date(day+'T12:00:00Z');
     if(isNaN(date.getTime()))return null;
@@ -1981,6 +1979,18 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     if(!byId('topDrivers')||!day||rankingDayCache===day)return;
     var period=rankingPeriods(day);if(!period)return;
     var daily=[],weekly=[],monthly=[];
+    if(historyByDay){
+      historyByDay.forEach(function(group,receivedDay){
+        var inWeek=receivedDay>=period.weekStart&&receivedDay<=period.weekEnd;
+        var inMonth=receivedDay.slice(0,7)===period.month;
+        if(!inWeek&&!inMonth)return;
+        group.forEach(function(record){
+          if(receivedDay===day)daily.push(record);
+          if(inWeek)weekly.push(record);
+          if(inMonth)monthly.push(record);
+        });
+      });
+    }else{
     rows().forEach(function(row){
       var receivedDay=row.getAttribute('data-day');
       var record={driver_id:row.cells[3].textContent,driver_name:row.cells[4].textContent,
@@ -1989,6 +1999,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
       if(receivedDay>=period.weekStart&&receivedDay<=period.weekEnd)weekly.push(record);
       if(receivedDay&&receivedDay.slice(0,7)===period.month)monthly.push(record);
     });
+    }
     function label(value){return value.split('-').reverse().join('/');}
     byId('topDrivers').innerHTML=dashboardTopDriversHtml_(daily);
     byId('topWeek').innerHTML=dashboardTopDriversHtml_(weekly);
@@ -2122,6 +2133,10 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
   function applyFilters(){
     try{
       var day=byId('dayFilter')&&byId('dayFilter').value;
+      if(historyByDay&&renderedDay!==day){
+        byId('rows').innerHTML=dashboardRowsHtml_(historyByDay.get(day)||[]);
+        renderedDay=day;
+      }
       var operator=normalize(byId('operator')&&byId('operator').value);
       var general=normalize(byId('generalSearch')&&byId('generalSearch').value);
       var selects=Array.from(document.querySelectorAll('.column-filter'));
@@ -2200,7 +2215,8 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     if(buildInfo) buildInfo.textContent=String(state.build_info || 'servidor '+String(state.build || ''));
 
     var rowsBody=byId('rows');
-    if(rowsBody) rowsBody.innerHTML=String(state.rows_html || '');
+    if(Array.isArray(state.history)) loadHistory(state.history);
+    else {historyByDay=null;if(rowsBody)rowsBody.innerHTML=String(state.rows_html||'');}
     var daySelect=byId('dayFilter');
     if(daySelect){
       var oldDay=daySelect.value || String(state.today||'');
@@ -2267,7 +2283,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
         liveLoading=false;
         setStatus('Falha ao atualizar: '+String(error && error.message || error));
       })
-      .getDashboardLiveState();
+      .getDashboardLiveState(true);
   }
 
   function pollDashboardRevision(){

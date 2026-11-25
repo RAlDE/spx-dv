@@ -1026,10 +1026,10 @@ function normalizeDashboardDay_(value) {
   return text;
 }
 
-function dashboardRecordFromRow_(values) {
+function dashboardRecordFromRow_(values, receivedDay) {
   return {
     occurrenceKey: clean_(values[0]),
-    receivedDay: normalizeDashboardDay_(values[1]),
+    receivedDay: typeof receivedDay === 'string' ? receivedDay : normalizeDashboardDay_(values[1]),
     receivedAt: Number(values[2] || 0),
     shipmentId: clean_(values[3]).toUpperCase(),
     reason: clean_(values[4]),
@@ -1195,10 +1195,38 @@ function dashboardEffectiveDay_(record) {
   return normalizeDashboardDay_(record && record.receivedDay);
 }
 
-function dashboardClientRecord_(record) {
+// Os limites usam o fuso da estação. Uma consulta reaproveita cada intervalo
+// mesmo quando chegam registros fora de ordem ou há mudança de horário de verão.
+function dashboardReadDayResolver_() {
+  const dayMillis = 86400000;
+  const known = new Map();
+  return function(rawMillis, savedDay) {
+    const millis = Number(rawMillis || 0);
+    if (!(millis > 0)) return normalizeDashboardDay_(savedDay);
+    const utcDay = Math.floor(millis / dayMillis);
+    let ranges = known.get(utcDay);
+    if (!ranges) {
+      ranges = [];
+      known.set(utcDay, ranges);
+    }
+    for (const range of ranges) {
+      if (millis >= range.start && millis < range.end) return range.day;
+    }
+    const zone = SPX_DV_CONFIG.timezone;
+    const day = Utilities.formatDate(new Date(millis), zone, 'yyyy-MM-dd');
+    const nextDay = new Date(Date.parse(day + 'T00:00:00Z') + dayMillis).toISOString().slice(0, 10);
+    const start = Utilities.parseDate(day, zone, 'yyyy-MM-dd').getTime();
+    const end = Utilities.parseDate(nextDay, zone, 'yyyy-MM-dd').getTime();
+    ranges.push({day, start, end});
+    return day;
+  };
+}
+
+function dashboardClientRecordFromRow_(values, resolveDay) {
+  const record = dashboardRecordFromRow_(values, resolveDay(values[2], values[1]));
   return {
     occurrence_key: record.occurrenceKey,
-    received_day: dashboardEffectiveDay_(record),
+    received_day: record.receivedDay,
     received_at: record.receivedAt,
     shipment_id: record.shipmentId,
     reason: record.reason,
@@ -1219,6 +1247,33 @@ function dashboardIsPending_(record) {
 }
 
 function getDashboardData() {
+  return readDashboardData_(false);
+}
+
+// B:C identifica a data efetiva e M identifica as pendências de qualquer dia.
+// A linha física pode estar longe das demais, inclusive após um lançamento tardio.
+function dashboardTodayRows_(sheet, count, today, resolveDay, days) {
+  const dates = sheet.getRange(2, 2, count, 2).getValues();
+  const status = sheet.getRange(2, 13, count, 1).getValues();
+  const groups = [];
+  dates.forEach(([savedDay, millis], index) => {
+    const day = resolveDay(millis, savedDay);
+    days.add(day);
+    if (day !== today && !dashboardIsPending_({status: status[index][0]})) return;
+    const row = index + 2;
+    const last = groups[groups.length - 1];
+    if (last && row - last.end <= 32) last.end = row;
+    else groups.push({start: row, end: row});
+  });
+  // Limita chamadas ao Sheets quando as pendências estão muito espalhadas.
+  if (groups.length > 8) {
+    const start = groups[0].start;
+    return sheet.getRange(start, 1, groups[groups.length - 1].end - start + 1, 14).getValues();
+  }
+  return groups.flatMap(group => sheet.getRange(group.start, 1, group.end - group.start + 1, 14).getValues());
+}
+
+function readDashboardData_(todayOnly) {
   // Leitura somente: não usa ScriptLock e não faz limpeza/reconciliação.
   // O servidor já classifica "hoje" para a tela não depender de comparar
   // datas vindas do Sheets no navegador.
@@ -1227,11 +1282,16 @@ function getDashboardData() {
 
   const today = Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd');
   const lastRow = sheet.getLastRow();
-  const source = lastRow >= 2
-    ? sheet.getRange(2, 1, lastRow - 1, 14).getValues().map(dashboardRecordFromRow_)
-    : [];
-
-  const records = source.map(dashboardClientRecord_);
+  const count = Math.max(0, lastRow - 1);
+  const resolveDay = dashboardReadDayResolver_();
+  const days = new Set();
+  let source = [];
+  if (count) {
+    source = todayOnly
+      ? dashboardTodayRows_(sheet, count, today, resolveDay, days)
+      : sheet.getRange(2, 1, count, 14).getValues();
+  }
+  const records = source.map(row => dashboardClientRecordFromRow_(row, resolveDay));
   const todayRecords = records
     .filter(record => record.received_day === today)
     .sort((a, b) => Number(b.received_at || 0) - Number(a.received_at || 0));
@@ -1248,7 +1308,8 @@ function getDashboardData() {
     today,
     build: SPX_DV_BUILD,
     server_time: Date.now(),
-    source_rows: source.length,
+    source_rows: count,
+    ...(todayOnly ? {available_days: Array.from(days)} : {}),
     today_count: todayRecords.length,
     old_pending_count: oldPending.length,
     records,
@@ -1315,6 +1376,9 @@ function dashboardLiveState_(data, compact, revision) {
           ' pendência(s) de dias anteriores.</div>'
         : '');
 
+  // A tabela ordena por horário no navegador. A ordem da planilha mantém o
+  // mesmo critério do histórico para nomes e transportadoras nos rankings.
+  const history = source.available_days ? records.filter(r => r.received_day === source.today) : records;
   return {
     ok: source.ok !== false,
     error: clean_(source.error),
@@ -1322,12 +1386,13 @@ function dashboardLiveState_(data, compact, revision) {
     revision: revision,
     build_info:
       'servidor ' + SPX_DV_BUILD +
-      ' · base ' + records.length +
+      ' · base ' + (source.source_rows == null ? records.length : source.source_rows) +
       ' · hoje ' + todayRecords.length,
     rows_html: compact ? '' : dashboardRowsHtml_(records),
-    history: compact ? records.map(r => [r.received_day, r.received_at, r.shipment_id, r.reason, r.driver_id, r.driver_name, r.agency, r.neighborhood, r.occurrence_timestamp, r.operator_login, r.status]) : null,
+    today_only: Boolean(source.available_days),
+    history: compact ? history.map(r => [r.received_day, r.received_at, r.shipment_id, r.reason, r.driver_id, r.driver_name, r.agency, r.neighborhood, r.occurrence_timestamp, r.operator_login, r.status]) : null,
     old_pending_rows_html: dashboardOldPendingHtml_(oldPending),
-    day_options_html: dashboardDayOptionsHtml_(records, source.today),
+    day_options_html: dashboardDayOptionsHtml_(records, source.today, source.available_days),
     today: source.today,
     top_html: dashboardTopDriversHtml_(todayRecords),
     operator_options_html: operatorOptionsHtml,
@@ -1341,10 +1406,10 @@ function dashboardLiveState_(data, compact, revision) {
   };
 }
 
-function getDashboardLiveState(compact) {
+function getDashboardLiveState(compact, todayOnly) {
   try {
     const revision = dashboardRevisionValue_();
-    return dashboardLiveState_(getDashboardData(), compact === true, revision);
+    return dashboardLiveState_(readDashboardData_(compact === true && todayOnly === true), compact === true, revision);
   } catch (error) {
     return {
       ok: false,
@@ -1645,10 +1710,11 @@ function dashboardFormatSeconds_(value) {
   );
 }
 
-function dashboardDayOptionsHtml_(records, today) {
+function dashboardDayOptionsHtml_(records, today, availableDays) {
   const days = new Set([today]);
-  (records || []).forEach(function(r) {
-    const day = clean_(r && r.received_day);
+  const dates = availableDays || (records || []).map(r => r && r.received_day);
+  dates.forEach(function(value) {
+    const day = clean_(value);
     if (/^\d{4}-\d{2}-\d{2}$/.test(day)) days.add(day);
   });
   return Array.from(days).sort().reverse().map(function(day) {
@@ -1837,9 +1903,11 @@ function dashboardHtml_(initialData) {
     })
     .join('');
 
-  const serverTopDriversHtml = dashboardTopDriversHtml_(todayRecords);
+  const serverTopDriversHtml = data.loading ? '' : dashboardTopDriversHtml_(todayRecords);
   const serverHistoryRowsHtml = dashboardRowsHtml_(records);
-  const serverOldPendingRowsHtml = dashboardOldPendingHtml_(oldPending);
+  const serverOldPendingRowsHtml = data.loading
+    ? '<tr><td colspan="7">Carregando pendências...</td></tr>'
+    : dashboardOldPendingHtml_(oldPending);
   const serverDayOptionsHtml = dashboardDayOptionsHtml_(records, clean_(data.today) || Utilities.formatDate(new Date(), SPX_DV_CONFIG.timezone, 'yyyy-MM-dd'));
   const serverBuildInfo = data.loading
     ? 'servidor ' + SPX_DV_BUILD + ' · carregando dados atuais...'
@@ -1878,18 +1946,18 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </style>
 </head>
 <body><main>
-<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila · <span id="buildInfo">${dashboardHtmlEscape_(serverBuildInfo)}</span></div></div><div><div class="actions"><button id="sendPending" class="primary" data-count="${allPending.length}"${allPending.length ? '' : ' disabled'}>Enviar ${allPending.length} em massa</button><button id="clearConfirmed" class="danger" data-count="${confirmedToday.length}"${confirmedToday.length ? '' : ' disabled'}>Ocultar enviados</button><button id="refresh" type="button">Atualizar</button></div><div id="actionStatus" class="action-status"></div></div></header>
+<header><div><h1>Dashboard de Recebimento</h1><div class="muted">SPX-DV · somente recebimentos confirmados pelo SPX entram na fila · <span id="buildInfo">${dashboardHtmlEscape_(serverBuildInfo)}</span> · leitura diária</div></div><div><div class="actions"><button id="sendPending" class="primary" data-count="${allPending.length}"${allPending.length ? '' : ' disabled'}>${data.loading ? 'Enviar em massa' : 'Enviar ' + allPending.length + ' em massa'}</button><button id="clearConfirmed" class="danger" data-count="${confirmedToday.length}"${confirmedToday.length ? '' : ' disabled'}>Ocultar enviados</button><button id="refresh" type="button">Atualizar</button></div><div id="actionStatus" class="action-status"></div></div></header>
 <div id="warning">${serverWarningHtml}</div>
 <details id="oldPendingDetails" class="old-details">
-<summary>Pendências de dias anteriores: <strong id="oldPendingLabel">${oldPending.length}</strong> — clicar para ver os BRs e selecionar cancelamentos</summary>
+<summary>Pendências de dias anteriores: <strong id="oldPendingLabel">${data.loading ? '…' : oldPending.length}</strong> — clicar para ver os BRs e selecionar cancelamentos</summary>
 <div class="old-panel-actions"><button type="button" id="selectOldAll">Selecionar todos os antigos</button><button type="button" id="cancelOldSelected" class="danger">Cancelar selecionados da fila</button><span class="old-panel-note">Somente pendências antigas. Não cancela pedidos no SPX, não apaga Dados e não altera recebimentos de hoje.</span></div>
 <div class="old-table-wrap"><table class="old-table"><thead><tr><th>Selecionar</th><th>Pedido</th><th>Recebido em</th><th>Motivo</th><th>Motorista</th><th>3PL</th><th>Bairro</th></tr></thead><tbody id="oldPendingRows">${serverOldPendingRowsHtml}</tbody></table></div>
 </details>
 <section class="metrics">
-<div class="metric"><span>Recebidos hoje</span><strong id="mTotal">${todayRecords.length}</strong></div>
-<div class="metric"><span>Pendências hoje</span><strong id="mPending">${pendingToday.length}</strong></div>
-<div class="metric"><span>Pendentes antigos</span><strong id="mOld">${oldPending.length}</strong></div>
-<div class="metric"><span>Operadores hoje</span><strong id="mOperators">${Object.keys(operatorCounts).length}</strong></div>
+<div class="metric"><span>Recebidos hoje</span><strong id="mTotal">${data.loading ? '…' : todayRecords.length}</strong></div>
+<div class="metric"><span>Pendências hoje</span><strong id="mPending">${data.loading ? '…' : pendingToday.length}</strong></div>
+<div class="metric"><span>Pendentes antigos</span><strong id="mOld">${data.loading ? '…' : oldPending.length}</strong></div>
+<div class="metric"><span>Operadores hoje</span><strong id="mOperators">${data.loading ? '…' : Object.keys(operatorCounts).length}</strong></div>
 </section>
 <section class="panel">
 <details open id="topRankingDetails">
@@ -1906,8 +1974,8 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
 </details>
 </section>
 <section class="panel">
-<div class="panel-head"><div><h2>Recebimentos por data</h2><div class="muted">Histórico preservado e filtros locais, sem navegação externa.</div></div><div class="filters"><select id="dayFilter" class="history-filter">${serverDayOptionsHtml}</select><select id="operator" class="operator-filter"><option value="" data-count="${todayRecords.length}">Todos os operadores (${todayRecords.length})</option>${serverOperatorOptions}</select><span id="operatorCount" class="filter-badge">${todayRecords.length} recebidos</span><input id="generalSearch" class="search" placeholder="Filtro geral: pedido, login, motorista, 3PL, bairro, motivo..."><button id="clearFilters" type="button">Limpar filtros</button><span id="filterInfo" class="filter-info">Mostrando ${todayRecords.length} de ${todayRecords.length}</span></div></div>
-<div class="table-wrap"><table id="receiveTable"><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th><th>Status</th></tr><tr class="column-filters">${Array.from({length:10},function(_,i){return '<th><button type="button" class="column-filter-open" data-col="'+i+'" aria-haspopup="listbox">Todos ▾</button><select class="column-filter" data-col="'+i+'" hidden aria-label="Valor selecionado da coluna '+(i+1)+'"><option value="">Todos</option></select></th>';}).join('')}</tr></thead><tbody id="rows">${serverHistoryRowsHtml}</tbody></table><div id="empty" class="empty"${records.length ? ' hidden' : ''}>Nenhum recebimento corresponde aos filtros.</div></div>
+<div class="panel-head"><div><h2>Recebimentos por data</h2><div class="muted">Histórico preservado e filtros locais, sem navegação externa.</div></div><div class="filters"><select id="dayFilter" class="history-filter">${serverDayOptionsHtml}</select><select id="operator" class="operator-filter"><option value="" data-count="${todayRecords.length}">${data.loading ? 'Todos os operadores' : 'Todos os operadores (' + todayRecords.length + ')'}</option>${serverOperatorOptions}</select><span id="operatorCount" class="filter-badge">${data.loading ? '…' : todayRecords.length + ' recebidos'}</span><input id="generalSearch" class="search" placeholder="Filtro geral: pedido, login, motorista, 3PL, bairro, motivo..."><button id="clearFilters" type="button">Limpar filtros</button><span id="filterInfo" class="filter-info">${data.loading ? 'Carregando recebimentos...' : 'Mostrando ' + todayRecords.length + ' de ' + todayRecords.length}</span></div></div>
+<div class="table-wrap"><table id="receiveTable"><thead><tr><th>Recebido em</th><th>Pedido</th><th>Motivo do APP</th><th>Driver ID</th><th>Motorista</th><th>Transportadora 3PL</th><th>Bairro</th><th>Data da ocorrência</th><th>Login SPX</th><th>Status</th></tr><tr class="column-filters">${Array.from({length:10},function(_,i){return '<th><button type="button" class="column-filter-open" data-col="'+i+'" aria-haspopup="listbox">Todos ▾</button><select class="column-filter" data-col="'+i+'" hidden aria-label="Valor selecionado da coluna '+(i+1)+'"><option value="">Todos</option></select></th>';}).join('')}</tr></thead><tbody id="rows">${serverHistoryRowsHtml}</tbody></table><div id="empty" class="empty"${data.loading || records.length ? ' hidden' : ''}>Nenhum recebimento corresponde aos filtros.</div></div>
 </section>
 <footer>Recebimentos confirmados pelo SPX ficam na fila até o envio explícito para Dados. Pendências antigas nunca são apagadas automaticamente.</footer>
 </main>
@@ -1936,6 +2004,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
       if(tab){tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;if(selected&&focus)tab.focus();}
       if(panel)panel.hidden=!selected;
     });
+    requestHistoryIfNeeded();
   }
   function installRankingTabs(){
     var names=['Day','Week','Month'];
@@ -1949,6 +2018,10 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     });
   }
   var rankingDayCache='';
+  var dashboardToday=${JSON.stringify(clean_(data.today))};
+  var awaitingFirstData=${data.loading === true};
+  var dailySnapshotDay='';
+  var fullHistoryLoaded=false;
   function clean_(value){return String(value==null?'':value).trim();}
   ${dashboardHtmlEscape_.toString()}
   ${dashboardTopDriversHtml_.toString()}
@@ -1977,6 +2050,18 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
   function updateRankings(){
     var day=byId('dayFilter')&&byId('dayFilter').value;
     if(!byId('topDrivers')||!day||rankingDayCache===day)return;
+    if(dailySnapshotDay){
+      var ready=day===dailySnapshotDay;
+      var dayRows=historyByDay.get(day)||[];
+      byId('topDrivers').innerHTML=ready?dashboardTopDriversHtml_(dayRows):'';
+      byId('topDayPeriod').textContent=ready?day.split('-').reverse().join('/')+' · '+dayRows.length+' recebimentos':'Carregando a data selecionada...';
+      byId('topWeek').textContent='';
+      byId('topMonth').textContent='';
+      byId('topWeekPeriod').textContent='Carregando histórico da semana...';
+      byId('topMonthPeriod').textContent='Carregando histórico do mês...';
+      rankingDayCache=day;
+      return;
+    }
     var period=rankingPeriods(day);if(!period)return;
     var daily=[],weekly=[],monthly=[];
     if(historyByDay){
@@ -2132,7 +2217,17 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
   }
   function applyFilters(){
     try{
+      if(awaitingFirstData)return;
       var day=byId('dayFilter')&&byId('dayFilter').value;
+      if(dailySnapshotDay&&day!==dailySnapshotDay){
+        byId('rows').textContent='';
+        renderedDay=null;
+        byId('filterInfo').textContent='Carregando a data selecionada...';
+        byId('operatorCount').textContent='…';
+        byId('empty').hidden=true;
+        updateRankings();
+        return;
+      }
       if(historyByDay&&renderedDay!==day){
         byId('rows').innerHTML=dashboardRowsHtml_(historyByDay.get(day)||[]);
         renderedDay=day;
@@ -2191,6 +2286,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     });
     closeFilterPopup();
     applyFilters();
+    requestHistoryIfNeeded();
   }
 
   function setStatus(message){
@@ -2199,7 +2295,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
   }
 
   var hideConfirmed=false;
-  var liveRevision=0;
+  var liveRevision=null;
   var liveLoading=false;
   var revisionLoading=false;
 
@@ -2209,7 +2305,10 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
       return;
     }
 
-    liveRevision=Number(state.revision || liveRevision || 0);
+    liveRevision=Number(state.revision || 0);
+    awaitingFirstData=false;
+    fullHistoryLoaded=!state.today_only;
+    dailySnapshotDay=state.today_only?state.today:'';
 
     var buildInfo=byId('buildInfo');
     if(buildInfo) buildInfo.textContent=String(state.build_info || 'servidor '+String(state.build || ''));
@@ -2220,10 +2319,12 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     var daySelect=byId('dayFilter');
     if(daySelect){
       var oldDay=daySelect.value || String(state.today||'');
+      if(oldDay===dashboardToday)oldDay=state.today;
       daySelect.innerHTML=String(state.day_options_html||'');
       if(Array.prototype.some.call(daySelect.options,function(o){return o.value===oldDay;})) daySelect.value=oldDay;
       else if(state.today) daySelect.value=String(state.today);
     }
+    dashboardToday=state.today;
     var oldRows=byId('oldPendingRows');
     if(oldRows)oldRows.innerHTML=String(state.old_pending_rows_html||'');
     if(byId('oldPendingLabel'))byId('oldPendingLabel').textContent=String(Number(state.old_pending_count||0));
@@ -2263,6 +2364,15 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     applyFilters();
   }
 
+  function needsHistory(){
+    var day=byId('dayFilter');
+    var dailyTab=byId('rankingTabDay');
+    return Boolean((day&&day.value&&day.value!==dashboardToday)||
+      (dailyTab&&dailyTab.getAttribute('aria-selected')==='false'));
+  }
+  function requestHistoryIfNeeded(){
+    if(!fullHistoryLoaded&&!liveLoading&&needsHistory())refreshDashboardLive(true);
+  }
   function refreshDashboardLive(showStatus){
     if(liveLoading) return;
     if(!(window.google && google.script && google.script.run)){
@@ -2271,19 +2381,24 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     }
 
     liveLoading=true;
-    if(showStatus) setStatus('Atualizando dados atuais...');
+    var todayOnly=!needsHistory();
+    var reportProgress=showStatus||awaitingFirstData||(!todayOnly&&!fullHistoryLoaded);
+    if(reportProgress)setStatus(todayOnly?'Carregando recebimentos de hoje...':'Carregando histórico...');
 
     google.script.run
       .withSuccessHandler(function(state){
         liveLoading=false;
         applyLiveState(state);
-        if(showStatus && state && state.ok!==false) setStatus('Atualizado.');
+        if(state && state.ok!==false && reportProgress)setStatus('Atualizado.');
+        // O operador pode ter mudado o período enquanto a consulta de hoje estava em curso.
+        if(todayOnly)requestHistoryIfNeeded();
       })
       .withFailureHandler(function(error){
         liveLoading=false;
         setStatus('Falha ao atualizar: '+String(error && error.message || error));
+        if(todayOnly)requestHistoryIfNeeded();
       })
-      .getDashboardLiveState(true);
+      .getDashboardLiveState(true,todayOnly);
   }
 
   function pollDashboardRevision(){
@@ -2295,7 +2410,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
       .withSuccessHandler(function(result){
         revisionLoading=false;
         var revision=Number(result && result.revision || 0);
-        if(!liveRevision || (revision && revision!==liveRevision)){
+        if(liveRevision===null || revision!==liveRevision){
           refreshDashboardLive(false);
         }
       })
@@ -2409,6 +2524,7 @@ button,select,input{font:inherit}button{background:#111;color:#fff;border:1px so
     var dayFilter=byId('dayFilter');
     if(dayFilter)dayFilter.addEventListener('change',function(){
       applyFilters();
+      requestHistoryIfNeeded();
     });
     bindActionButtons();
     installFilterPopup();
